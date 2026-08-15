@@ -1,0 +1,44 @@
+# Copy to terraform.tfvars and edit.
+
+kubeconfig_path = "~/.kube/config"
+namespace       = "n8n"
+
+# Both single-level under the zone. A two-level name such as
+# hooks.n8n.example.com is outside Cloudflare Universal SSL and fails TLS at
+# the edge unless Advanced Certificate Manager is enabled.
+editor_host  = "n8n.example.com"
+webhook_host = "n8n-hooks.example.com"
+
+cluster_issuer     = "letsencrypt-prod"
+ingress_class_name = "nginx"
+storage_class      = "longhorn"
+timezone           = "UTC"
+
+# Set true only when the KEDA operator is already installed cluster-wide.
+keda_installed = false
+
+# 2 = ingress-nginx + the Cloudflare edge. Raise for a WAF or another proxy.
+proxy_hops = 2
+
+# ── DNS (optional) ────────────────────────────────────────────────────────────
+# Leave cloudflare_zone_id null to publish both hostnames yourself.
+# cloudflare_zone_id   = "0123456789abcdef0123456789abcdef"
+# cloudflare_tunnel_id = "00000000-0000-0000-0000-000000000000"
+#
+# Prefer the environment variable over putting the token in this file:
+#   export CLOUDFLARE_API_TOKEN=...
+# cloudflare_api_token = "..."
+
+# ── Shared storage (optional) ─────────────────────────────────────────────────
+# An RWX class shared by main, worker and webhook-processor. Leave unset and
+# binary data stays in Postgres, which is n8n's default in queue mode.
+# shared_storage_class = "nfs-csi"
+# shared_storage_size  = "20Gi"
+# shared_mount_path    = "/opt/n8n-shared"
+
+# ── Editor access policy (optional) ───────────────────────────────────────────
+# Works through the tunnel only if ingress-nginx runs with
+# use-forwarded-headers and compute-full-forwarded-for.
+# editor_ingress_extra_annotations = {
+#   "nginx.ingress.kubernetes.io/whitelist-source-range" = "203.0.113.7/32"
+# }

@@ -58,11 +58,9 @@ module "n8n" {
     # = false it cannot know what sits in front, so the caller declares it:
     # without it n8n reads the ingress controller's own address as the client
     # IP, and every rate limit, audit log line and IP-based restriction sees one
-    # source. One hop covers ingress-nginx, which is the value the module itself
-    # uses when it owns the Ingress. Count your own chain: anything else that
-    # appends to X-Forwarded-For between the client and the pod adds a hop, and
-    # a wrong count is as bad as none, too low reads a proxy address as the
-    # client, too high reads a value the client could have forged.
-    { name = "N8N_PROXY_HOPS", value = "1" },
+    # source. See var.proxy_hops for how to count your own chain; the default of
+    # 1 covers ingress-nginx alone and is wrong the moment anything sits in
+    # front of it.
+    { name = "N8N_PROXY_HOPS", value = tostring(var.proxy_hops) },
   ]
 }

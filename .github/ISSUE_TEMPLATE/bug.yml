@@ -59,6 +59,7 @@ body:
         - "examples/homelab-cloudflare"
         - "examples/homelab-godaddy"
         - "examples/homelab-split-ingress"
+        - "examples/homelab-cloudflare-split-ingress"
         - "modules/tls-letsencrypt"
         - "modules/cluster-capacity"
         - "None - direct module usage from my own root module"

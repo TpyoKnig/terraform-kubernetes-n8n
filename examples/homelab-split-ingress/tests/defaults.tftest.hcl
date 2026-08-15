@@ -103,3 +103,44 @@ run "one_hostname_for_both_roles_is_rejected" {
   # steps.
   expect_failures = [var.webhook_host]
 }
+
+run "proxy_hops_defaults_to_the_single_nginx_hop" {
+  command = plan
+
+  # 1 is ingress-nginx alone, which is what this example assumes and what the
+  # module itself uses when it owns the Ingress.
+  assert {
+    condition     = var.proxy_hops == 1
+    error_message = "proxy_hops should default to 1; got ${var.proxy_hops}."
+  }
+}
+
+run "proxy_hops_is_raisable_for_a_tunnel_or_cdn" {
+  command = plan
+
+  variables {
+    proxy_hops = 2
+  }
+
+  # The module exposes no output carrying extraEnv, so this cannot assert on
+  # the rendered value. What it does prove is that 2 survives validation and
+  # the tostring() conversion into n8n_extra_env: a plan that reaches
+  # completion here is the pass condition. The value was hardcoded to "1"
+  # until a Cloudflare Tunnel deployment needed 2 and had no way to say so.
+  assert {
+    condition     = var.proxy_hops == 2
+    error_message = "proxy_hops should accept 2; got ${var.proxy_hops}."
+  }
+}
+
+run "proxy_hops_rejects_a_fractional_count" {
+  command = plan
+
+  variables {
+    proxy_hops = 1.5
+  }
+
+  # It is a count of proxies and n8n parses it as an integer, so a fraction is
+  # a typo rather than a meaningful setting.
+  expect_failures = [var.proxy_hops]
+}
