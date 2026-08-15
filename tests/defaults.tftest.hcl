@@ -358,6 +358,35 @@ run "the_webhook_url_output_falls_back_to_the_editor_url" {
   }
 }
 
+run "the_webhook_url_output_follows_the_routed_host_not_N8N_HOST" {
+  command = plan
+
+  variables {
+    postgres_backend = "cnpg"
+    redis_backend    = "valkey"
+
+    # The one case where the two URL outputs legitimately disagree, and the
+    # case the fallback assertion above cannot see because it never sets this.
+    k8s_ingress_host = "routed.test.example.com"
+    n8n_domain       = "canonical.test.example.com"
+  }
+
+  # WEBHOOK_URL falls back to the hostname the Ingress actually routes, because
+  # that is the name an external caller can reach. n8n_url reports N8N_HOST,
+  # which is n8n_domain. Asserted rather than left implied: the output's first
+  # description claimed the two were equal until n8n_webhook_url was set, which
+  # is true only while k8s_ingress_host is unset.
+  assert {
+    condition     = output.n8n_webhook_url == "https://routed.test.example.com"
+    error_message = "The advertised webhook base URL must follow k8s_ingress_host when set; got ${output.n8n_webhook_url}."
+  }
+
+  assert {
+    condition     = output.n8n_url == "https://canonical.test.example.com"
+    error_message = "n8n_url must report n8n_domain (N8N_HOST); got ${output.n8n_url}."
+  }
+}
+
 run "kubernetes_ingress_normalizes_case_variant_duplicates" {
   command = plan
 

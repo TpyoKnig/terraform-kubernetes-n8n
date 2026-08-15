@@ -474,9 +474,11 @@ contributors; this section is the agent-facing form of it.
 <body: why, not what. The diff already says what.>
 ```
 
-Types in use here: `feat`, `fix`, `docs`, `chore`, `refactor`, `ci`. Not
-`bug`: the type names the change, not the thing being changed, so a bug fix
-is `fix`. Use `!` after the type or scope for a breaking change to an input,
+Types in use here: `feat`, `fix`, `docs`, `refactor`, `chore`, `ci`, which
+is the same set `CONTRIBUTING.md` gives. Not `bug`: the type names the
+change, not the thing being changed, so a bug fix is `fix`. Not `test`
+either: a change to `terraform test` coverage ships in the same commit as
+the behaviour it covers, so it takes that commit's type. Use `!` after the type or scope for a breaking change to an input,
 output or default.
 
 Scope is optional and is a path or subsystem, not a ticket. The ones that
