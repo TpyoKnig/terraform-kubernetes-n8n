@@ -5,6 +5,37 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1-beta.2]
+
+Documentation only. No inputs, outputs, resources or defaults changed, so an
+upgrade from `0.0.1-beta.1` plans clean.
+
+### Fixed
+
+- The Helm cache workaround in `docs/troubleshooting.md` told readers to add a
+  chart repository that no longer exists, was never the repository this module
+  pulls from, and could not have been added that way regardless: the n8n chart
+  is an OCI reference, which resolves directly rather than through an
+  `index.yaml`. The step is now keyed on the repository scheme, so it stays
+  correct whichever way `n8n_chart_repository` and `valkey_chart_repository`
+  are pointed.
+- `n8n_chart_repository` suggested mirroring to "an ECR OCI repository in this
+  account". There is no cloud account anywhere in this module.
+- The smoke-test summary in `tests/scripts/README.md` claimed `/healthz` is
+  checked over an ALB. It goes through the `Ingress`.
+- The bug-report template asked reporters for a version "e.g. `0.1.0`", a tag
+  that belonged to the AWS module this one was forked from and no longer
+  exists.
+
+### Changed
+
+- The community-project warning is now the first thing in the README rather
+  than half a sentence inside a paragraph about module shape. The module is
+  listed on the public registry one search result away from `n8n-io/n8n/aws`,
+  under a name built from the same three words, and the registry renders the
+  README and nothing else. The warning names that module and points AWS users
+  at it.
+
 ## [0.0.1-beta.1], First release
 
 Initial public release of `terraform-kubernetes-n8n`: a single resource-bearing
@@ -52,4 +83,5 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
+[0.0.1-beta.2]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.2
 [0.0.1-beta.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.1
