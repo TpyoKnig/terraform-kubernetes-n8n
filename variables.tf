@@ -198,7 +198,7 @@ variable "n8n_extra_helm_values" {
 # repository.
 
 variable "n8n_chart_repository" {
-  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Point this at a private mirror, e.g. an ECR OCI repository in this account, for a cluster with no egress to ghcr.io. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it."
+  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Point this at a private mirror, e.g. a Harbor or Zot OCI registry inside the network, for a cluster with no egress to ghcr.io. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it."
   type        = string
   default     = "oci://ghcr.io/n8n-io/n8n-helm-chart"
 

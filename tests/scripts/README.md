@@ -22,7 +22,7 @@ Post-deployment smoke test for `terraform-kubernetes-n8n`. Verifies the deployme
 | Single-main topology | one `n8n-main` replica, no `N8N_MULTI_MAIN_*` or `N8N_LICENSE_*` in the pod environment |
 | Autoscalers | KEDA `ScaledObject` (workers, queue-depth) and HPAs (main, webhook-processor) |
 | Redis connectivity | Worker pods see `QUEUE_BULL_REDIS_HOST` and queue-related log activity |
-| HTTPS reachability | `/healthz` returns HTTP 200 over the ALB hostname |
+| HTTPS reachability | `/healthz` returns HTTP 200 over the Ingress hostname |
 | HTTP → HTTPS redirect | Port 80 redirects to HTTPS |
 | API connectivity (if API key set) | `/api/v1/workflows` responds with 200 |
 | Workflow execution (if API key set) | Creates a webhook → set workflow, fires it, confirms success, deletes it |
