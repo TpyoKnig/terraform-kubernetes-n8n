@@ -58,10 +58,10 @@ for the versioning policy.
 
 | Version      | Security fixes |
 | ------------ | -------------- |
-| 0.0.1-beta.1 | ✅ (current)   |
+| 0.0.1-beta.2 | ✅ (current)   |
 
-`0.0.1-beta.1` is the only tag on this repository. It is also the first, so
-there is no supported previous line to backport to.
+`0.0.1-beta.1` is the only earlier tag. It is superseded and receives nothing,
+including security fixes. Upgrade rather than asking for a backport.
 
 ## Out of scope for this policy
 

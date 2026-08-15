@@ -102,7 +102,7 @@ The module doesn't verify any of this. A missing operator shows up as a resource
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "0.0.1-beta.1"
+  version = "0.0.1-beta.2"
 
   n8n_domain = "n8n.example.com"
 
@@ -223,11 +223,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-This is a beta. `0.0.1-beta.1` is the first release, so expect breaking changes and pin a version, like the usage example does.
+This is a beta. `0.0.1-beta.2` is the current release, so expect breaking changes and pin a version, like the usage example does.
 
-Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.1`. Once there is a stable release, ranges start behaving normally.
+Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.2`. Once there is a stable release, ranges start behaving normally.
 
-Straight from git works too, if you would rather not go through the registry: `source = "github.com/TpyoKnig/terraform-kubernetes-n8n?ref=0.0.1-beta.1"`. Tracking the default branch instead of a tag means a `terraform apply` can pick up a breaking change you didn't choose.
+Straight from git works too, if you would rather not go through the registry: `source = "github.com/TpyoKnig/terraform-kubernetes-n8n?ref=0.0.1-beta.2"`. Tracking the default branch instead of a tag means a `terraform apply` can pick up a breaking change you didn't choose.
 
 ## Support
 
