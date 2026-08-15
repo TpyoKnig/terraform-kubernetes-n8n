@@ -134,6 +134,32 @@ run "the_editor_url_is_the_editor_host" {
   }
 }
 
+# The mirror image of the run below, and the one that was missing. n8n builds
+# the OAuth2 redirect URI from N8N_EDITOR_BASE_URL, and the chart used to
+# derive that from webhook.url whenever it had no ingress host of its own to
+# read - which is exactly this example, create_ingress = false. Every OAuth
+# credential then failed at the provider's callback while webhook delivery kept
+# working, so the symptom pointed at the wrong half of the split.
+#
+# Silent in the same way as the webhook case: nothing logs, the editor loads,
+# and the 404 lands in the provider's UI at the end of a consent flow.
+run "oauth_callbacks_are_advertised_on_the_editor_host" {
+  command = plan
+
+  assert {
+    condition     = module.n8n.n8n_oauth_callback_url == "https://${var.editor_host}/rest/oauth2-credential/callback"
+    error_message = "OAuth callbacks must be advertised on editor_host; got ${module.n8n.n8n_oauth_callback_url}."
+  }
+
+  # The webhook Ingress rendered by this example carries only the webhook
+  # prefixes, and points them at the webhook processors, which register no
+  # /rest routes. A callback sent there fails twice over.
+  assert {
+    condition     = !startswith(module.n8n.n8n_oauth_callback_url, "https://${var.webhook_host}")
+    error_message = "OAuth callbacks must never be advertised on webhook_host: that Ingress routes no /rest path, and the pods behind it serve none."
+  }
+}
+
 run "webhooks_are_advertised_on_the_webhook_host" {
   command = plan
 
