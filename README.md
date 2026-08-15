@@ -102,7 +102,7 @@ The module doesn't verify any of this. A missing operator shows up as a resource
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "0.0.1-beta.3"
+  version = "0.0.1-beta.4"
 
   n8n_domain = "n8n.example.com"
 
@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.3"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.4"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -238,11 +238,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-This is a beta. `0.0.1-beta.3` is the current release, so expect breaking changes and pin a version, like the usage example does.
+This is a beta. `0.0.1-beta.4` is the current release, so expect breaking changes and pin a version, like the usage example does.
 
-Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.3`. Once there is a stable release, ranges start behaving normally.
+Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.4`. Once there is a stable release, ranges start behaving normally.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.3"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.4"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
