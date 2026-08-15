@@ -462,6 +462,47 @@ test. `Taskfile.yml` exports stubs for exactly this reason.
 A real deployment uses `terraform apply` from `examples/homelab/` with a
 populated `terraform.tfvars`, but **never apply from CI** in this repo.
 
+### Commit messages
+
+[Conventional Commits](https://www.conventionalcommits.org/), enforced by
+review rather than by a hook. `CONTRIBUTING.md` states the same rule for human
+contributors; this section is the agent-facing form of it.
+
+```text
+<type>(<optional scope>): <imperative summary, under 72 chars>
+
+<body: why, not what. The diff already says what.>
+```
+
+Types in use here: `feat`, `fix`, `docs`, `chore`, `refactor`, `ci`. Not
+`bug`: the type names the change, not the thing being changed, so a bug fix
+is `fix`. Use `!` after the type or scope for a breaking change to an input,
+output or default.
+
+Scope is optional and is a path or subsystem, not a ticket. The ones that
+recur: `examples`, `readme`, `release`, `ci`, `tflint`, `security`,
+`troubleshooting`. `fix(examples):` is the right shape for anything under
+`examples/`, whichever example it touches.
+
+Two repo-specific habits worth keeping:
+
+- **One logical change per commit**, even when several arrive together. A
+  round of review findings that touches validation, comments and tests is
+  still one commit if it is one round; splitting an unrelated change out of it
+  is not optional. The index carries whatever was staged earlier, so check
+  `git diff --cached --stat` before committing rather than assuming
+  `git add <path>` scoped it.
+- **Say what was wrong, not just what changed.** These commits are the only
+  record of why a default is the value it is, and a body naming the failure
+  mode ("the claim sits Pending with nothing explaining why") is worth more
+  later than one naming the edit.
+
+Older subjects in `git log` predate this repo and do not follow the
+convention; they came with the AWS history this module was ported from.
+
+Imperative mood: "add", not "added" or "adds". No em-dashes or en-dashes
+anywhere in this repo, commit messages included.
+
 ### Provider lock files
 
 `.terraform.lock.hcl` is committed at the module root and in every
