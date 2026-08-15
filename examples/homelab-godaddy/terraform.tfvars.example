@@ -1,0 +1,55 @@
+# examples/homelab-godaddy, copy to terraform.tfvars and edit.
+#
+# Everything here is optional except ui_host: with godaddy_domain left unset
+# this example behaves exactly like examples/homelab and creates no DNS record.
+
+ui_host = "n8n.example.com"
+
+# ── DNS ───────────────────────────────────────────────────────────────────────
+# Set godaddy_domain to have this example create the A record. ingress_ip is the
+# external address of your ingress controller:
+#
+#   kubectl get svc -n ingress-nginx
+#
+# The address must be reachable from wherever the record is resolved. A public
+# record pointing at an RFC 1918 address resolves fine and then goes nowhere; if
+# your ingress is on a private address, use a tunnel instead (see
+# ../homelab-cloudflare) or keep the zone on a resolver that can reach it.
+#
+# godaddy_record_name is relative to the domain: "n8n" here plus a domain of
+# example.com must match ui_host = n8n.example.com.
+
+# godaddy_domain      = "example.com"
+# godaddy_record_name = "n8n"
+# ingress_ip          = "203.0.113.10"
+# godaddy_record_ttl  = 600
+
+# Prefer the GODADDY_API_KEY / GODADDY_API_SECRET environment variables over
+# putting credentials in this file. Create a key at
+# https://developer.godaddy.com/keys: production keys, not OTE.
+# godaddy_api_key    = "..."
+# godaddy_api_secret = "..."
+
+# ── Cluster ───────────────────────────────────────────────────────────────────
+
+# Defaults to the standard kubeconfig location; override for other clusters.
+# kubeconfig_path = "~/.kube/config"
+
+# namespace = "n8n"
+
+# cert-manager ClusterIssuer that signs the ingress certificate. Must already
+# exist in the cluster, this example does not install cert-manager.
+# cluster_issuer = "letsencrypt-prod"
+
+# StorageClass for the CNPG and Valkey PVCs. Empty uses the cluster default.
+# Set explicitly if your default is not one you want a database on.
+# storage_class = "longhorn"
+
+# Set true when the KEDA operator is already installed cluster-wide.
+# keda_installed = false
+
+# Publish the CNPG rw endpoint and/or the main pod's /metrics on LoadBalancer
+# addresses, for tooling outside the cluster. Needs an IP allocator. Neither has
+# auth in front of it, trusted networks only.
+# postgres_lan_ip = "192.168.1.50"
+# metrics_lan_ip  = "192.168.1.51"

@@ -1,0 +1,47 @@
+# Copy this file to terraform.tfvars and fill in your values.
+
+# Hostname the n8n editor UI and webhooks are served on. This example creates
+# the DNS record for it, as a proxied CNAME to your Cloudflare Tunnel.
+ui_host = "n8n.example.com"
+
+# ── Cloudflare DNS ────────────────────────────────────────────────────────────
+# The zone ui_host sits under, and the UUID of the tunnel that already fronts
+# your ingress controller (`cloudflared tunnel list`). Leave cloudflare_zone_id
+# unset and this example behaves exactly like examples/homelab: no record.
+cloudflare_zone_id   = "0123456789abcdef0123456789abcdef"
+cloudflare_tunnel_id = "00000000-0000-0000-0000-000000000000"
+
+# The API token needs Zone:DNS:Edit. Prefer the environment variable so it never
+# lands in a file you might commit:
+#
+#   $env:CLOUDFLARE_API_TOKEN = "..."     # PowerShell
+#   export CLOUDFLARE_API_TOKEN=...       # bash
+#
+# cloudflare_api_token = "..."
+
+# Set true only if the KEDA operator is already installed cluster-wide. Workers
+# then scale on Redis queue depth instead of CPU.
+# keda_installed = false
+
+# Path to the kubeconfig the kubernetes and helm providers authenticate with.
+# Defaults to the standard kubeconfig location; override for other clusters.
+# kubeconfig_path = "~/.kube/config"
+
+# Namespace to deploy into. Created by the module.
+# namespace = "n8n"
+
+# cert-manager ClusterIssuer that signs the ingress certificate. Must already
+# exist in the cluster, this example does not install cert-manager.
+# cluster_issuer = "letsencrypt-prod"
+
+# StorageClass for the CNPG and Valkey PVCs. Empty uses the cluster default.
+# Set explicitly if your default is not one you want a database on.
+# storage_class = "longhorn"
+
+# Publish the CNPG rw endpoint and/or the main pod's /metrics on LoadBalancer
+# addresses, for tooling outside the cluster (a Grafana that queries n8n's
+# tables, a Prometheus that cannot use in-cluster discovery). Needs an IP
+# allocator. Neither has auth in front of it, trusted networks only. Unset by
+# default, and no Service is created then.
+# postgres_lan_ip = "192.168.1.50"
+# metrics_lan_ip  = "192.168.1.51"

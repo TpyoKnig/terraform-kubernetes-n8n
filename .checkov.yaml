@@ -1,0 +1,47 @@
+# Repo-wide checkov config, auto-loaded from the working directory and also
+# passed explicitly by tests/scripts/check-checkov.sh, which is the single
+# invocation both contributors and the CI job (.github/workflows/terraform-tests.yml)
+# run. That script also enforces the pinned CHECKOV_VERSION, because which
+# checks even apply depends on the checkov version, not only on this file.
+#
+# Deliberately no `skip-check` here, and as of 2026-08-14 nothing to skip: the
+# scan reports 12 passed, 0 failed, 0 skipped, and no `checkov:skip` annotation
+# exists anywhere in the tree. The rule is for the finding that does arrive:
+# annotate it at the resource that causes it with an inline
+# `checkov:skip=<ID>:<reason>`, so the reasoning sits next to the code and the
+# check stays live everywhere else. A repo-wide `skip-check` would also silence
+# the same ID on code written later, which is exactly what the hard-fail gate is
+# meant to prevent (see issue #27).
+#
+# Scope is the Terraform framework only, which is narrower than it sounds: this
+# module's output is a Helm release, and checkov's Kubernetes checks read
+# rendered manifests, not `helm_release` values. Scanning the workload would
+# mean rendering the chart first, a live-cluster step this gate deliberately
+# does not take, since it must run on a laptop with no credentials. What the 12
+# checks do cover is the Terraform this module actually writes: the Secrets,
+# Services and the CNPG manifest. `tests/scripts/smoke-test.sh` is where the
+# deployed workload gets inspected.
+#
+# skip-path excludes the tests/ directories, which hold nothing but Terraform
+# `.tftest.hcl` files and the shell wrappers in tests/scripts/. A .tftest.hcl
+# file declares run blocks and provider mocks, not infrastructure, so there is
+# nothing in one for checkov to assess.
+#
+# Be honest about what this buys today: nothing measurable. Re-verified against
+# checkov 3.3.9 on 2026-08-14, this tree scans 12 passed / 0 failed / 0 skipped
+# with the skip-path and 12 / 0 / 0 without it, and neither run emits a parser
+# error. It is kept as a cheap guard so a future checkov that does try to parse
+# a .tftest.hcl cannot put an unexplained error line into a gate that is
+# supposed to report clean. Drop it if that never happens and the dead config
+# starts costing more than it saves.
+#
+# (An earlier version of this comment cited a parser failure on
+# examples/large/tests/defaults.tftest.hcl. That path is from terraform-aws-n8n
+# and never existed here, so the claim was unverifiable in this repo. Do not
+# reinstate a rationale you have not re-run against this tree.)
+#
+# Suffix patterns such as `.*\.tftest\.hcl$` do not work here; skip-path matches
+# path prefixes and directory names, so a bare directory name is the working
+# form.
+skip-path:
+  - "tests"

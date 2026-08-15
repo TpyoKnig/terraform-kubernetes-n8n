@@ -1,0 +1,312 @@
+name: Terraform Tests
+
+# Automatic on push to main and on every pull request, plus manual dispatch.
+#
+# These triggers were briefly reduced to workflow_dispatch only, to spare a
+# single shared self-hosted runner from a full terraform matrix per commit
+# during a high-frequency porting session. That is a property of one runner,
+# not of this module: leaving it that way ships a repository whose CI never
+# runs on a contributor's PR, which quietly removes the static analysis and
+# test gates the quality bar in AGENTS.md depends on. Throttle a constrained
+# runner at the runner, not by disarming the workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The throttle that makes the automatic triggers above safe on a single shared
+# runner: one in-flight run per branch, and a new commit cancels the run it
+# supersedes instead of queueing behind it. A rapid series of commits costs one
+# run at the tip rather than one per commit, which is the only outcome anybody
+# wanted from those commits anyway.
+#
+# Deliberately keyed on ref, not on run_id: same-branch runs must collide.
+# main and each PR still run independently.
+#
+# Cancellation stops at main. On a branch, superseding a run costs nothing: the
+# tip is the only commit anybody is waiting on. On main it would mean a commit
+# that never receives a completed run at all, whenever another lands behind it
+# quickly - and "every commit on main has a green run" is the claim a release
+# tag rests on. Those runs queue instead, which is the right way round: the
+# constrained runner is worth protecting from PR churn, not from the handful of
+# commits that reach main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  # Every job runs this one version: the current latest stable, so there is one
+  # deliberately tracked version to bump rather than a moving target.
+  #
+  # The floor is 1.11: check blocks, override_resource's override_during, and
+  # the test syntax this repo's suites rely on all arrived by then.
+  #
+  # The module's own floor moved with it: every versions.tf in the repo now
+  # declares required_version = ">= 1.11" rather than the ">= 1.9" that no job
+  # here exercised. Keep the two in step. A floor CI never runs is a claim
+  # nobody is checking, and this repo has already been bitten by the specific
+  # version-skew hazard that hides behind one (`check` blocks did not
+  # short-circuit && / || before Terraform 1.10; see AGENTS.md).
+  TF_VERSION: "1.15.8"
+  TFLINT_VERSION: "v0.53.0"
+  # NOTE: the tflint job resolves its config with `git rev-parse --show-toplevel`
+  # rather than an env var here. `${{ github.workspace }}` is empty on the
+  # Forgejo/act runner this repo also builds on, TFLINT_CONFIG_FILE resolved to
+  # "/.tflint.hcl" and every tflint job failed to load it. Do not reintroduce
+  # that expression anywhere in this file.
+  # checkov results are version-dependent, so this gate pins one version rather
+  # than tracking latest. tests/scripts/check-checkov.sh reads this value and
+  # refuses to run against a different local version, which makes this line the
+  # single source of truth for both. Bumping it is a deliberate change: expect a
+  # new release to report findings that need triaging in the same commit.
+  CHECKOV_VERSION: "3.3.9"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  # Shared provider plugin cache across the validate/test/tflint matrices.
+  # `terraform init` fills this from the registry on a cache miss and reuses
+  # it on a hit, keyed below on the .terraform.lock.hcl files committed at
+  # the module root and in each examples/* root module. A literal absolute path
+  # rather than a workspace expression: every job here is ubuntu-latest, and
+  # `${{ github.workspace }}` is empty on the Forgejo/act runner (it resolved to
+  # "/.terraform-plugin-cache", which survived only because "/" happened to be
+  # writable in the job container).
+  TF_PLUGIN_CACHE_DIR: "/tmp/.terraform-plugin-cache"
+
+jobs:
+  fmt:
+    name: terraform fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt -check -recursive
+        run: terraform fmt -check -recursive -diff
+
+  naming:
+    name: variable naming families
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: every root input is in a known naming family
+        run: ./scripts/check-variable-prefixes.sh
+
+  docs:
+    name: terraform-docs (README in sync)
+    runs-on: ubuntu-latest
+    env:
+      # Tracks the version `brew install terraform-docs` installs on macOS, so
+      # contributors don't need a special install path. Different terraform-docs
+      # versions emit different markdown table whitespace, so any drift between
+      # CI and the version contributors actually use produces spurious diffs in
+      # the --output-check steps below. Bump together with the brew default:
+      # this pin sat at v0.22.0 while brew moved to v0.24.0, which is the same
+      # trap the floating checkov version fell into (see CHECKOV_VERSION above).
+      # It happened to be harmless here, because the two versions render this
+      # repo's tables identically, but that was luck rather than design.
+      TERRAFORM_DOCS_VERSION: v0.24.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install terraform-docs
+        run: |
+          set -euo pipefail
+          # Arch is derived, not assumed. Hardcoding amd64 here downloads a
+          # binary that unpacks and installs happily on an arm64 runner and then
+          # dies at first use with "cannot execute binary file: Exec format
+          # error" (exit 126) - which reads like a corrupt download, not a
+          # portability bug. The homelab Forgejo runner is a Raspberry Pi;
+          # GitHub's hosted runners are x86_64. Both are supported upstream.
+          case "$(uname -m)" in
+            x86_64)        TD_ARCH=amd64 ;;
+            aarch64|arm64) TD_ARCH=arm64 ;;
+            *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -sSLo /tmp/td.tar.gz \
+            "https://terraform-docs.io/dl/${TERRAFORM_DOCS_VERSION}/terraform-docs-${TERRAFORM_DOCS_VERSION}-$(uname)-${TD_ARCH}.tar.gz"
+          tar -xzf /tmp/td.tar.gz -C /tmp terraform-docs
+          sudo install -m 0755 /tmp/terraform-docs /usr/local/bin/terraform-docs
+          terraform-docs --version
+
+      # All formatting options live in .terraform-docs.yml so these commands
+      # stay identical to what contributors run locally.
+      - name: terraform-docs --output-check (root)
+        run: terraform-docs --output-check .
+
+      - name: terraform-docs --output-check (examples/homelab)
+        working-directory: examples/homelab
+        run: terraform-docs --output-check .
+
+      - name: terraform-docs --output-check (examples/homelab-cloudflare)
+        working-directory: examples/homelab-cloudflare
+        run: terraform-docs --output-check .
+
+      - name: terraform-docs --output-check (examples/homelab-godaddy)
+        working-directory: examples/homelab-godaddy
+        run: terraform-docs --output-check .
+
+      - name: terraform-docs --output-check (examples/homelab-split-ingress)
+        working-directory: examples/homelab-split-ingress
+        run: terraform-docs --output-check .
+
+      - name: terraform-docs --output-check (modules/cluster-capacity)
+        working-directory: modules/cluster-capacity
+        run: terraform-docs --output-check .
+
+      - name: terraform-docs --output-check (modules/tls-letsencrypt)
+        working-directory: modules/tls-letsencrypt
+        run: terraform-docs --output-check .
+
+  validate:
+    name: terraform validate (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: cache terraform providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: tf-providers-
+
+      - name: terraform init (no backend, providers only)
+        working-directory: ${{ matrix.target }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.target }}
+        run: terraform validate -no-color
+
+  test:
+    name: terraform test (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: validate
+    env:
+      # Stub credentials so the veksh/godaddy-dns provider initialises during
+      # terraform test in examples/homelab-godaddy. The provider block there is
+      # configured unconditionally, so the plugin is initialised even on the
+      # default path where godaddy_domain is null and no record is planned.
+      # Scoped to this job: no GoDaddy API call is made, the tests mock the
+      # provider, and the other jobs (fmt, validate, tflint, checkov) do not
+      # need these set.
+      GODADDY_API_KEY: "ci-stub-not-real"
+      GODADDY_API_SECRET: "ci-stub-not-real"
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: cache terraform providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: tf-providers-
+
+      - name: terraform init
+        working-directory: ${{ matrix.target }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && terraform init -backend=false
+
+      - name: terraform test
+        working-directory: ${{ matrix.target }}
+        run: terraform test -verbose
+
+  tflint:
+    name: tflint (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: cache terraform providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: tf-providers-
+
+      - name: terraform init (fetch modules for tflint)
+        working-directory: ${{ matrix.target }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && terraform init -backend=false
+
+      # --config is resolved from the git root rather than a workspace variable,
+      # so it is correct at every matrix depth (".", "examples/x",
+      # "modules/x") and on runners that do not populate github.workspace.
+      # Both steps need it: --init reads the config to know which plugins to
+      # fetch, and without it the lint step would run the built-in rules only.
+      - name: tflint --init
+        working-directory: ${{ matrix.target }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tflint --init --config="$(git rev-parse --show-toplevel)/.tflint.hcl"
+
+      - name: tflint
+        working-directory: ${{ matrix.target }}
+        run: tflint --format compact --config="$(git rev-parse --show-toplevel)/.tflint.hcl"
+
+  checkov:
+    name: checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.11 is the interpreter the pinned checkov was verified against, and the
+      # one bridgecrewio's own checkov:3.3.9 image ships.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Installed at a pinned version instead of via bridgecrewio/checkov-action,
+      # which bakes the checkov version into its own image: the @v12 tag moves to
+      # newer checkov releases on its own schedule. That is not a theoretical
+      # problem. 3.3.9 evaluates whole check families (several CKV2_* graph
+      # checks among them) against resources reached through a local module
+      # source that 3.3.0 skipped silently, which turned a clean
+      # local run into ten CI failures on findings nobody had triaged. With this
+      # gate at hard-fail, the version has to move only in a deliberate commit
+      # that also curates whatever the new release reports.
+      - name: install checkov
+        run: pip install "checkov==${{ env.CHECKOV_VERSION }}"
+
+      # The same script contributors run, so "clean locally" and "clean in CI"
+      # cannot drift apart: it owns the flags, the config file and the exit code.
+      # Every finding is curated, either fixed or annotated at the resource with
+      # an inline `checkov:skip=<ID>:<reason>`. See issue #27 and CHANGELOG.md.
+      # checkov exits non-zero on any new finding, which fails the job.
+      - name: checkov
+        run: tests/scripts/check-checkov.sh

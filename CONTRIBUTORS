@@ -1,0 +1,12 @@
+Contributors to terraform-kubernetes-n8n, in order of first contribution:
+
+- @TpyoKnig: maintainer
+
+Lineage
+-------
+
+This module is a Kubernetes port of terraform-aws-n8n
+(https://github.com/n8n-io/terraform-aws-n8n) and inherits its shape: one
+resource-bearing root, the same variable and output naming, the same quality
+bar. That project's authors are credited in its own repository. They have no
+involvement in this one and are not responsible for it.

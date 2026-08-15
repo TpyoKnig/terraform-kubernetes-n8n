@@ -1,0 +1,113 @@
+# ── Terraform runtime files ───────────────────────────────────────────────────
+
+# User-specific variable values: may contain secrets (API keys, license keys)
+terraform.tfvars
+terraform.tfvars.json
+
+# State files: contain resource IDs, connection strings, and generated secrets.
+# Use remote state (GCS, S3, Azure Blob) for team workflows; never commit local state.
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+
+# .terraform.lock.hcl is intentionally committed at the module root and in
+# every examples/* root module: see AGENTS.md "Provider lock files" and
+# the `docs` job's `lockfile: false` handling in .terraform-docs.yml.
+
+# Saved plan files. A plan is a zip containing a full tfstate, so it carries
+# every variable value in plaintext (license keys, DB passwords, the n8n
+# encryption key) regardless of `sensitive = true`. Treat one like state.
+#
+# The extension globs alone are not enough: `terraform plan -out=tfplan` is the
+# form everyone actually types, and it produces a file with no extension at all.
+*.tfplan
+*.plan
+tfplan
+tfplan*
+plan.out
+
+# Local apply / debug output captured during interactive runs
+*.log
+
+# Provider downloads and module cache, large and fully reproducible via `terraform init`
+.terraform/
+
+# Local TF_PLUGIN_CACHE_DIR, if set to a path inside the repo to mirror the
+# CI cache in terraform-tests.yml. Large and fully reproducible.
+.terraform-plugin-cache/
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Local override files (used for temporary dev changes, not for sharing)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ── Kubernetes runtime files ──────────────────────────────────────────────────
+
+# Kubeconfig files, contain cluster credentials
+kubeconfig
+kubeconfig.yaml
+*.kubeconfig
+.kube/
+
+# Helm chart cache and downloads
+charts/
+chart-cache/
+
+# ── Secrets and credentials ───────────────────────────────────────────────────
+
+# Environment files (see scripts/.env.example for the template)
+.env
+.env.*
+!.env.example
+
+# TLS certificates and keys
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*.cert
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+
+.claude/
+
+# ── Agent workflow artifacts ──────────────────────────────────────────────────
+
+# Pi agent prompts/skills and Ralph session files: local agent tooling, not
+# part of the published module.
+/.pi/
+/init.sh
+/progress.txt
+
+# OpenSpec artifacts are deliberately tracked, not ignored: the capability
+# specs are the contract this module is held to and the archived changes record
+# why it is shaped the way it is. Untracked specs are folklore one clone later.
+# They are a development record, not module documentation, so release tags
+# exclude openspec/ entirely and nothing under docs/ or AGENTS.md points into
+# it. Anything a user needs belongs in README.md, docs/ or an example README.
+
+# Audit and reconciliation reports written while working on the module. Tracked
+# so the reasoning survives, excluded from release tags for the same reason
+# openspec/ is: a working document is not module documentation.
+/reports/
+
+# Internal issue-filing and test-campaign notes drafted while developing a
+# change locally, not part of the published module.
+/docs/planning/
+
+# ── OS and editor noise ───────────────────────────────────────────────────────
+
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+HANDOFF.md

@@ -1,0 +1,45 @@
+# Copy this file to terraform.tfvars and fill in your values.
+
+# Hostname for the editor UI and REST API. This is the one to put an
+# authentication policy in front of.
+editor_host = "n8n.example.com"
+
+# Hostname for production webhooks, forms and MCP. n8n advertises this in every
+# generated webhook URL. Nothing else is routed on it.
+webhook_host = "hooks.example.com"
+
+# Both hostnames need DNS records reaching the cluster's ingress. Creating them
+# is yours to do, see examples/homelab-cloudflare/dns.tf for one worked version
+# (a proxied CNAME per hostname to a Cloudflare Tunnel) if that matches your
+# setup.
+
+# Path to the kubeconfig the kubernetes, helm and kubectl providers use.
+# kubeconfig_path = "~/.kube/config"
+
+# Namespace to deploy into. Created by the module.
+# namespace = "n8n"
+
+# cert-manager ClusterIssuer signing both certificates. Must already exist.
+# cluster_issuer = "letsencrypt-prod"
+
+# StorageClass for the CNPG and Valkey PVCs. Empty uses the cluster default.
+# storage_class = "longhorn"
+
+# Timezone for Cron triggers.
+# timezone = "America/New_York"
+
+# Set true only if the KEDA operator is already installed cluster-wide.
+# keda_installed = false
+
+# Rate-limit the hostname that faces the internet. The editor hostname is
+# behind your identity provider and does not need it.
+# webhook_ingress_extra_annotations = {
+#   "nginx.ingress.kubernetes.io/limit-rps" = "20"
+# }
+
+# Restrict the editor to the LAN when it is reached directly rather than
+# through a tunnel. A request arriving through a proxy carries the proxy's
+# source address, so this only bites on the direct path.
+# editor_ingress_extra_annotations = {
+#   "nginx.ingress.kubernetes.io/whitelist-source-range" = "192.168.1.0/24"
+# }

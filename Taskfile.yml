@@ -1,0 +1,163 @@
+# https://taskfile.dev
+#
+# Wraps the local validation loop documented in AGENTS.md so contributors
+# don't need to hand-type the module-root + per-example matrix. CI runs the
+# same underlying commands directly (see .github/workflows/terraform-tests.yml);
+# this file is a convenience wrapper, not a CI dependency.
+version: "3"
+
+vars:
+  # Must stay in lockstep with the `target:` matrix lists in
+  # .github/workflows/terraform-tests.yml (validate, test, tflint and the
+  # per-example terraform-docs steps all enumerate the same set). When the two
+  # drift, `task ci` passes locally on a change that breaks an example nobody
+  # validated before pushing.
+  EXAMPLES: homelab homelab-cloudflare homelab-godaddy homelab-split-ingress
+
+  # The two submodules are root modules of their own for verification purposes:
+  # each has its own tests, its own README, and its own input contract. CI's
+  # matrices include them, so anything that skips them here passes locally and
+  # fails on push.
+  SUBMODULES: cluster-capacity tls-letsencrypt
+
+env:
+  # The veksh/godaddy-dns provider requires credentials even in plan-time tests.
+  GODADDY_API_KEY: stub
+  GODADDY_API_SECRET: stub
+
+tasks:
+  init:
+    internal: true
+    run: once
+    cmds:
+      - terraform init -backend=false
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform init -backend=false
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && terraform init -backend=false
+
+  fmt:
+    desc: Check Terraform formatting across the module and all examples.
+    cmds:
+      - terraform fmt -check -recursive
+
+  validate:
+    desc: terraform init + validate for the module root, every example and both submodules.
+    deps: [init]
+    cmds:
+      - terraform validate
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform validate
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && terraform validate
+
+  test:
+    desc: terraform test (plan-time, mocked providers) for the module root, every example and both submodules.
+    deps: [init]
+    cmds:
+      - terraform test -verbose
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform test -verbose
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && terraform test -verbose
+
+  lint:
+    desc: tflint for the module root, every example and both submodules.
+    deps: [init]
+    cmds:
+      - tflint --init
+      - tflint --format compact
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && tflint --init && tflint --format compact
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && tflint --init && tflint --format compact
+
+  checkov:
+    desc: >-
+      Static analysis, the same invocation CI runs. Requires the exact checkov
+      version CHECKOV_VERSION pins in .github/workflows/terraform-tests.yml;
+      the script refuses to run against any other, because which checks apply
+      is version-dependent. Install with
+      `pip install "checkov==<pinned version>"`.
+    cmds:
+      - ./tests/scripts/check-checkov.sh
+
+  banners:
+    desc: >-
+      Check every variable/output block in variables.tf and outputs.tf sits under
+      a "# ── Section ──" banner (see AGENTS.md). Local-only for now, not yet a
+      CI-gated check.
+    cmds:
+      - ./scripts/check-variable-banners.sh
+
+  naming:
+    desc: >-
+      Check every root input belongs to a naming family (see
+      docs/module-contract.md, rule 3.6). Root only, the examples and
+      submodules take caller-facing names.
+    cmds:
+      - ./scripts/check-variable-prefixes.sh
+
+  docs:
+    desc: Check README.md is not stale relative to variables.tf/outputs.tf (module root, every example and both submodules).
+    cmds:
+      - terraform-docs --output-check .
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform-docs --output-check .
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && terraform-docs --output-check .
+
+  docs-generate:
+    desc: Regenerate README.md from variables.tf/outputs.tf (module root, every example and both submodules).
+    cmds:
+      - terraform-docs .
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && terraform-docs .
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && terraform-docs .
+
+  markdown:
+    desc: markdownlint against README.md, docs/*.md, CONTRIBUTING.md, and AGENTS.md (not CHANGELOG.md/ROADMAP.md/SECURITY.md; not CI-gated; see .markdownlint.jsonc).
+    cmds:
+      - markdownlint README.md CONTRIBUTING.md AGENTS.md docs/*.md
+
+  ci:
+    desc: >-
+      Run the full local loop (fmt, validate, test, lint, banners, docs, markdown).
+      Mirrors every CI job except checkov, which is a hard-fail gate in CI but is
+      left out here because it needs a pinned checkov install that the other tasks
+      do not: run `task checkov` separately once you have it. Also runs banners and
+      markdown, which CI does not gate on at all.
+    cmds:
+      - task: fmt
+      - task: validate
+      - task: test
+      - task: lint
+      - task: banners
+      - task: naming
+      - task: docs
+      - task: markdown
