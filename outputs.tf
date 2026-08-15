@@ -32,7 +32,7 @@ output "n8n_url" {
 }
 
 output "n8n_webhook_url" {
-  description = "Base URL n8n advertises in every production webhook, form and MCP URL it generates (WEBHOOK_URL). Set by n8n_webhook_url when given, which is the split-hostname topology: editor on one name, webhooks on another. Otherwise it follows the hostname the Ingress routes, k8s_ingress_host when set and n8n_domain when not, because that is the name callers can actually reach. It therefore equals n8n_url in every case except a caller setting k8s_ingress_host to something other than n8n_domain, where n8n_url reports N8N_HOST and this reports the routed name. Worth asserting on in a caller's own test suite, because getting it wrong fails silently. n8n keeps working, the editor keeps working, and only the external system POSTing to a stale address finds out."
+  description = "Base URL n8n advertises in every production webhook, form and MCP URL it generates (WEBHOOK_URL). Set by n8n_webhook_url when given, which is the split-hostname topology: editor on one name, webhooks on another. Otherwise it follows the hostname the Ingress routes, k8s_ingress_host when set and n8n_domain when not, because that is the name callers can actually reach. On that fallback path it equals n8n_url, unless k8s_ingress_host names something other than n8n_domain, in which case n8n_url reports N8N_HOST and this reports the routed name. With n8n_webhook_url given the two differ by design, which is the whole point of setting it. Worth asserting on in a caller's own test suite, because getting it wrong fails silently. n8n keeps working, the editor keeps working, and only the external system POSTing to a stale address finds out."
   value       = local.k8s_values_webhook.webhook.url
 }
 
