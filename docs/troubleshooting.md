@@ -30,10 +30,15 @@ This is environmental, not a module bug: but anyone running Helm 4 on macOS will
 Pre-populate the v3-compatible cache once before the first apply:
 
 ```bash
-helm repo add n8n    https://8gears.container-registry.com/chartrepo/library
 helm repo add valkey https://valkey-io.github.io/valkey-helm
 helm repo update
 ```
+
+Valkey is the only chart this affects. The n8n chart is pulled from an OCI
+registry (`oci://ghcr.io/n8n-io/n8n-helm-chart`), and OCI references are
+resolved directly rather than through a repository index, so there is no
+`index.yaml` to cache and nothing to add. If you have repointed
+`valkey_chart_repository` at a mirror, add that URL instead of the one above.
 
 Then re-run `terraform apply`. Already-created resources are skipped; only the failed `helm_release`s are retried.
 
