@@ -21,7 +21,7 @@ variable "editor_host" {
   default     = "n8n.example.com"
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.editor_host))
+    condition     = can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", var.editor_host))
     error_message = "editor_host must be a fully qualified domain name (e.g. n8n.example.com)."
   }
   nullable = false
@@ -33,7 +33,7 @@ variable "webhook_host" {
   default     = "hooks.example.com"
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.webhook_host))
+    condition     = can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", var.webhook_host))
     error_message = "webhook_host must be a fully qualified domain name (e.g. hooks.example.com)."
   }
 

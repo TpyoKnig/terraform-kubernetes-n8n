@@ -221,3 +221,27 @@ run "shared_mount_path_must_be_absolute" {
 
   expect_failures = [var.shared_mount_path]
 }
+
+run "malformed_hostnames_are_rejected" {
+  command = plan
+
+  variables {
+    editor_host = "n8n..example.com"
+  }
+
+  # The previous regex was "starts alnum, then any of [alnum.-], then a TLD",
+  # which accepted an empty label and a label ending in "-". Both are rejected
+  # by the API server on the Ingress host field, so the failure surfaced at
+  # apply against a live cluster rather than at plan.
+  expect_failures = [var.editor_host]
+}
+
+run "a_trailing_hyphen_label_is_rejected" {
+  command = plan
+
+  variables {
+    webhook_host = "hooks-.example.com"
+  }
+
+  expect_failures = [var.webhook_host]
+}

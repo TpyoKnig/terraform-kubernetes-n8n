@@ -14,10 +14,12 @@ output "namespace" {
 output "kubectl_config_command" {
   description = "Command that points kubectl at the cluster this example deployed to. Consumed by tests/scripts/smoke-test.sh."
 
-  # Smoke test reads this and evals it to point kubectl at the right cluster.
-  # This example deploys wherever var.kubeconfig_path already points, so emit a
-  # no-op that keeps the current context rather than naming one.
-  value = "kubectl config use-context $(kubectl --kubeconfig=${var.kubeconfig_path} config current-context)"
+  # Smoke test evals this in its own shell, so exporting KUBECONFIG points every
+  # later kubectl call in the script at the same file this example deployed
+  # through. The previous form read current-context out of kubeconfig_path and
+  # set it in the default kubeconfig: a no-op when the two matched, and a switch
+  # to the wrong cluster (or an error) when they did not.
+  value = "export KUBECONFIG=${var.kubeconfig_path}"
 }
 
 output "backing_services" {

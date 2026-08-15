@@ -26,12 +26,12 @@ module "n8n" {
   # errors: the URLs are simply wrong, and only the external caller finds out.
   n8n_webhook_url = "https://${var.webhook_host}"
 
-  # N8N_HOST, and the hostname n8n considers canonical for the editor.
-  k8s_ingress_host = var.editor_host
-
-  # The editor hostname is n8n's canonical one (N8N_HOST). Production
-  # webhooks are advertised on var.webhook_host instead, via
-  # n8n_webhook_url below.
+  # N8N_HOST, and the hostname n8n treats as canonical for the editor.
+  # Production webhooks are advertised on var.webhook_host instead, via
+  # n8n_webhook_url above. k8s_ingress_host is deliberately not set: every
+  # consumer of it is gated on create_ingress, and the one that is not, the
+  # webhook URL fallback, is overridden by n8n_webhook_url. Setting it here
+  # would read as meaningful and do nothing.
   n8n_domain = var.editor_host
 
   # Queue-depth worker scaling when the cluster already runs KEDA. See

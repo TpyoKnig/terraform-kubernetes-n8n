@@ -23,8 +23,12 @@ module "n8n" {
   # Nothing errors, the URLs are simply wrong, and only the caller finds out.
   n8n_webhook_url = "https://${var.webhook_host}"
 
-  k8s_ingress_host = var.editor_host
-  n8n_domain       = var.editor_host
+  # N8N_HOST, and the hostname n8n treats as canonical for the editor.
+  # k8s_ingress_host is deliberately not set: every consumer of it is gated
+  # on create_ingress, and the one that is not, the webhook URL fallback, is
+  # overridden by n8n_webhook_url above. Setting it here would read as
+  # meaningful and do nothing.
+  n8n_domain = var.editor_host
 
   k8s_keda_installed = var.keda_installed
   n8n_timezone       = var.timezone

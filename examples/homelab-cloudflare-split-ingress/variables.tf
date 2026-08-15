@@ -21,7 +21,7 @@ variable "editor_host" {
   default     = "n8n.example.com"
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.editor_host))
+    condition     = can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", var.editor_host))
     error_message = "editor_host must be a fully qualified domain name (e.g. n8n.example.com)."
   }
   nullable = false
@@ -33,7 +33,7 @@ variable "webhook_host" {
   default     = "hooks.example.com"
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.webhook_host))
+    condition     = can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", var.webhook_host))
     error_message = "webhook_host must be a fully qualified domain name (e.g. hooks.example.com)."
   }
 
@@ -118,8 +118,12 @@ variable "cloudflare_zone_id" {
   default     = null
 
   validation {
-    condition     = var.cloudflare_zone_id == null || var.cloudflare_tunnel_id != null
-    error_message = "cloudflare_zone_id requires cloudflare_tunnel_id: the records are CNAMEs to <tunnel-id>.cfargotunnel.com, so there is nothing to point them at otherwise. Find it with `cloudflared tunnel list` or in the Cloudflare Zero Trust dashboard."
+    condition = (
+      var.cloudflare_zone_id == null ||
+      (var.cloudflare_tunnel_id != null &&
+      can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.cloudflare_tunnel_id)))
+    )
+    error_message = "cloudflare_zone_id requires cloudflare_tunnel_id to be a tunnel UUID: the records are CNAMEs to <tunnel-id>.cfargotunnel.com, so an empty or malformed value produces a record Cloudflare accepts and that never resolves to the tunnel. Find it with `cloudflared tunnel list` or in the Cloudflare Zero Trust dashboard."
   }
 }
 

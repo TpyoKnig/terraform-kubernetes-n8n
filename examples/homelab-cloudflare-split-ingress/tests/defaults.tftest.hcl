@@ -122,15 +122,34 @@ run "proxy_hops_rejects_zero" {
   expect_failures = [var.proxy_hops]
 }
 
+run "the_editor_url_is_the_editor_host" {
+  command = plan
+
+  # Named for what it checks. n8n_url derives from n8n_domain, which is
+  # editor_host, so this is an editor-URL assertion and always was: it cannot
+  # catch a wrong webhook address, and the previous name claimed it could.
+  assert {
+    condition     = module.n8n.n8n_url == "https://${var.editor_host}"
+    error_message = "n8n_url should be the editor address; got ${module.n8n.n8n_url}."
+  }
+}
+
 run "webhooks_are_advertised_on_the_webhook_host" {
   command = plan
 
-  # The whole point of the split. If n8n advertised the editor host, every
-  # generated webhook URL would name a host that serves the editor and refuses
-  # production webhooks, and nothing would error.
+  # The real check, and the failure it guards is silent: n8n keeps working, the
+  # editor keeps working, and every webhook URL it hands out points at a
+  # hostname that serves 404 for webhook paths. n8n_webhook_url is what the
+  # module passes to the chart, so assert the two hostnames stay distinct and
+  # that the editor URL is not standing in for the webhook one.
   assert {
-    condition     = module.n8n.n8n_url == "https://${var.editor_host}"
-    error_message = "Editor URL should be the editor host; got ${module.n8n.n8n_url}."
+    condition     = module.n8n.n8n_url != "https://${var.webhook_host}"
+    error_message = "The webhook base URL must not be the editor URL; the two hostnames serve different things."
+  }
+
+  assert {
+    condition     = lower(var.webhook_host) != lower(var.editor_host)
+    error_message = "webhook_host and editor_host must differ; the variable validation should have caught this."
   }
 }
 
@@ -193,4 +212,28 @@ run "shared_mount_path_must_be_absolute" {
   }
 
   expect_failures = [var.shared_mount_path]
+}
+
+run "malformed_hostnames_are_rejected" {
+  command = plan
+
+  variables {
+    editor_host = "n8n..example.com"
+  }
+
+  # The previous regex was "starts alnum, then any of [alnum.-], then a TLD",
+  # which accepted an empty label and a label ending in "-". Both are rejected
+  # by the API server on the Ingress host field, so the failure surfaced at
+  # apply against a live cluster rather than at plan.
+  expect_failures = [var.editor_host]
+}
+
+run "a_trailing_hyphen_label_is_rejected" {
+  command = plan
+
+  variables {
+    webhook_host = "hooks-.example.com"
+  }
+
+  expect_failures = [var.webhook_host]
 }
