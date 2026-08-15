@@ -34,3 +34,12 @@ ui_host = "n8n.example.com"
 # default, and no Service is created then.
 # postgres_lan_ip = "192.168.1.50"
 # metrics_lan_ip  = "192.168.1.51"
+
+# ── Shared storage (optional) ─────────────────────────────────────────────────
+# Queue mode runs main, worker and webhook-processor pods and they share no
+# filesystem, so anything one writes to local disk is invisible to the others.
+# Set an RWX class and binary data moves to a volume all three mount. Leave it
+# unset and binary data stays in Postgres, which is n8n's default here.
+# shared_storage_class = "nfs-csi"
+# shared_storage_size  = "20Gi"
+# shared_mount_path    = "/opt/n8n-shared"

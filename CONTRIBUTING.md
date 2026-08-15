@@ -67,7 +67,9 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 <optional body explaining the why>
 ```
 
-Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+Common types: `feat`, `fix`, `docs`, `refactor`, `chore`, `ci`. There is
+no `test` type here: a change to `terraform test` coverage ships in the
+same commit as the behaviour it covers, so it takes that commit's type.
 Scope is optional but useful (e.g. `feat(database): add Aurora
 Multi-AZ option`). Use the imperative mood ("add", not "added" or
 "adds").

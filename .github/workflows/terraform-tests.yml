@@ -158,6 +158,10 @@ jobs:
         working-directory: examples/homelab-split-ingress
         run: terraform-docs --output-check .
 
+      - name: terraform-docs --output-check (examples/homelab-cloudflare-split-ingress)
+        working-directory: examples/homelab-cloudflare-split-ingress
+        run: terraform-docs --output-check .
+
       - name: terraform-docs --output-check (modules/cluster-capacity)
         working-directory: modules/cluster-capacity
         run: terraform-docs --output-check .
@@ -172,7 +176,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
     steps:
       - uses: actions/checkout@v4
 
@@ -212,7 +216,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
     steps:
       - uses: actions/checkout@v4
 
@@ -241,7 +245,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+        target: [".", "examples/homelab", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
     steps:
       - uses: actions/checkout@v4
 

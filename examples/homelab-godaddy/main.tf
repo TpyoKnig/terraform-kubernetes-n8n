@@ -11,7 +11,9 @@ module "n8n" {
   postgres_backend = "cnpg"
   redis_backend    = "valkey"
   create_ingress   = true
-  create_namespace = true
+  # false when a shared claim exists, because the claim has to be created
+  # before the release and it needs the namespace. See storage.tf.
+  create_namespace = var.shared_storage_class == null
 
   # The hostname the Ingress serves and n8n advertises itself as. The module
   # creates no DNS record for it.
@@ -24,7 +26,20 @@ module "n8n" {
   k8s_keda_installed = var.keda_installed
 
 
-  k8s_namespace = var.namespace
+  # Reference the namespace resource rather than var.namespace on the shared
+  # storage path, so every namespaced resource inside the module inherits an
+  # edge to it. Without this the module only waits for the claim, and only for
+  # the Helm release that mounts it: the Secrets, the CNPG Cluster and the
+  # Valkey release have no path to the namespace at all and a first apply can
+  # fail with `namespaces "n8n" not found`. Deploying in two steps hides it,
+  # which is why it survived a live apply.
+  #
+  # A module-level depends_on would also fix it and costs more: it defers
+  # everything inside, including the node lookup the capacity check reads, so a
+  # plan-time diagnostic becomes an apply-time one. The name here stays known
+  # at plan because it is a configured attribute, so this buys the edge without
+  # making the namespace unknown.
+  k8s_namespace = var.shared_storage_class != null ? kubernetes_namespace.n8n[0].metadata[0].name : var.namespace
 
   # ── k8s-backend Postgres / Redis / Ingress ─────────────────────────────────
   cnpg_instances     = 1
@@ -74,16 +89,19 @@ module "n8n" {
   # n8n's AI Assistant and Agents modules are a good fit for a lab, but they
   # need an Anthropic API key and a sandbox credential, which means a Secret
   # this example does not create. Left commented so the example applies into an
-  # empty namespace unchanged; create the Secret first, then uncomment.
+  # empty namespace unchanged; create the Secret first, then add these.
   #
   #   kubectl create secret generic ai-assistant-secrets   #     --from-literal=anthropic-api-key=...   #     --from-literal=sandbox-api-key=...
   #
-  # n8n_extra_env = [
+  # n8n_extra_env is assigned below for shared storage, so these are entries to
+  # add to that list rather than a second assignment: a second one is a
+  # duplicate argument and Terraform rejects it before plan. Wrap the existing
+  # value in concat() and put them in the second element.
+  #
   #   { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
   #   { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
   #   { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
   #   { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
-  # ]
   #
   # n8n_extra_env is typed list(object({ name, value })) with no valueFrom
   # shape, so secret-backed variables go through n8n_extra_helm_values:
@@ -97,4 +115,37 @@ module "n8n" {
   #             name: ai-assistant-secrets
   #             key: anthropic-api-key
   # YAML
+
+  # ── Shared storage ─────────────────────────────────────────────────────────
+  # Reaches main, worker and webhook-processor alike, which is exactly what the
+  # chart's own persistence does not do. All three are empty unless
+  # shared_storage_class is set. See storage.tf.
+  n8n_extra_volumes = var.shared_storage_class != null ? [{
+    name                    = "shared"
+    persistent_volume_claim = { claim_name = kubernetes_persistent_volume_claim_v1.shared[0].metadata[0].name }
+  }] : []
+
+  n8n_extra_volume_mounts = var.shared_storage_class != null ? [{
+    name       = "shared"
+    mount_path = var.shared_mount_path
+    read_only  = false
+  }] : []
+
+  # Both lines are required, and the mode is the one people miss. n8n defaults
+  # binary data to filesystem in regular mode but to database in scaling mode,
+  # and this module always runs queue mode. Mount the volume without setting the
+  # mode and every payload still goes to Postgres: the mount is there, empty,
+  # and nothing reports a problem.
+  n8n_extra_env = var.shared_storage_class != null ? [
+    { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
+    { name = "N8N_STORAGE_PATH", value = "${var.shared_mount_path}/storage" },
+  ] : []
+
+  # No depends_on here on purpose. n8n_extra_volumes already references the
+  # claim, which is the ordering edge: Terraform cannot create the release until
+  # the claim exists, and the claim cannot exist until the namespace does. An
+  # explicit depends_on would add nothing and cost something, because it defers
+  # everything inside the module, including the node lookup the capacity check
+  # reads, turning a plan-time diagnostic into an apply-time one.
+
 }

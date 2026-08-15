@@ -86,16 +86,16 @@ chart-cache/
 /init.sh
 /progress.txt
 
-# OpenSpec artifacts are deliberately tracked, not ignored: the capability
-# specs are the contract this module is held to and the archived changes record
-# why it is shaped the way it is. Untracked specs are folklore one clone later.
-# They are a development record, not module documentation, so release tags
-# exclude openspec/ entirely and nothing under docs/ or AGENTS.md points into
-# it. Anything a user needs belongs in README.md, docs/ or an example README.
+# OpenSpec artifacts are a working record of how the module got its shape, not
+# module documentation, and they are not published. They were tracked until
+# 0.0.1-beta.2 on the theory that release tags excluded them, which nothing
+# implemented: there is no export-ignore, so every release tarball carried them.
+# Kept locally, ignored here. Anything a user needs belongs in README.md, docs/
+# or an example README.
+/openspec/
 
-# Audit and reconciliation reports written while working on the module. Tracked
-# so the reasoning survives, excluded from release tags for the same reason
-# openspec/ is: a working document is not module documentation.
+# Audit and reconciliation reports written while working on the module. Same
+# reasoning as openspec/: a working document is not module documentation.
 /reports/
 
 # Internal issue-filing and test-campaign notes drafted while developing a

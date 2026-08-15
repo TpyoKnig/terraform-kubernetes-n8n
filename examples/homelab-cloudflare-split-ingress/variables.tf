@@ -107,9 +107,9 @@ variable "keda_installed" {
 }
 
 variable "proxy_hops" {
-  description = "How many proxies append to X-Forwarded-For between the client and an n8n pod (N8N_PROXY_HOPS). The default of 1 counts ingress-nginx alone, which is what this example assumes and what the module itself uses when it owns the Ingress. Count your own chain and raise it: a Cloudflare Tunnel, a CDN, a WAF or an outer reverse proxy each add one, so fronting this example with Cloudflare makes it 2. A wrong count is as bad as none: too low and n8n reads a proxy address as the client, too high and it reads a value the client could have forged. Every rate limit, audit log line and IP-based restriction depends on it."
+  description = "How many proxies append to X-Forwarded-For between the client and an n8n pod (N8N_PROXY_HOPS). Defaults to 2 here, where ../homelab-split-ingress defaults to 1: that topology has ingress-nginx alone, this one puts the Cloudflare edge in front of it. Raise it again for anything further out, a WAF or a second reverse proxy. A wrong count is as bad as none: too low and n8n reads a proxy address as the client, too high and it reads a value the client could have forged. Every rate limit, audit log line and IP-based restriction depends on it, and nothing errors when it is wrong."
   type        = number
-  default     = 1
+  default     = 2
   nullable    = false
 
   validation {
@@ -118,8 +118,36 @@ variable "proxy_hops" {
   }
 }
 
+variable "cloudflare_zone_id" {
+  description = "Cloudflare zone ID for the zone both hostnames sit under. Leave null (the default) to manage DNS yourself, in which case the example creates no records. Set it and the example creates one proxied CNAME per hostname pointing at the Cloudflare Tunnel named by cloudflare_tunnel_id. The API token needs Zone:DNS:Edit on this zone."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (
+      var.cloudflare_zone_id == null ||
+      (var.cloudflare_tunnel_id != null &&
+      can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.cloudflare_tunnel_id)))
+    )
+    error_message = "cloudflare_zone_id requires cloudflare_tunnel_id to be a tunnel UUID: the records are CNAMEs to <tunnel-id>.cfargotunnel.com, so an empty or malformed value produces a record Cloudflare accepts and that never resolves to the tunnel. Find it with `cloudflared tunnel list` or in the Cloudflare Zero Trust dashboard."
+  }
+}
+
+variable "cloudflare_tunnel_id" {
+  description = "UUID of the Cloudflare Tunnel that fronts the cluster's ingress controller. Each DNS record created when cloudflare_zone_id is set is a proxied CNAME to <this>.cfargotunnel.com. The tunnel itself is not managed by this example: it is long-lived cluster infrastructure serving every other hostname too, so a terraform destroy here must not be able to take it down."
+  type        = string
+  default     = null
+}
+
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token with Zone:DNS:Edit on cloudflare_zone_id. Only read when cloudflare_zone_id is set. Prefer the CLOUDFLARE_API_TOKEN environment variable over putting it in terraform.tfvars."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 variable "shared_storage_class" {
-  description = "An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Setting it also moves namespace creation from the module to this example, because the claim has to exist before the Helm release. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not."
+  description = "An RWX-capable StorageClass for the volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode and is fine until payloads get large. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not."
   type        = string
   default     = null
 
@@ -137,7 +165,7 @@ variable "shared_storage_size" {
 }
 
 variable "shared_mount_path" {
-  description = "Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n_extra_volume_mounts reaches the n8n container only."
+  description = "Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what."
   type        = string
   default     = "/opt/n8n-shared"
   nullable    = false

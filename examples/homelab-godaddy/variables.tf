@@ -6,10 +6,16 @@ variable "kubeconfig_path" {
   type        = string
   default     = "~/.kube/config"
   nullable    = false
+
+  validation {
+    condition     = !can(regex("[\"`$]", var.kubeconfig_path))
+    error_message = "kubeconfig_path must not contain a double quote, a backtick or a dollar sign. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command, and those three characters are the ones that escape the quoting around it."
+  }
+
 }
 
 variable "namespace" {
-  description = "Namespace to deploy into."
+  description = "Namespace to deploy into. Created by the module by default, or by this example when shared_storage_class is set, because the shared claim has to exist before the Helm release."
   type        = string
   default     = "n8n"
   nullable    = false
@@ -103,4 +109,34 @@ variable "godaddy_api_secret" {
   type        = string
   default     = null
   sensitive   = true
+}
+
+variable "shared_storage_class" {
+  description = "An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Setting it also moves namespace creation from the module to this example, because the claim has to exist before the Helm release. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.shared_storage_class == null || (length(var.shared_storage_class) > 0 && var.shared_storage_class == trimspace(var.shared_storage_class))
+    error_message = "shared_storage_class must be null to disable shared storage, or a class name with no leading or trailing whitespace to enable it. An empty string is neither: it enables the claim and then asks Kubernetes for no class at all, rather than for the default one. A padded name is the same failure wearing a disguise, because the claim is created with the value as given and no class matches it. Either way the claim sits Pending with nothing explaining why."
+  }
+}
+
+variable "shared_storage_size" {
+  description = "Size of the shared RWX claim. Only used when shared_storage_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow."
+  type        = string
+  default     = "20Gi"
+  nullable    = false
+}
+
+variable "shared_mount_path" {
+  description = "Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n_extra_volume_mounts reaches the n8n container only."
+  type        = string
+  default     = "/opt/n8n-shared"
+  nullable    = false
+
+  validation {
+    condition     = startswith(var.shared_mount_path, "/")
+    error_message = "shared_mount_path must be an absolute path."
+  }
 }
