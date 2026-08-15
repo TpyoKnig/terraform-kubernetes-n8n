@@ -762,6 +762,90 @@ run "a_module_managed_env_name_is_still_rejected" {
   expect_failures = [var.n8n_extra_env]
 }
 
+# The secretKeyRef form has to land in the same config.extraEnv list as the
+# plain one, because that list is the only place the chart reads caller env
+# from. Asserting both in one run is the point: they are separate inputs
+# concatenated separately, so a change that drops one would otherwise still
+# pass the other's test.
+run "secret_backed_env_renders_a_secretKeyRef_alongside_plain_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENABLED_MODULES", value = "instance-ai" },
+    ]
+    n8n_extra_env_from_secret = [
+      {
+        name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+        secret_name = "ai-assistant-secrets"
+        secret_key  = "anthropic-api-key"
+      },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      {
+        name = "N8N_INSTANCE_AI_MODEL_API_KEY"
+        valueFrom = {
+          secretKeyRef = {
+            name = "ai-assistant-secrets"
+            key  = "anthropic-api-key"
+          }
+        }
+      }
+    )
+    error_message = "n8n_extra_env_from_secret must render as a valueFrom.secretKeyRef entry in config.extraEnv."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_ENABLED_MODULES", value = "instance-ai" }
+    )
+    error_message = "Adding a secret-backed entry must not displace the plain n8n_extra_env entries."
+  }
+}
+
+run "a_module_managed_env_name_is_rejected_in_the_secret_backed_input_too" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "N8N_ENCRYPTION_KEY"
+        secret_name = "my-secrets"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+# A name set in both inputs is not a Kubernetes error, which is exactly why it
+# needs a plan-time one: the container keeps the last entry and discards the
+# other without logging anything.
+run "the_same_env_name_in_both_inputs_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_INSTANCE_AI_MODEL_API_KEY", value = "plaintext-by-mistake" },
+    ]
+    n8n_extra_env_from_secret = [
+      {
+        name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+        secret_name = "ai-assistant-secrets"
+        secret_key  = "anthropic-api-key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
 # The chart's webhook Ingress renders four of the five prefixes n8n serves from
 # the webhook processors. The fifth (/mcp) falls through to the main pods, which
 # answer 200 with the editor's HTML because no handler is registered, a webhook

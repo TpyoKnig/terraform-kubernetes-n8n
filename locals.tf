@@ -808,14 +808,31 @@ locals {
           { name = "N8N_METRICS_INCLUDE_QUEUE_METRICS", value = "true" },
           { name = "N8N_METRICS_INCLUDE_CACHE_METRICS", value = "true" },
         ] : [],
-        # n8n_extra_env is typed list(object({name, value})) at the root, so no
-        # valueFrom path here. On the k8s backend a caller who needs valueFrom
-        # (secretKeyRef, fieldRef, ...) supplies it via extra_helm_values (raw
-        # YAML merged onto the release below), which reaches the same chart
-        # config.extraEnv list.
+        # The two caller-supplied env inputs, both landing in this one list.
+        # n8n_extra_env is typed list(object({name, value})), so it carries no
+        # valueFrom path; n8n_extra_env_from_secret is the secretKeyRef form,
+        # and the reason it is a typed input rather than a job for
+        # n8n_extra_helm_values is that the overlay cannot append here. Helm
+        # coalesces maps across values documents but *replaces* lists, so an
+        # overlay setting config.extraEnv substitutes its own list for this
+        # entire one, dropping N8N_ENCRYPTION_KEY and every connection variable
+        # assembled above. The release still installs; the pods just come up
+        # misconfigured.
         [
           for e in var.n8n_extra_env :
           { name = e.name, value = e.value }
+        ],
+        [
+          for e in var.n8n_extra_env_from_secret :
+          {
+            name = e.name
+            valueFrom = {
+              secretKeyRef = {
+                name = e.secret_name
+                key  = e.secret_key
+              }
+            }
+          }
         ],
       )
     }

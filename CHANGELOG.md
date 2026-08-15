@@ -5,6 +5,29 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `n8n_extra_env_from_secret` input: environment variables for the n8n pods
+  sourced from keys of existing Kubernetes Secrets, rendered as
+  `valueFrom.secretKeyRef` entries. `n8n_extra_env` is typed as name/value
+  pairs, so every secret a caller needed to pass had to go through it in
+  plaintext, landing in the Helm release and in Terraform state. The documented
+  alternative was an `n8n_extra_helm_values` overlay, which does not work for
+  this: Helm coalesces maps across values documents but replaces lists, so an
+  overlay setting `config.extraEnv` substitutes its own list for the module's
+  entire one, dropping `N8N_ENCRYPTION_KEY` and every connection variable. The
+  release still installs and the pods come up misconfigured. The new input
+  appends instead, and rejects module-managed names and names already set in
+  `n8n_extra_env`.
+
+### Changed
+
+- `n8n_extra_helm_values` description corrected. It claimed `valueFrom`-shaped
+  environment entries were its most useful application, which was the one
+  thing it could not safely do.
+
 ## [0.0.1-beta.3]
 
 Adds a fifth example, an output, and an opt-in shared-storage pattern to every
@@ -140,6 +163,7 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.3...HEAD
 [0.0.1-beta.3]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.2
 [0.0.1-beta.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.1
