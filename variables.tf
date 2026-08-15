@@ -1703,9 +1703,14 @@ variable "n8n_extra_env_from_secret" {
     # server accepts for a key. Checked here rather than left to the apply
     # because the reference is resolved at container start: a malformed name
     # produces a stuck pod long after Helm has reported the release installed.
+    #
+    # Matched label by label rather than as one character class. A single class
+    # of [a-z0-9.-] admits "a..b" and "a-.b", which the API server rejects --
+    # so the guard would have passed exactly the names it exists to catch.
     condition = alltrue([
       for e in var.n8n_extra_env_from_secret :
-      can(regex("^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$", e.secret_name)) &&
+      length(e.secret_name) <= 253 &&
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", e.secret_name)) &&
       can(regex("^[a-zA-Z0-9._-]{1,253}$", e.secret_key))
     ])
     error_message = "Each n8n_extra_env_from_secret entry needs a secret_name that is a valid RFC 1123 subdomain (lowercase alphanumerics, - and ., starting and ending alphanumeric) and a secret_key made only of alphanumerics, -, _ and . (both non-empty)."

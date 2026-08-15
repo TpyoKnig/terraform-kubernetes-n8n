@@ -24,6 +24,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- `n8n_extra_env_from_secret` accepted Secret names the API server rejects.
+  The `secret_name` check matched one `[a-z0-9.-]` character class, which
+  admits `a..b` and `a-.b`, so the guard passed exactly the malformed names it
+  exists to catch and the pod stuck in `CreateContainerConfigError` long after
+  Helm reported success. Now matched label by label, with the 253-character
+  limit.
+
 - `N8N_EDITOR_BASE_URL` named the webhook host on a split ingress, breaking
   every OAuth2 credential. Chart 1.10.0 derives that variable from the first
   ingress host and, failing that, from `webhook.url`, on the stated assumption

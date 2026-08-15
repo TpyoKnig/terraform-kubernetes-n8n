@@ -28,7 +28,7 @@ including this one:
 
 ```bash
 kubectl -n n8n exec deploy/n8n-main -c n8n-main -- \
-  sh -c 'grep -rhoE "N8N_INSTANCE_AI[A-Z_]*|N8N_SANDBOX_SERVICE[A-Z_]*" \
+  sh -c 'grep -rhoE "N8N_INSTANCE_AI[A-Z_]*|N8N_SANDBOX_SERVICE[A-Z_]*|INSTANCE_AI_BRAVE_SEARCH_API_KEY" \
     /usr/local/lib/node_modules/n8n | sort -u'
 ```
 

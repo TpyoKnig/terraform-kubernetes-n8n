@@ -366,6 +366,30 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
   }
 }
 
+# k8s_ingress_host is documented as "only used when create_ingress = true", and
+# homelab-split-ingress leaves it unset for that reason. The editor base URL
+# must honour that: sourcing it from k8s_ingress_host would let a value the
+# docs call ignored decide which host receives OAuth2 callbacks.
+run "the_editor_base_url_ignores_k8s_ingress_host_when_no_ingress_is_created" {
+  command = plan
+
+  variables {
+    postgres_backend = "cnpg"
+    redis_backend    = "valkey"
+    create_ingress   = false
+    k8s_ingress_host = "stale.test.example.com"
+    n8n_webhook_url  = "https://hooks.test.example.com"
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "N8N_EDITOR_BASE_URL=https://n8n.test.example.com",
+    )
+    error_message = "With create_ingress = false the editor base URL must come from n8n_domain, not k8s_ingress_host."
+  }
+}
+
 run "the_webhook_url_output_falls_back_to_the_editor_url" {
   command = plan
 
@@ -829,6 +853,64 @@ run "secret_backed_env_renders_a_secretKeyRef_alongside_plain_env" {
       { name = "N8N_ENABLED_MODULES", value = "instance-ai" }
     )
     error_message = "Adding a secret-backed entry must not displace the plain n8n_extra_env entries."
+  }
+}
+
+# A single [a-z0-9.-] character class accepts both of these. The API server
+# does not, so the reference resolves to nothing and the pod sticks in
+# CreateContainerConfigError long after Helm reported success - the exact
+# failure this validation exists to move forward to plan time.
+run "a_secret_name_with_an_empty_label_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "SOME_KEY"
+        secret_name = "a..b"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+run "a_secret_name_with_a_label_ending_in_a_hyphen_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "SOME_KEY"
+        secret_name = "a-.b"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+run "a_dotted_secret_name_is_still_accepted" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "SOME_KEY"
+        secret_name = "team-a.ai-secrets"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "SOME_KEY",
+    )
+    error_message = "A valid multi-label secret_name must still reach config.extraEnv."
   }
 }
 

@@ -467,8 +467,18 @@ locals {
   # so this only ever surfaced on the second one.
   #
   # The exception is a split ingress, below.
-  k8s_editor_base_url    = "https://${local.k8s_ingress_host_effective}"
-  k8s_webhook_url        = coalesce(var.n8n_webhook_url, local.k8s_editor_base_url)
+  # k8s_ingress_host is documented as "only used when create_ingress = true",
+  # and homelab-split-ingress leaves it unset on the stated grounds that every
+  # consumer of it is gated on create_ingress except the webhook URL fallback,
+  # which n8n_webhook_url overrides. So the editor base reads n8n_domain once
+  # the module renders no Ingress: sourcing it from k8s_ingress_host would make
+  # a value the docs call ignored decide the OAuth callback host.
+  #
+  # The webhook fallback keeps reading k8s_ingress_host_effective, unchanged --
+  # it is the pre-existing exception the example already accounts for, and
+  # moving it would change an address callers may have registered elsewhere.
+  k8s_editor_base_url    = "https://${var.create_ingress ? local.k8s_ingress_host_effective : local.n8n_domain}"
+  k8s_webhook_url        = coalesce(var.n8n_webhook_url, "https://${local.k8s_ingress_host_effective}")
   k8s_split_ingress_urls = !var.create_ingress && local.k8s_webhook_url != local.k8s_editor_base_url
 
   # chart 1.10.0 configmap.yaml derives N8N_EDITOR_BASE_URL from the first
