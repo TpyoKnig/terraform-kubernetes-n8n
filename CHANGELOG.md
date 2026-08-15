@@ -9,6 +9,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `n8n_oauth_callback_url` output: the redirect URI to register with any OAuth2
+  provider a credential will use. n8n builds it from `N8N_EDITOR_BASE_URL`, so
+  on a split ingress it sits on the editor hostname and never the webhook one,
+  which is not derivable from the other outputs and is the thing that was wrong
+  in the release before this one. Re-exported by both split-ingress examples,
+  which now assert it lands on `editor_host` and refuse it on `webhook_host` -
+  the regression guard that could not exist while nothing exposed the value.
+
 - `n8n_extra_env_from_secret` input: environment variables for the n8n pods
   sourced from keys of existing Kubernetes Secrets, rendered as
   `valueFrom.secretKeyRef` entries. `n8n_extra_env` is typed as name/value
@@ -23,6 +31,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `n8n_extra_env`.
 
 ### Fixed
+
+- `N8N_ENDPOINT_*` is now reserved. The module hardcodes the path segments n8n
+  serves and then publishes them: `n8n_webhook_path_prefixes` lists `/webhook`,
+  `/webhook-waiting`, `/form`, `/form-waiting` and `/mcp`, the examples route
+  exactly those five on the webhook Ingress, and `n8n_oauth_callback_url`
+  spells `/rest` into the redirect URI. Each of those segments is an
+  `N8N_ENDPOINT_` variable, and repointing one through `n8n_extra_env` left the
+  Ingress routing the old segment and the outputs advertising it while n8n
+  answered on the new one, with the module reporting both as correct.
+
+- `examples/homelab-cloudflare-split-ingress` had no `.terraform-docs.yml`, so
+  `terraform-docs --output-check` there printed its help text and exited 0. The
+  example was enumerated in the Taskfile and in CI all along; the check simply
+  could not fail, so that README was never actually verified against the code.
 
 - `n8n_extra_env_from_secret` accepted Secret names the API server rejects.
   The `secret_name` check matched one `[a-z0-9.-]` character class, which

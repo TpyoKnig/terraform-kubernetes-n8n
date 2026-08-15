@@ -298,6 +298,14 @@ run "webhook_url_reaches_the_pods_on_the_kubernetes_backend" {
     error_message = "With no override, WEBHOOK_URL must be https:// against the canonical ingress host."
   }
 
+  # On a single host the callback follows the same name as everything else.
+  # Asserted here too so the output is covered on the path where the chart,
+  # not the module, renders N8N_EDITOR_BASE_URL.
+  assert {
+    condition     = output.n8n_oauth_callback_url == "https://n8n.test.example.com/rest/oauth2-credential/callback"
+    error_message = "On a single host the OAuth callback URL must follow the ingress host; got ${output.n8n_oauth_callback_url}."
+  }
+
   # Through the chart's typed key, never as a second config.extraEnv entry: the
   # chart already emits WEBHOOK_URL from its own ConfigMap, and two entries of
   # one name in a container's env list fail the strategic merge patch on every
@@ -363,6 +371,20 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
   assert {
     condition     = output.n8n_webhook_url != output.n8n_url
     error_message = "With n8n_webhook_url set to a different host, the two URL outputs must differ."
+  }
+
+  # The output exists so a caller can register the right redirect URI without
+  # deriving it. Asserted against the webhook host as well as for the editor
+  # one, because naming the webhook host is the specific mistake that produced
+  # a 404 at the end of every consent flow.
+  assert {
+    condition     = output.n8n_oauth_callback_url == "https://n8n.test.example.com/rest/oauth2-credential/callback"
+    error_message = "The OAuth callback URL must sit on the editor host; got ${output.n8n_oauth_callback_url}."
+  }
+
+  assert {
+    condition     = !startswith(output.n8n_oauth_callback_url, output.n8n_webhook_url)
+    error_message = "The OAuth callback URL must never sit on the webhook host: that host routes only the webhook prefixes, to pods serving no /rest routes."
   }
 }
 
@@ -860,6 +882,35 @@ run "secret_backed_env_renders_a_secretKeyRef_alongside_plain_env" {
 # does not, so the reference resolves to nothing and the pod sticks in
 # CreateContainerConfigError long after Helm reported success - the exact
 # failure this validation exists to move forward to plan time.
+# The module hardcodes the path segments n8n serves and then publishes them:
+# n8n_webhook_path_prefixes, the webhook Ingress in every split example, and
+# the /rest in n8n_oauth_callback_url. Repointing one through n8n_extra_env
+# leaves all three advertising a path n8n no longer answers on, and nothing
+# reports a conflict - the Ingress simply routes to a 404.
+run "repointing_a_path_segment_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENDPOINT_REST", value = "api" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "repointing_the_webhook_segment_is_rejected_too" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENDPOINT_WEBHOOK", value = "hooks" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 run "a_secret_name_with_an_empty_label_is_rejected" {
   command = plan
 
