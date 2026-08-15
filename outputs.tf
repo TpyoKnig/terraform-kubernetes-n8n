@@ -40,6 +40,11 @@ output "n8n_webhook_url" {
   value = local.k8s_webhook_url
 }
 
+output "n8n_oauth_callback_url" {
+  description = "Redirect URI to register with any OAuth2 provider a credential will use (Slack, Google, Microsoft and the rest). n8n builds this from N8N_EDITOR_BASE_URL, which is the editor hostname, not the webhook one: on a split ingress the two differ, and the webhook host routes only the webhook prefixes to pods that serve no /rest routes, so a callback sent there 404s twice over. Exposed because that is not guessable from the other outputs and getting it wrong fails in the provider's UI, at the end of a consent flow, with no n8n log line to find. Assumes n8n's default REST endpoint; the module does not set N8N_ENDPOINT_REST."
+  value       = "${local.k8s_editor_base_url}/rest/oauth2-credential/callback"
+}
+
 output "namespace" {
   description = "Kubernetes namespace n8n is deployed into."
   # Deliberately sourced from local.namespace_name rather than var.k8s_namespace

@@ -26,6 +26,11 @@ output "n8n_url" {
   value       = "https://${var.editor_host}"
 }
 
+output "oauth_callback_url" {
+  description = "Redirect URI to register with any OAuth2 provider a credential will use. It sits on editor_host, never on webhook_host: the webhook Ingress routes only the webhook prefixes, and it routes them to pods that serve no /rest routes, so a callback sent there 404s twice over. Read it from the module rather than building it here, so the value stays whatever n8n was actually configured with."
+  value       = module.n8n.n8n_oauth_callback_url
+}
+
 output "namespace" {
   description = "Namespace the n8n release and its backing services were deployed into."
   value       = module.n8n.namespace
