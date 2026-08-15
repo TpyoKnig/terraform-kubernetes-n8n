@@ -7,6 +7,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.0.1-beta.4]
+
+The AI Assistant round. Adds an input for secret-backed environment variables
+and an output naming the OAuth2 redirect URI, and fixes a split ingress
+labelling the editor with the webhook hostname, which broke every OAuth
+credential on that topology.
+
+Upgrading from `0.0.1-beta.3` plans clean on a single hostname. On a split
+ingress it replans the n8n release: `WEBHOOK_URL` and `N8N_EDITOR_BASE_URL`
+move out of the chart's ConfigMap and into `config.extraEnv`, and the second of
+those changes value. The pods restart. No data is touched, and every output
+that already existed keeps its value on every path; `n8n_oauth_callback_url` is
+new, and adding it is the only output-level change.
+
 ### Added
 
 - `n8n_oauth_callback_url` output: the redirect URI to register with any OAuth2
@@ -220,7 +234,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.3...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.4...HEAD
+[0.0.1-beta.4]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.2
 [0.0.1-beta.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.1
