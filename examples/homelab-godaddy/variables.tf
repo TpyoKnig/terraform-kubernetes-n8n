@@ -109,6 +109,11 @@ variable "shared_storage_class" {
   description = "An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Setting it also moves namespace creation from the module to this example, because the claim has to exist before the Helm release. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not."
   type        = string
   default     = null
+
+  validation {
+    condition     = var.shared_storage_class == null || length(trimspace(coalesce(var.shared_storage_class, " "))) > 0
+    error_message = "shared_storage_class must be null to disable shared storage, or a non-empty class name to enable it. An empty string is neither: it enables the claim and then asks Kubernetes for no class at all, rather than for the default one, so the claim sits Pending with nothing explaining why."
+  }
 }
 
 variable "shared_storage_size" {
@@ -119,7 +124,7 @@ variable "shared_storage_size" {
 }
 
 variable "shared_mount_path" {
-  description = "Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to <this>/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n_extra_volume_mounts reaches the n8n container only."
+  description = "Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n_extra_volume_mounts reaches the n8n container only."
   type        = string
   default     = "/opt/n8n-shared"
   nullable    = false

@@ -12,8 +12,9 @@
 # Anything written to local disk by one is invisible to the other two.
 #
 # An RWX claim mounted into all three closes it. Off unless shared_storage_class
-# is set, in which case binary data stays in Postgres, which is n8n's own
-# default in queue mode and is fine until payloads get large.
+# is set: leave it null and binary data stays in Postgres, which is n8n's own
+# default in queue mode and is fine until payloads get large. Set it and main.tf
+# switches n8n to filesystem mode against the shared volume.
 #
 # ── Why the namespace moves here when the claim exists ───────────────────────
 # The claim has to exist before the Helm release: a pod referencing a missing

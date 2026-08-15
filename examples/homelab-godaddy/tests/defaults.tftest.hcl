@@ -71,12 +71,17 @@ run "binary_storage_is_filesystem_on_k8s_backend" {
   }
 }
 
-# ponytail: asserting that a specific resource address IS or IS NOT planned
-# (helm_release.valkey, helm_release.n8n) would be the ideal shape but is not
-# reachable via `assert` blocks, the harness does not expose the planned
-# resource set as an expression. That coverage comes from the module's own
+# ponytail: whether a resource inside the module is planned (helm_release.valkey,
+# helm_release.n8n) is not reachable from an `assert` block, because the harness
+# exposes no planned-resource-set expression and a module's internal addresses
+# are not in scope here. That coverage comes from the module's own
 # tests/defaults.tftest.hcl (variable-contract assertions) plus a real
 # `terraform plan` against a live cluster.
+#
+# A count-gated resource in this root is a different case and is assertable:
+# `length(kubernetes_persistent_volume_claim_v1.shared)` is an ordinary
+# expression over a resource this configuration declares, which is what the
+# shared-storage runs below use.
 
 run "no_dns_record_unless_a_domain_is_named" {
   command = plan
@@ -162,4 +167,17 @@ run "shared_mount_path_must_be_absolute" {
   }
 
   expect_failures = [var.shared_mount_path]
+}
+
+run "an_empty_storage_class_is_rejected" {
+  command = plan
+
+  variables {
+    shared_storage_class = ""
+  }
+
+  # "" is not null, so it used to enable the claim and then set
+  # storageClassName to "", which asks Kubernetes for no class at all rather
+  # than for the default one. The claim sits Pending with nothing saying why.
+  expect_failures = [var.shared_storage_class]
 }

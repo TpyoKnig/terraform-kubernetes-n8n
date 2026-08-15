@@ -237,3 +237,16 @@ run "a_trailing_hyphen_label_is_rejected" {
 
   expect_failures = [var.webhook_host]
 }
+
+run "an_empty_storage_class_is_rejected" {
+  command = plan
+
+  variables {
+    shared_storage_class = ""
+  }
+
+  # "" is not null, so it used to enable the claim and then set
+  # storageClassName to "", which asks Kubernetes for no class at all rather
+  # than for the default one. The claim sits Pending with nothing saying why.
+  expect_failures = [var.shared_storage_class]
+}

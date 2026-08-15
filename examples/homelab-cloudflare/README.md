@@ -43,29 +43,7 @@ For the two-hostname topology (editor and webhooks on separate names, so an iden
 
 ## Shared storage across the pods
 
-Queue mode runs main, worker and webhook-processor pods, and they do not share a filesystem. The chart mounts its own `data` volume on main only, and this module leaves persistence at the chart default, so that volume is an `emptyDir`.
-
-That matters as soon as a workflow moves a file: a webhook arrives on one pod, the execution runs on a worker, and the editor renders the result on a third. Anything written to local disk by one is invisible to the other two.
-
-Set `shared_storage_class` to an RWX-capable class and this example creates a claim and mounts it into all three:
-
-```hcl
-shared_storage_class = "nfs-csi"    # or smb, cephfs, whatever the cluster offers
-shared_storage_size  = "20Gi"
-```
-
-**Two settings make it take effect, and the second is the one people miss.** n8n defaults binary data to `filesystem` in regular mode but to `database` in scaling mode, and this module always runs queue mode. Mount the volume without `N8N_DEFAULT_BINARY_DATA_MODE=filesystem` and every payload still goes to Postgres: the mount is there, empty, and nothing reports a problem. The example sets both.
-
-Leave `shared_storage_class` null and no claim is created, binary data stays in Postgres, and this still applies on a cluster with no RWX class. That is fine until payloads get large.
-
-Two consequences worth knowing:
-
-- **The namespace moves from the module to this example** when a claim exists, because the claim has to be created before the Helm release. A pod referencing a missing PVC stays `Pending` and the release never goes ready. `create_namespace = false` exists for this.
-- **`terraform destroy` takes the claim** along with the namespace. If the data matters, set the class's `reclaimPolicy` to `Retain` or keep the claim in a separate configuration.
-
-**Check the class can actually reclaim before trusting it.** With the NFS CSI driver the controller mounts the share itself to remove a released PVC's directory, and where that mount fails, an appliance serving only NFSv3 being the common case, the PV is deleted while every byte stays on the server. It reads as automatic cleanup and is not. Create a throwaway PVC against the class, delete it, and look at the server.
-
-The task-runner sidecar does not get the mount: `n8n_extra_volume_mounts` reaches the n8n container only.
+Identical to [`../homelab`](../homelab#shared-storage-across-the-pods), including the inputs and the two settings that make it take effect. Set `shared_storage_class` to an RWX-capable class and this example creates a claim and mounts it into the main, worker and webhook-processor pods; leave it null and binary data stays in Postgres. Read that section rather than a copy of it here, so the two cannot drift.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
@@ -114,7 +92,7 @@ The task-runner sidecar does not get the mount: `n8n_extra_volume_mounts` reache
 | <a name="input_metrics_lan_ip"></a> [metrics\_lan\_ip](#input\_metrics\_lan\_ip) | Address to publish the n8n main pod's /metrics endpoint on, for a Prometheus that runs outside the cluster and so cannot use in-cluster service discovery. Same allocator requirement as postgres\_lan\_ip. Leave null (the default) and no LoadBalancer Service is created; an in-cluster Prometheus or Alloy does not need this. | `string` | `null` | no |
 | <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace to deploy into. Created by the module by default, or by this example when shared\_storage\_class is set, because the shared claim has to exist before the Helm release. | `string` | `"n8n"` | no |
 | <a name="input_postgres_lan_ip"></a> [postgres\_lan\_ip](#input\_postgres\_lan\_ip) | Address to publish the CNPG rw endpoint on, for LAN clients that are not in the cluster - a Grafana instance querying n8n's execution tables, a DB client. Rendered as an io.cilium/lb-ipam-ips annotation, so it pins the address on Cilium LB-IPAM only; other allocators (MetalLB, kube-vip) ignore that key and will allocate an arbitrary address instead. To pin on those, call the module directly and use cnpg\_lan\_expose.annotations / metrics\_lan\_expose.annotations with the key your allocator honours. Leave null (the default) and no LoadBalancer Service is created. Postgres is exposed without a proxy in front of it, so only set this on a network you trust. | `string` | `null` | no |
-| <a name="input_shared_mount_path"></a> [shared\_mount\_path](#input\_shared\_mount\_path) | Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to <this>/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n\_extra\_volume\_mounts reaches the n8n container only. | `string` | `"/opt/n8n-shared"` | no |
+| <a name="input_shared_mount_path"></a> [shared\_mount\_path](#input\_shared\_mount\_path) | Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n\_extra\_volume\_mounts reaches the n8n container only. | `string` | `"/opt/n8n-shared"` | no |
 | <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Setting it also moves namespace creation from the module to this example, because the claim has to exist before the Helm release. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
 | <a name="input_shared_storage_size"></a> [shared\_storage\_size](#input\_shared\_storage\_size) | Size of the shared RWX claim. Only used when shared\_storage\_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow. | `string` | `"20Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the CNPG and Valkey PVCs. Empty uses whatever the cluster's default StorageClass is. | `string` | `""` | no |
