@@ -1,8 +1,28 @@
 # terraform-kubernetes-n8n
 
+> **⚠️ Community project, not an n8n product.**
+>
+> This module is written and maintained by [@TpyoKnig](https://github.com/TpyoKnig)
+> and published to the Terraform Registry as
+> [`TpyoKnig/n8n/kubernetes`](https://registry.terraform.io/modules/TpyoKnig/n8n/kubernetes/latest).
+>
+> **n8n GmbH does not write, review, endorse, support or take responsibility
+> for it.** Holding an n8n licence entitles you to nothing here, and n8n's
+> Support team cannot help you with it. Do not send bug reports or security
+> findings about this module to n8n: they cannot act on them, and it only
+> delays the fix.
+>
+> n8n's own Terraform module is
+> [`n8n-io/n8n/aws`](https://registry.terraform.io/modules/n8n-io/n8n/aws/latest).
+> **If you are deploying on AWS, or you want a module n8n stands behind, use
+> that one instead.** This one exists because that one builds the cloud
+> foundation as well as the workload, and targets an Enterprise licence. If
+> you already run a cluster and you are on Community edition, that module has
+> nothing to sell you and this one might.
+
 Terraform module that deploys [n8n](https://n8n.io) onto a Kubernetes cluster you already run. One `terraform apply` brings up n8n and everything it needs to work: PostgreSQL, a Redis-compatible queue, the namespace, Secrets and an Ingress. No cloud account anywhere.
 
-It's the Kubernetes sibling of [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n) and keeps that module's shape on purpose (one resource-bearing root, the same variable and output naming, the same quality bar), so if you know that one you can read this one. **It's a community project, not an n8n product**; see [Support](#support).
+It's the Kubernetes sibling of [`terraform-aws-n8n`](https://github.com/n8n-io/terraform-aws-n8n) and keeps that module's shape on purpose (one resource-bearing root, the same variable and output naming, the same quality bar), so if you know that one you can read this one.
 
 **No n8n licence is required or accepted.** Everything it deploys is Community-edition n8n: queue mode, separate worker and webhook-processor pools, HPA and KEDA autoscaling. It renders no licence key, no multi-main topology and no licence-gated environment variables.
 
