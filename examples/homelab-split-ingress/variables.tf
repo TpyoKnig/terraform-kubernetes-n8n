@@ -107,8 +107,8 @@ variable "proxy_hops" {
   nullable    = false
 
   validation {
-    condition     = var.proxy_hops >= 0 && floor(var.proxy_hops) == var.proxy_hops
-    error_message = "proxy_hops must be a non-negative whole number. It is a count of proxies, and n8n reads N8N_PROXY_HOPS as an integer."
+    condition     = var.proxy_hops >= 1 && floor(var.proxy_hops) == var.proxy_hops
+    error_message = "proxy_hops must be a whole number of at least 1. This example creates its own Ingresses, so ingress-nginx is always in the chain and there is always a hop to count. 0 would tell n8n to treat the controller's own address as the client, which silently defeats every IP allowlist, rate limit and audit log line."
   }
 }
 

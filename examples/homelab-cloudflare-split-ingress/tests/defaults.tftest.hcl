@@ -107,6 +107,21 @@ run "proxy_hops_rejects_a_fractional_count" {
   expect_failures = [var.proxy_hops]
 }
 
+run "proxy_hops_rejects_zero" {
+  command = plan
+
+  variables {
+    proxy_hops = 0
+  }
+
+  # 0 means "trust the socket address as the client". This example always
+  # creates its own Ingresses, so ingress-nginx is always in the chain and the
+  # socket address is always the controller. Accepting 0 here would let an
+  # allowlist compare every request against one internal address, which either
+  # admits everyone or no one, and reports neither.
+  expect_failures = [var.proxy_hops]
+}
+
 run "webhooks_are_advertised_on_the_webhook_host" {
   command = plan
 

@@ -19,8 +19,10 @@
 # The claim has to exist before the Helm release: a pod referencing a missing
 # PVC stays Pending and the release never goes ready. The claim needs a
 # namespace, so the order is namespace, claim, module. create_namespace = false
-# exists for exactly this, and the module block takes a depends_on so Terraform
-# cannot interleave them.
+# exists for exactly this, and the ordering is carried by the reference itself:
+# main.tf passes this claim's name into n8n_extra_volumes, which is an edge
+# Terraform cannot reorder. No depends_on on the module block, deliberately, for
+# the reason spelled out there.
 #
 # With shared_storage_class unset, neither resource is created and the module
 # creates the namespace itself as before.
