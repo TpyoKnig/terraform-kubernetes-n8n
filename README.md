@@ -113,6 +113,19 @@ module "n8n" {
 
 That's the whole required surface: a hostname and how to serve it. Everything else has a default that works on an ordinary cluster.
 
+**On OpenTofu, use the git source instead.** OpenTofu resolves registry modules against `registry.opentofu.org`, which is a separate index from HashiCorp's `registry.terraform.io`. This module is published to the latter only, so the address above fails with `Module not found`:
+
+```hcl
+module "n8n" {
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.2"
+
+  n8n_domain = "n8n.example.com"
+  # ...
+}
+```
+
+That resolves the same commit the registry serves. There is no `version` argument on a git source, so the `?ref=` **is** the pin, and a range constraint is not available: see [Stability and versioning](#stability-and-versioning), where an exact pin is the only thing that works pre-1.0 anyway.
+
 Providers are yours to configure. The module declares no `provider` blocks:
 
 ```hcl
@@ -227,7 +240,7 @@ This is a beta. `0.0.1-beta.2` is the current release, so expect breaking change
 
 Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.2`. Once there is a stable release, ranges start behaving normally.
 
-Straight from git works too, if you would rather not go through the registry: `source = "github.com/TpyoKnig/terraform-kubernetes-n8n?ref=0.0.1-beta.2"`. Tracking the default branch instead of a tag means a `terraform apply` can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.2"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
