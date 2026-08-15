@@ -322,9 +322,33 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
     n8n_webhook_url = "https://hooks.test.example.com"
   }
 
+  # webhook.url is deliberately emptied on this path, which is the opposite of
+  # what the single-host run above asserts. Chart 1.10.0 derives
+  # N8N_EDITOR_BASE_URL from webhook.url when it has no ingress host to read,
+  # so leaving it set labels the editor with the webhook hostname and every
+  # OAuth2 redirect URI 404s. Emptying it suppresses both chart keys and both
+  # configMapKeyRef entries, so the module can set them from extraEnv without
+  # the duplicate that breaks helm upgrade.
   assert {
-    condition     = local.k8s_values_webhook.webhook.url == "https://hooks.test.example.com"
-    error_message = "n8n_webhook_url must override the value derived from n8n_domain."
+    condition     = local.k8s_values_webhook.webhook.url == ""
+    error_message = "On a split ingress the chart's webhook.url must be empty so it renders neither URL key."
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "WEBHOOK_URL=https://hooks.test.example.com",
+    )
+    error_message = "Emptying webhook.url drops the chart's WEBHOOK_URL, so extraEnv must carry it back."
+  }
+
+  # The regression this whole path exists for.
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "N8N_EDITOR_BASE_URL=https://n8n.test.example.com",
+    )
+    error_message = "N8N_EDITOR_BASE_URL must name the editor host, not the webhook host."
   }
 
   # Asserted on the output as well as the local, because the split-hostname
@@ -339,6 +363,30 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
   assert {
     condition     = output.n8n_webhook_url != output.n8n_url
     error_message = "With n8n_webhook_url set to a different host, the two URL outputs must differ."
+  }
+}
+
+# k8s_ingress_host is documented as "only used when create_ingress = true", and
+# homelab-split-ingress leaves it unset for that reason. The editor base URL
+# must honour that: sourcing it from k8s_ingress_host would let a value the
+# docs call ignored decide which host receives OAuth2 callbacks.
+run "the_editor_base_url_ignores_k8s_ingress_host_when_no_ingress_is_created" {
+  command = plan
+
+  variables {
+    postgres_backend = "cnpg"
+    redis_backend    = "valkey"
+    create_ingress   = false
+    k8s_ingress_host = "stale.test.example.com"
+    n8n_webhook_url  = "https://hooks.test.example.com"
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "N8N_EDITOR_BASE_URL=https://n8n.test.example.com",
+    )
+    error_message = "With create_ingress = false the editor base URL must come from n8n_domain, not k8s_ingress_host."
   }
 }
 
@@ -760,6 +808,148 @@ run "a_module_managed_env_name_is_still_rejected" {
   }
 
   expect_failures = [var.n8n_extra_env]
+}
+
+# The secretKeyRef form has to land in the same config.extraEnv list as the
+# plain one, because that list is the only place the chart reads caller env
+# from. Asserting both in one run is the point: they are separate inputs
+# concatenated separately, so a change that drops one would otherwise still
+# pass the other's test.
+run "secret_backed_env_renders_a_secretKeyRef_alongside_plain_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENABLED_MODULES", value = "instance-ai" },
+    ]
+    n8n_extra_env_from_secret = [
+      {
+        name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+        secret_name = "ai-assistant-secrets"
+        secret_key  = "anthropic-api-key"
+      },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      {
+        name = "N8N_INSTANCE_AI_MODEL_API_KEY"
+        valueFrom = {
+          secretKeyRef = {
+            name = "ai-assistant-secrets"
+            key  = "anthropic-api-key"
+          }
+        }
+      }
+    )
+    error_message = "n8n_extra_env_from_secret must render as a valueFrom.secretKeyRef entry in config.extraEnv."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_ENABLED_MODULES", value = "instance-ai" }
+    )
+    error_message = "Adding a secret-backed entry must not displace the plain n8n_extra_env entries."
+  }
+}
+
+# A single [a-z0-9.-] character class accepts both of these. The API server
+# does not, so the reference resolves to nothing and the pod sticks in
+# CreateContainerConfigError long after Helm reported success - the exact
+# failure this validation exists to move forward to plan time.
+run "a_secret_name_with_an_empty_label_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "SOME_KEY"
+        secret_name = "a..b"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+run "a_secret_name_with_a_label_ending_in_a_hyphen_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "SOME_KEY"
+        secret_name = "a-.b"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+run "a_dotted_secret_name_is_still_accepted" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "SOME_KEY"
+        secret_name = "team-a.ai-secrets"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "SOME_KEY",
+    )
+    error_message = "A valid multi-label secret_name must still reach config.extraEnv."
+  }
+}
+
+run "a_module_managed_env_name_is_rejected_in_the_secret_backed_input_too" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "N8N_ENCRYPTION_KEY"
+        secret_name = "my-secrets"
+        secret_key  = "key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+# A name set in both inputs is not a Kubernetes error, which is exactly why it
+# needs a plan-time one: the container keeps the last entry and discards the
+# other without logging anything.
+run "the_same_env_name_in_both_inputs_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_INSTANCE_AI_MODEL_API_KEY", value = "plaintext-by-mistake" },
+    ]
+    n8n_extra_env_from_secret = [
+      {
+        name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+        secret_name = "ai-assistant-secrets"
+        secret_key  = "anthropic-api-key"
+      },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
 }
 
 # The chart's webhook Ingress renders four of the five prefixes n8n serves from

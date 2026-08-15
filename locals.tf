@@ -245,6 +245,9 @@ locals {
     "N8N_HOST",
     "N8N_PORT",
     "N8N_PROTOCOL",
+    # Chart-rendered on a single host, module-rendered on a split ingress --
+    # reserved either way, because the two halves have to agree. See
+    # k8s_split_ingress_urls.
     "N8N_EDITOR_BASE_URL",
     "N8N_DISABLE_PRODUCTION_MAIN_PROCESS",
     "N8N_NATIVE_PYTHON_RUNNER",
@@ -462,9 +465,52 @@ locals {
   # merge patch fail on every subsequent helm upgrade, and the rollback fails
   # with it, leaving the release stuck in `failed`. The first apply succeeds,
   # so this only ever surfaced on the second one.
+  #
+  # The exception is a split ingress, below.
+  # k8s_ingress_host is documented as "only used when create_ingress = true",
+  # and homelab-split-ingress leaves it unset on the stated grounds that every
+  # consumer of it is gated on create_ingress except the webhook URL fallback,
+  # which n8n_webhook_url overrides. So the editor base reads n8n_domain once
+  # the module renders no Ingress: sourcing it from k8s_ingress_host would make
+  # a value the docs call ignored decide the OAuth callback host.
+  #
+  # The webhook fallback keeps reading k8s_ingress_host_effective, unchanged --
+  # it is the pre-existing exception the example already accounts for, and
+  # moving it would change an address callers may have registered elsewhere.
+  k8s_editor_base_url    = "https://${var.create_ingress ? local.k8s_ingress_host_effective : local.n8n_domain}"
+  k8s_webhook_url        = coalesce(var.n8n_webhook_url, "https://${local.k8s_ingress_host_effective}")
+  k8s_split_ingress_urls = !var.create_ingress && local.k8s_webhook_url != local.k8s_editor_base_url
+
+  # chart 1.10.0 configmap.yaml derives N8N_EDITOR_BASE_URL from the first
+  # ingress host, and failing that from webhook.url, on the stated assumption
+  # that "webhook.url is the domain". That holds for a single host and breaks
+  # for a split one: with create_ingress = false the chart has no ingress host
+  # to read, so it labels the editor with the webhook hostname.
+  #
+  # Nothing warns. The editor still loads, because it is reached through the
+  # caller's own Ingress on the right host. What breaks is every absolute URL
+  # n8n builds from UrlService.getInstanceBaseUrl(), which prefers
+  # N8N_EDITOR_BASE_URL over WEBHOOK_URL -- above all the OAuth2 redirect URI,
+  # <editor base>/rest/oauth2-credential/callback. Sent to the webhook host
+  # that path 404s twice over: a split ingress routes only the webhook prefixes
+  # there, and the webhook processor serves no /rest routes even when reached.
+  # So every OAuth credential fails at the provider's callback, while webhook
+  # delivery keeps working, which points the search at the wrong half.
+  #
+  # Fixed by taking both names away from the chart rather than overriding it.
+  # An override would put a second entry of the same name in the env list and
+  # wedge the next upgrade, exactly as the note above describes. Emptying
+  # webhook.url makes the chart's own guards (`if .Values.webhook.url`, and the
+  # matching ones on the configMapKeyRef entries in _configmap-env.tpl) render
+  # neither key nor either reference, leaving the module to set both in
+  # config.extraEnv with no duplication.
+  #
+  # Single-host deployments are untouched: k8s_split_ingress_urls is false
+  # whenever the two URLs agree, and false whenever create_ingress is true,
+  # since the chart then reads its own ingress host and is already correct.
   k8s_values_webhook = {
     webhook = {
-      url = coalesce(var.n8n_webhook_url, "https://${local.k8s_ingress_host_effective}")
+      url = local.k8s_split_ingress_urls ? "" : local.k8s_webhook_url
     }
   }
 
@@ -672,6 +718,16 @@ locals {
           { name = "N8N_PROXY_HOPS", value = "1" },
         ] : [],
 
+        # Split ingress only. See k8s_split_ingress_urls above for why the
+        # chart cannot render these two itself and why overriding it in place
+        # would break the next helm upgrade. Both are set here or neither is:
+        # emptying webhook.url drops the chart's WEBHOOK_URL as well, so this
+        # block has to carry it back.
+        local.k8s_split_ingress_urls ? [
+          { name = "WEBHOOK_URL", value = local.k8s_webhook_url },
+          { name = "N8N_EDITOR_BASE_URL", value = local.k8s_editor_base_url },
+        ] : [],
+
         # Postgres TLS. Kept as an explicit "false" rather than omitted, so the
         # rendered value states the choice instead of leaning on n8n's default:
         # this is the switch that matters when the endpoint is an in-cluster
@@ -808,14 +864,31 @@ locals {
           { name = "N8N_METRICS_INCLUDE_QUEUE_METRICS", value = "true" },
           { name = "N8N_METRICS_INCLUDE_CACHE_METRICS", value = "true" },
         ] : [],
-        # n8n_extra_env is typed list(object({name, value})) at the root, so no
-        # valueFrom path here. On the k8s backend a caller who needs valueFrom
-        # (secretKeyRef, fieldRef, ...) supplies it via extra_helm_values (raw
-        # YAML merged onto the release below), which reaches the same chart
-        # config.extraEnv list.
+        # The two caller-supplied env inputs, both landing in this one list.
+        # n8n_extra_env is typed list(object({name, value})), so it carries no
+        # valueFrom path; n8n_extra_env_from_secret is the secretKeyRef form,
+        # and the reason it is a typed input rather than a job for
+        # n8n_extra_helm_values is that the overlay cannot append here. Helm
+        # coalesces maps across values documents but *replaces* lists, so an
+        # overlay setting config.extraEnv substitutes its own list for this
+        # entire one, dropping N8N_ENCRYPTION_KEY and every connection variable
+        # assembled above. The release still installs; the pods just come up
+        # misconfigured.
         [
           for e in var.n8n_extra_env :
           { name = e.name, value = e.value }
+        ],
+        [
+          for e in var.n8n_extra_env_from_secret :
+          {
+            name = e.name
+            valueFrom = {
+              secretKeyRef = {
+                name = e.secret_name
+                key  = e.secret_key
+              }
+            }
+          }
         ],
       )
     }

@@ -168,7 +168,7 @@ variable "k8s_ingress_extra_annotations" {
 }
 
 variable "n8n_extra_helm_values" {
-  description = "Raw YAML merged on top of the module-rendered chart values. The escape hatch for chart knobs this module exposes no typed input for, most usefully valueFrom-shaped environment entries, which n8n_extra_env cannot express because it is typed as name/value pairs."
+  description = "Raw YAML merged on top of the module-rendered chart values. The escape hatch for chart knobs this module exposes no typed input for. Merging is Helm's, which coalesces maps but replaces lists outright, so an overlay that sets a list the module already renders substitutes its own rather than adding to it. config.extraEnv is the list where that matters most: overriding it there drops N8N_ENCRYPTION_KEY and every connection variable the module assembles, and the release still installs, so the failure surfaces as pods that come up misconfigured. Use n8n_extra_env for plain values and n8n_extra_env_from_secret for secretKeyRef entries; both append to that list instead of replacing it."
   type        = string
   default     = ""
   nullable    = false
@@ -1677,6 +1677,72 @@ variable "n8n_extra_env" {
       )
     ])
     error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection/queue/runner/topology families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs (e.g. n8n_log_level, n8n_metrics_enabled) instead."
+  }
+}
+
+variable "n8n_extra_env_from_secret" {
+  description = "Additional environment variables sourced from keys of existing Kubernetes Secrets, injected into all n8n pods (main, worker, and webhook-processor) alongside n8n_extra_env. Each entry names the environment variable, the Secret, and the key within it, and renders as a valueFrom.secretKeyRef entry in the chart's config.extraEnv list. This is the input to use for anything sensitive: unlike n8n_extra_env, no value passes through Terraform, so nothing lands in the Helm release or in state, and rotating the value is a Secret edit plus a pod restart rather than an apply. The Secret must already exist in the same namespace as the n8n pods and is neither created nor read by this module, which is what keeps its value out of state; a name or key that does not exist leaves the pods in CreateContainerConfigError rather than failing the apply, because Kubernetes resolves the reference at container start and Helm has already reported success by then. Reserved names are rejected exactly as they are for n8n_extra_env, and a name may not appear in both inputs. Example: [{name = \"N8N_INSTANCE_AI_MODEL_API_KEY\", secret_name = \"ai-assistant-secrets\", secret_key = \"anthropic-api-key\"}]."
+  type = list(object({
+    name        = string
+    secret_name = string
+    secret_key  = string
+  }))
+  default  = []
+  nullable = false
+
+  validation {
+    condition = alltrue([
+      for e in var.n8n_extra_env_from_secret :
+      e.name != "" && e.name == trimspace(e.name)
+    ])
+    error_message = "Each n8n_extra_env_from_secret entry must have a non-empty name with no leading or trailing whitespace. Whitespace-padded names would bypass the duplicate and module-managed guards while rendering as a distinct, ignored env var."
+  }
+
+  validation {
+    # RFC 1123 subdomain for the Secret name, and the character class the API
+    # server accepts for a key. Checked here rather than left to the apply
+    # because the reference is resolved at container start: a malformed name
+    # produces a stuck pod long after Helm has reported the release installed.
+    #
+    # Matched label by label rather than as one character class. A single class
+    # of [a-z0-9.-] admits "a..b" and "a-.b", which the API server rejects --
+    # so the guard would have passed exactly the names it exists to catch.
+    condition = alltrue([
+      for e in var.n8n_extra_env_from_secret :
+      length(e.secret_name) <= 253 &&
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", e.secret_name)) &&
+      can(regex("^[a-zA-Z0-9._-]{1,253}$", e.secret_key))
+    ])
+    error_message = "Each n8n_extra_env_from_secret entry needs a secret_name that is a valid RFC 1123 subdomain (lowercase alphanumerics, - and ., starting and ending alphanumeric) and a secret_key made only of alphanumerics, -, _ and . (both non-empty)."
+  }
+
+  validation {
+    condition = length(distinct([
+      for e in var.n8n_extra_env_from_secret : e.name
+    ])) == length(var.n8n_extra_env_from_secret)
+    error_message = "n8n_extra_env_from_secret contains duplicate names; each environment variable may be set only once."
+  }
+
+  validation {
+    # Across the two inputs, not just within this one. Both land in the same
+    # config.extraEnv list, where a repeated name is not an error: Kubernetes
+    # takes the last entry and discards the first silently, so the caller would
+    # get whichever one this module happened to concat second.
+    condition = length(setintersection(
+      toset([for e in var.n8n_extra_env_from_secret : e.name]),
+      toset([for e in var.n8n_extra_env : e.name]),
+    )) == 0
+    error_message = "n8n_extra_env_from_secret and n8n_extra_env must not set the same variable name. Both render into config.extraEnv, where Kubernetes silently keeps the last entry, so the winner would be an artifact of concat order rather than a choice. Set each name in exactly one of the two."
+  }
+
+  validation {
+    condition = alltrue([
+      for e in var.n8n_extra_env_from_secret : !(
+        contains(local.n8n_managed_env_names, e.name) ||
+        anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
+      )
+    ])
+    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection/queue/runner/topology families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs (e.g. n8n_log_level, n8n_metrics_enabled) instead."
   }
 }
 
