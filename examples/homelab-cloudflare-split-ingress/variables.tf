@@ -9,7 +9,7 @@ variable "kubeconfig_path" {
 }
 
 variable "namespace" {
-  description = "Namespace to deploy into. Created by the module."
+  description = "Namespace to deploy into. Created by the module by default, or by this example when shared_storage_class is set, because the shared claim has to exist before the Helm release."
   type        = string
   default     = "n8n"
   nullable    = false

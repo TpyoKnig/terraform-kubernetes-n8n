@@ -11,7 +11,9 @@ module "n8n" {
   postgres_backend = "cnpg"
   redis_backend    = "valkey"
   create_ingress   = true
-  create_namespace = true
+  # false when a shared claim exists, because the claim has to be created
+  # before the release and it needs the namespace. See storage.tf.
+  create_namespace = var.shared_storage_class == null
 
   # The hostname the Ingress serves and n8n advertises itself as. The module
   # creates no DNS record for it.
@@ -97,4 +99,37 @@ module "n8n" {
   #             name: ai-assistant-secrets
   #             key: anthropic-api-key
   # YAML
+
+  # ── Shared storage ─────────────────────────────────────────────────────────
+  # Reaches main, worker and webhook-processor alike, which is exactly what the
+  # chart's own persistence does not do. All three are empty unless
+  # shared_storage_class is set. See storage.tf.
+  n8n_extra_volumes = var.shared_storage_class != null ? [{
+    name                    = "shared"
+    persistent_volume_claim = { claim_name = kubernetes_persistent_volume_claim_v1.shared[0].metadata[0].name }
+  }] : []
+
+  n8n_extra_volume_mounts = var.shared_storage_class != null ? [{
+    name       = "shared"
+    mount_path = var.shared_mount_path
+    read_only  = false
+  }] : []
+
+  # Both lines are required, and the mode is the one people miss. n8n defaults
+  # binary data to filesystem in regular mode but to database in scaling mode,
+  # and this module always runs queue mode. Mount the volume without setting the
+  # mode and every payload still goes to Postgres: the mount is there, empty,
+  # and nothing reports a problem.
+  n8n_extra_env = var.shared_storage_class != null ? [
+    { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
+    { name = "N8N_STORAGE_PATH", value = "${var.shared_mount_path}/storage" },
+  ] : []
+
+  # No depends_on here on purpose. n8n_extra_volumes already references the
+  # claim, which is the ordering edge: Terraform cannot create the release until
+  # the claim exists, and the claim cannot exist until the namespace does. An
+  # explicit depends_on would add nothing and cost something, because it defers
+  # everything inside the module, including the node lookup the capacity check
+  # reads, turning a plan-time diagnostic into an apply-time one.
+
 }

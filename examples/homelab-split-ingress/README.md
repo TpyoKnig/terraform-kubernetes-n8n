@@ -113,6 +113,32 @@ Both `Ingress` objects go with it. DNS records are not managed here, so they sta
 | Auth boundary | all-or-nothing | editor only |
 | DNS records | one | two |
 
+## Shared storage across the pods
+
+Queue mode runs main, worker and webhook-processor pods, and they do not share a filesystem. The chart mounts its own `data` volume on main only, and this module leaves persistence at the chart default, so that volume is an `emptyDir`.
+
+That matters as soon as a workflow moves a file: a webhook arrives on one pod, the execution runs on a worker, and the editor renders the result on a third. Anything written to local disk by one is invisible to the other two.
+
+Set `shared_storage_class` to an RWX-capable class and this example creates a claim and mounts it into all three:
+
+```hcl
+shared_storage_class = "nfs-csi"    # or smb, cephfs, whatever the cluster offers
+shared_storage_size  = "20Gi"
+```
+
+**Two settings make it take effect, and the second is the one people miss.** n8n defaults binary data to `filesystem` in regular mode but to `database` in scaling mode, and this module always runs queue mode. Mount the volume without `N8N_DEFAULT_BINARY_DATA_MODE=filesystem` and every payload still goes to Postgres: the mount is there, empty, and nothing reports a problem. The example sets both.
+
+Leave `shared_storage_class` null and no claim is created, binary data stays in Postgres, and this still applies on a cluster with no RWX class. That is fine until payloads get large.
+
+Two consequences worth knowing:
+
+- **The namespace moves from the module to this example** when a claim exists, because the claim has to be created before the Helm release. A pod referencing a missing PVC stays `Pending` and the release never goes ready. `create_namespace = false` exists for this.
+- **`terraform destroy` takes the claim** along with the namespace. If the data matters, set the class's `reclaimPolicy` to `Retain` or keep the claim in a separate configuration.
+
+**Check the class can actually reclaim before trusting it.** With the NFS CSI driver the controller mounts the share itself to remove a released PVC's directory, and where that mount fails, an appliance serving only NFSv3 being the common case, the PV is deleted while every byte stays on the server. It reads as automatic cleanup and is not. Create a throwaway PVC against the class, delete it, and look at the server.
+
+The task-runner sidecar does not get the mount: `n8n_extra_volume_mounts` reaches the n8n container only.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -143,6 +169,8 @@ Both `Ingress` objects go with it. DNS records are not managed here, so they sta
 | ---- | ---- |
 | [kubernetes_ingress_v1.editor](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
 | [kubernetes_ingress_v1.webhook](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
+| [kubernetes_namespace.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace) | resource |
+| [kubernetes_persistent_volume_claim_v1.shared](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/persistent_volume_claim_v1) | resource |
 
 ## Inputs
 
@@ -155,8 +183,11 @@ Both `Ingress` objects go with it. DNS records are not managed here, so they sta
 | <a name="input_ingress_extra_annotations"></a> [ingress\_extra\_annotations](#input\_ingress\_extra\_annotations) | Annotations added to both Ingresses. Merged over this example's own (cert-manager issuer, body size, proxy timeouts), so a key set here wins. | `map(string)` | `{}` | no |
 | <a name="input_keda_installed"></a> [keda\_installed](#input\_keda\_installed) | Set true when the KEDA operator is already installed cluster-wide. Workers then scale on Redis queue depth rather than CPU. Leave false if unsure: a ScaledObject with no operator behind it never reconciles and workers stay at their minimum replica count without anything failing. | `bool` | `false` | no |
 | <a name="input_kubeconfig_path"></a> [kubeconfig\_path](#input\_kubeconfig\_path) | Path to kubeconfig used by the kubernetes, helm and kubectl providers. | `string` | `"~/.kube/config"` | no |
-| <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace to deploy into. Created by the module. | `string` | `"n8n"` | no |
+| <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace to deploy into. Created by the module by default, or by this example when shared\_storage\_class is set, because the shared claim has to exist before the Helm release. | `string` | `"n8n"` | no |
 | <a name="input_proxy_hops"></a> [proxy\_hops](#input\_proxy\_hops) | How many proxies append to X-Forwarded-For between the client and an n8n pod (N8N\_PROXY\_HOPS). The default of 1 counts ingress-nginx alone, which is what this example assumes and what the module itself uses when it owns the Ingress. Count your own chain and raise it: a Cloudflare Tunnel, a CDN, a WAF or an outer reverse proxy each add one, so fronting this example with Cloudflare makes it 2. A wrong count is as bad as none: too low and n8n reads a proxy address as the client, too high and it reads a value the client could have forged. Every rate limit, audit log line and IP-based restriction depends on it. | `number` | `1` | no |
+| <a name="input_shared_mount_path"></a> [shared\_mount\_path](#input\_shared\_mount\_path) | Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to <this>/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n\_extra\_volume\_mounts reaches the n8n container only. | `string` | `"/opt/n8n-shared"` | no |
+| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Setting it also moves namespace creation from the module to this example, because the claim has to exist before the Helm release. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
+| <a name="input_shared_storage_size"></a> [shared\_storage\_size](#input\_shared\_storage\_size) | Size of the shared RWX claim. Only used when shared\_storage\_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow. | `string` | `"20Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the CNPG and Valkey PVCs. Empty uses whatever the cluster's default StorageClass is. | `string` | `""` | no |
 | <a name="input_timezone"></a> [timezone](#input\_timezone) | Timezone n8n schedules Cron triggers in (GENERIC\_TIMEZONE). | `string` | `"UTC"` | no |
 | <a name="input_webhook_host"></a> [webhook\_host](#input\_webhook\_host) | Hostname serving production webhooks, forms, waiting webhooks and MCP. Passed to the module as n8n\_webhook\_url, so it is what n8n hands out in every generated webhook URL. Nothing else is routed on this name: a request to any other path gets the ingress controller's 404, which is what makes it safe to leave open to the internet. | `string` | `"hooks.example.com"` | no |

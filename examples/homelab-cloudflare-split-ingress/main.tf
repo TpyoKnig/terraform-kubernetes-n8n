@@ -7,11 +7,10 @@ module "n8n" {
   # ── Backend selection ──────────────────────────────────────────────────────
   postgres_backend = "cnpg"
   redis_backend    = "valkey"
-  # The example owns the namespace so the shared PVC can exist before the Helm
-  # release: a pod referencing a missing claim stays Pending and the release
-  # never goes ready. See storage.tf.
-  create_namespace = false
-  k8s_namespace    = kubernetes_namespace.n8n.metadata[0].name
+  # false when a shared claim exists, because the claim has to be created
+  # before the release and it needs the namespace. See storage.tf.
+  create_namespace = var.shared_storage_class == null
+  k8s_namespace    = var.namespace
 
   # ── The split ──────────────────────────────────────────────────────────────
   # Routing belongs to ingress.tf. The module still builds everything those
@@ -73,4 +72,12 @@ module "n8n" {
       { name = "N8N_STORAGE_PATH", value = "${var.shared_mount_path}/storage" },
     ] : [],
   )
+
+  # No depends_on here on purpose. n8n_extra_volumes already references the
+  # claim, which is the ordering edge: Terraform cannot create the release until
+  # the claim exists, and the claim cannot exist until the namespace does. An
+  # explicit depends_on would add nothing and cost something, because it defers
+  # everything inside the module, including the node lookup the capacity check
+  # reads, turning a plan-time diagnostic into an apply-time one.
+
 }

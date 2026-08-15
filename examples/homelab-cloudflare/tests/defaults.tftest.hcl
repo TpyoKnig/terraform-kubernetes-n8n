@@ -78,3 +78,65 @@ run "binary_storage_is_filesystem_on_k8s_backend" {
 # resource set as an expression. That coverage comes from the module's own
 # tests/defaults.tftest.hcl (variable-contract assertions) plus a real
 # `terraform plan` against a live cluster.
+
+run "no_shared_claim_without_a_class" {
+  command = plan
+
+  # Off by default: binary data stays in Postgres, which is n8n's own default in
+  # queue mode. The example has to stay applicable on a cluster with no RWX
+  # class, so the claim is opt-in rather than required.
+  assert {
+    condition     = length(kubernetes_persistent_volume_claim_v1.shared) == 0
+    error_message = "No claim should be planned when shared_storage_class is null."
+  }
+
+  # And the module keeps creating the namespace on that path.
+  assert {
+    condition     = length(kubernetes_namespace.n8n) == 0
+    error_message = "The example should not create the namespace when there is no shared claim; the module does it."
+  }
+}
+
+run "a_class_produces_one_rwx_claim" {
+  command = plan
+
+  variables {
+    shared_storage_class = "nfs-csi"
+  }
+
+  assert {
+    condition     = length(kubernetes_persistent_volume_claim_v1.shared) == 1
+    error_message = "Expected exactly one shared claim."
+  }
+
+  # Membership rather than equality: access_modes is a set, and comparing a set
+  # to a list literal fails on type before it ever compares contents.
+  #
+  # ReadWriteOnce would bind to one node and leave the other two pod types
+  # unable to mount it, which is the failure this whole file exists to avoid.
+  assert {
+    condition = (
+      contains(kubernetes_persistent_volume_claim_v1.shared[0].spec[0].access_modes, "ReadWriteMany") &&
+      length(kubernetes_persistent_volume_claim_v1.shared[0].spec[0].access_modes) == 1
+    )
+    error_message = "The shared claim must be exactly ReadWriteMany; three pod types mount it."
+  }
+
+  # Namespace ownership moves to the example, or the claim would have nothing to
+  # be created in before the release.
+  assert {
+    condition     = length(kubernetes_namespace.n8n) == 1
+    error_message = "The example must own the namespace when it owns the claim."
+  }
+}
+
+run "shared_mount_path_must_be_absolute" {
+  command = plan
+
+  variables {
+    shared_storage_class = "nfs-csi"
+    shared_mount_path    = "opt/n8n-shared"
+  }
+
+  expect_failures = [var.shared_mount_path]
+}
