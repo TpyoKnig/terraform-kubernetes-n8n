@@ -322,9 +322,33 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
     n8n_webhook_url = "https://hooks.test.example.com"
   }
 
+  # webhook.url is deliberately emptied on this path, which is the opposite of
+  # what the single-host run above asserts. Chart 1.10.0 derives
+  # N8N_EDITOR_BASE_URL from webhook.url when it has no ingress host to read,
+  # so leaving it set labels the editor with the webhook hostname and every
+  # OAuth2 redirect URI 404s. Emptying it suppresses both chart keys and both
+  # configMapKeyRef entries, so the module can set them from extraEnv without
+  # the duplicate that breaks helm upgrade.
   assert {
-    condition     = local.k8s_values_webhook.webhook.url == "https://hooks.test.example.com"
-    error_message = "n8n_webhook_url must override the value derived from n8n_domain."
+    condition     = local.k8s_values_webhook.webhook.url == ""
+    error_message = "On a split ingress the chart's webhook.url must be empty so it renders neither URL key."
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "WEBHOOK_URL=https://hooks.test.example.com",
+    )
+    error_message = "Emptying webhook.url drops the chart's WEBHOOK_URL, so extraEnv must carry it back."
+  }
+
+  # The regression this whole path exists for.
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "N8N_EDITOR_BASE_URL=https://n8n.test.example.com",
+    )
+    error_message = "N8N_EDITOR_BASE_URL must name the editor host, not the webhook host."
   }
 
   # Asserted on the output as well as the local, because the split-hostname

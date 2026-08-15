@@ -22,6 +22,34 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   appends instead, and rejects module-managed names and names already set in
   `n8n_extra_env`.
 
+### Fixed
+
+- `N8N_EDITOR_BASE_URL` named the webhook host on a split ingress, breaking
+  every OAuth2 credential. Chart 1.10.0 derives that variable from the first
+  ingress host and, failing that, from `webhook.url`, on the stated assumption
+  that "webhook.url is the domain". With `create_ingress = false` the chart has
+  no ingress host to read, so it labelled the editor with the webhook
+  hostname. Nothing warned: the editor still loaded, and webhook delivery still
+  worked. What broke was every absolute URL n8n builds from
+  `getInstanceBaseUrl()`, which prefers `N8N_EDITOR_BASE_URL` over
+  `WEBHOOK_URL` - above all the OAuth2 redirect URI,
+  `<editor base>/rest/oauth2-credential/callback`. Sent to the webhook host it
+  404s twice over: a split ingress routes only the webhook prefixes there, and
+  the webhook processor serves no `/rest` routes even when reached. So
+  connecting any OAuth credential failed at the provider's callback while
+  everything else kept working, which points the search at the wrong half.
+
+  The module now empties the chart's `webhook.url` on that path, which
+  suppresses both chart keys and their `configMapKeyRef` entries, and sets
+  `WEBHOOK_URL` and `N8N_EDITOR_BASE_URL` from `config.extraEnv` instead.
+  Overriding in place was not an option: a second entry of the same name in a
+  container's env list fails the strategic merge patch on the next `helm
+  upgrade` and leaves the release stuck in `failed`.
+
+  Affects `homelab-split-ingress` and `homelab-cloudflare-split-ingress`.
+  Single-host deployments are untouched, and the `n8n_webhook_url` output is
+  unchanged on every path.
+
 ### Changed
 
 - `n8n_extra_helm_values` description corrected. It claimed `valueFrom`-shaped
