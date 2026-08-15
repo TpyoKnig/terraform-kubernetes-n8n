@@ -32,6 +32,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- `N8N_ENDPOINT_*` is now reserved. The module hardcodes the path segments n8n
+  serves and then publishes them: `n8n_webhook_path_prefixes` lists `/webhook`,
+  `/webhook-waiting`, `/form`, `/form-waiting` and `/mcp`, the examples route
+  exactly those five on the webhook Ingress, and `n8n_oauth_callback_url`
+  spells `/rest` into the redirect URI. Each of those segments is an
+  `N8N_ENDPOINT_` variable, and repointing one through `n8n_extra_env` left the
+  Ingress routing the old segment and the outputs advertising it while n8n
+  answered on the new one, with the module reporting both as correct.
+
 - `examples/homelab-cloudflare-split-ingress` had no `.terraform-docs.yml`, so
   `terraform-docs --output-check` there printed its help text and exited 0. The
   example was enumerated in the Taskfile and in CI all along; the check simply

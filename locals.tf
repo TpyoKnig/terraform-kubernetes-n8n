@@ -266,10 +266,25 @@ locals {
   # their own bucket needs both families. Blocking a prefix nothing here writes
   # would reject a legitimate configuration to protect a value that does not
   # exist.
+  # N8N_ENDPOINT_ is here because the module hardcodes the path segments n8n
+  # serves and then publishes them. n8n_webhook_path_prefixes lists /webhook,
+  # /webhook-waiting, /form, /form-waiting and /mcp, the examples route exactly
+  # those five on the webhook Ingress, and n8n_oauth_callback_url spells /rest
+  # into the redirect URI. Every one of those segments is an N8N_ENDPOINT_
+  # variable: REST, WEBHOOK, WEBHOOK_WAIT, FORM, FORM_WAIT, MCP.
+  #
+  # Change one through n8n_extra_env and nothing here follows. The Ingress goes
+  # on routing the old segment, the outputs go on advertising it, and n8n
+  # answers on the new one - so webhooks 404 at the ingress and the OAuth
+  # redirect URI names a path that no longer exists, with the module reporting
+  # both as correct. Reserved rather than plumbed through: routing them is a
+  # feature with a real design behind it, and this guard says so at plan time
+  # instead of letting the deployment say it in production.
   n8n_managed_env_prefixes = [
     "DB_",
     "QUEUE_",
     "N8N_RUNNERS_",
+    "N8N_ENDPOINT_",
   ]
 
   # Modules explicitly disabled via N8N_DISABLED_MODULES. A list rather than a

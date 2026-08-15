@@ -882,6 +882,35 @@ run "secret_backed_env_renders_a_secretKeyRef_alongside_plain_env" {
 # does not, so the reference resolves to nothing and the pod sticks in
 # CreateContainerConfigError long after Helm reported success - the exact
 # failure this validation exists to move forward to plan time.
+# The module hardcodes the path segments n8n serves and then publishes them:
+# n8n_webhook_path_prefixes, the webhook Ingress in every split example, and
+# the /rest in n8n_oauth_callback_url. Repointing one through n8n_extra_env
+# leaves all three advertising a path n8n no longer answers on, and nothing
+# reports a conflict - the Ingress simply routes to a 404.
+run "repointing_a_path_segment_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENDPOINT_REST", value = "api" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "repointing_the_webhook_segment_is_rejected_too" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENDPOINT_WEBHOOK", value = "hooks" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 run "a_secret_name_with_an_empty_label_is_rejected" {
   command = plan
 
