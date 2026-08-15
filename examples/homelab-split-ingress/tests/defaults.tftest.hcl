@@ -43,12 +43,22 @@ run "the_module_renders_no_ingress_of_its_own" {
 run "webhooks_are_advertised_on_the_webhook_host" {
   command = plan
 
-  # The failure this guards is silent: n8n keeps working, the editor keeps
-  # working, and every webhook URL it hands out points at a hostname that
-  # serves 404 for webhook paths.
+  # A positive assertion, which needed a module output to exist: n8n_url is the
+  # editor address, so every earlier version of this run could only say what the
+  # webhook URL is not. A regression in the n8n_webhook_url wiring in main.tf,
+  # dropped or mistyped or pointing at a third host, passed all of them.
+  #
+  # The failure it guards is silent: n8n keeps working, the editor keeps
+  # working, and every webhook URL n8n hands out points at a hostname that
+  # serves 404 for webhook paths. Only the external caller finds out.
   assert {
-    condition     = module.n8n.n8n_url != "https://${var.webhook_host}"
-    error_message = "n8n_url is the editor address; the webhook base URL is a separate output."
+    condition     = module.n8n.n8n_webhook_url == "https://${var.webhook_host}"
+    error_message = "n8n must advertise webhooks on webhook_host; got ${module.n8n.n8n_webhook_url}."
+  }
+
+  assert {
+    condition     = module.n8n.n8n_webhook_url != module.n8n.n8n_url
+    error_message = "The webhook base URL and the editor URL must differ; that split is the entire point of this example."
   }
 }
 
@@ -257,4 +267,53 @@ run "an_empty_storage_class_is_rejected" {
   # storageClassName to "", which asks Kubernetes for no class at all rather
   # than for the default one. The claim sits Pending with nothing saying why.
   expect_failures = [var.shared_storage_class]
+}
+
+run "a_whitespace_padded_storage_class_is_rejected" {
+  command = plan
+
+  variables {
+    shared_storage_class = " nfs-csi"
+  }
+
+  # The claim is created with the value as given, so a padded name asks for a
+  # class no cluster has. Same Pending claim as the empty string, with a name
+  # that looks right in the plan output.
+  expect_failures = [var.shared_storage_class]
+}
+
+run "the_kubeconfig_path_is_quoted_for_the_shell" {
+  command = plan
+
+  variables {
+    kubeconfig_path = "/home/me/my kube/config"
+  }
+
+  # smoke-test.sh evals this. Unquoted, the export took "/home/me/my" and left
+  # "kube/config" as a stray word.
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"/home/me/my kube/config\""
+    error_message = "kubectl_config_command must quote the path; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_tilde_path_becomes_HOME_so_quoting_does_not_break_it" {
+  command = plan
+
+  # Tilde expansion does not happen inside quotes, so the default would have
+  # become a literal ~ directory once the value was quoted.
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"$HOME/.kube/config\""
+    error_message = "A leading ~/ must become $HOME/; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_shell_metacharacter_in_the_kubeconfig_path_is_rejected" {
+  command = plan
+
+  variables {
+    kubeconfig_path = "/tmp/$(id).kube"
+  }
+
+  expect_failures = [var.kubeconfig_path]
 }

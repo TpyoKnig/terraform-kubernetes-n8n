@@ -6,6 +6,12 @@ variable "kubeconfig_path" {
   type        = string
   default     = "~/.kube/config"
   nullable    = false
+
+  validation {
+    condition     = !can(regex("[\"`$]", var.kubeconfig_path))
+    error_message = "kubeconfig_path must not contain a double quote, a backtick or a dollar sign. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command, and those three characters are the ones that escape the quoting around it."
+  }
+
 }
 
 variable "namespace" {
@@ -111,8 +117,8 @@ variable "shared_storage_class" {
   default     = null
 
   validation {
-    condition     = var.shared_storage_class == null || length(trimspace(coalesce(var.shared_storage_class, " "))) > 0
-    error_message = "shared_storage_class must be null to disable shared storage, or a non-empty class name to enable it. An empty string is neither: it enables the claim and then asks Kubernetes for no class at all, rather than for the default one, so the claim sits Pending with nothing explaining why."
+    condition     = var.shared_storage_class == null || (length(var.shared_storage_class) > 0 && var.shared_storage_class == trimspace(var.shared_storage_class))
+    error_message = "shared_storage_class must be null to disable shared storage, or a class name with no leading or trailing whitespace to enable it. An empty string is neither: it enables the claim and then asks Kubernetes for no class at all, rather than for the default one. A padded name is the same failure wearing a disguise, because the claim is created with the value as given and no class matches it. Either way the claim sits Pending with nothing explaining why."
   }
 }
 

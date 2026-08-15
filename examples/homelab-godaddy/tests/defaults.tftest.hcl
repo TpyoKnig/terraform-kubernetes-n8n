@@ -181,3 +181,52 @@ run "an_empty_storage_class_is_rejected" {
   # than for the default one. The claim sits Pending with nothing saying why.
   expect_failures = [var.shared_storage_class]
 }
+
+run "a_whitespace_padded_storage_class_is_rejected" {
+  command = plan
+
+  variables {
+    shared_storage_class = " nfs-csi"
+  }
+
+  # The claim is created with the value as given, so a padded name asks for a
+  # class no cluster has. Same Pending claim as the empty string, with a name
+  # that looks right in the plan output.
+  expect_failures = [var.shared_storage_class]
+}
+
+run "the_kubeconfig_path_is_quoted_for_the_shell" {
+  command = plan
+
+  variables {
+    kubeconfig_path = "/home/me/my kube/config"
+  }
+
+  # smoke-test.sh evals this. Unquoted, the export took "/home/me/my" and left
+  # "kube/config" as a stray word.
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"/home/me/my kube/config\""
+    error_message = "kubectl_config_command must quote the path; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_tilde_path_becomes_HOME_so_quoting_does_not_break_it" {
+  command = plan
+
+  # Tilde expansion does not happen inside quotes, so the default would have
+  # become a literal ~ directory once the value was quoted.
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"$HOME/.kube/config\""
+    error_message = "A leading ~/ must become $HOME/; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_shell_metacharacter_in_the_kubeconfig_path_is_rejected" {
+  command = plan
+
+  variables {
+    kubeconfig_path = "/tmp/$(id).kube"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}

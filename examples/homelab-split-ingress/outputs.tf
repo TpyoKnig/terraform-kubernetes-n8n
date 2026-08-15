@@ -1,6 +1,16 @@
 # Copyright (c) 2026 TpyoKnig
 # SPDX-License-Identifier: MIT
 
+locals {
+  # smoke-test.sh evals kubectl_config_command, so the path has to survive word
+  # splitting: quoted for spaces, which are ordinary in a Windows or macOS home
+  # directory. Quoting alone would break the "~/.kube/config" default, because
+  # tilde expansion does not happen inside quotes, so a leading ~/ becomes
+  # $HOME/ before quoting. The variable's own validation rejects the characters
+  # that would let the rest of the string out of the quotes.
+  kubeconfig_shell_path = startswith(var.kubeconfig_path, "~/") ? "$HOME/${substr(var.kubeconfig_path, 2, -1)}" : var.kubeconfig_path
+}
+
 output "editor_url" {
   description = "URL for the n8n editor UI and REST API. Put your authentication policy in front of this hostname."
   value       = "https://${var.editor_host}"
@@ -29,7 +39,7 @@ output "kubectl_config_command" {
   # through. The previous form read current-context out of kubeconfig_path and
   # set it in the default kubeconfig: a no-op when the two matched, and a switch
   # to the wrong cluster (or an error) when they did not.
-  value = "export KUBECONFIG=${var.kubeconfig_path}"
+  value = "export KUBECONFIG=\"${local.kubeconfig_shell_path}\""
 }
 
 output "backing_services" {

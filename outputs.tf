@@ -31,6 +31,11 @@ output "n8n_url" {
   value       = "https://${local.n8n_domain}"
 }
 
+output "n8n_webhook_url" {
+  description = "Base URL n8n advertises in every production webhook, form and MCP URL it generates (WEBHOOK_URL). Equal to n8n_url unless n8n_webhook_url was set, which is the split-hostname topology: editor on one name, webhooks on another. Worth asserting on in a caller's own test suite, because getting it wrong fails silently. n8n keeps working, the editor keeps working, and only the external system POSTing to a stale address finds out."
+  value       = local.k8s_values_webhook.webhook.url
+}
+
 output "namespace" {
   description = "Kubernetes namespace n8n is deployed into."
   # Deliberately sourced from local.namespace_name rather than var.k8s_namespace
