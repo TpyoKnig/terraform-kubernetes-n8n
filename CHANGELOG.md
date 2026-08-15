@@ -5,6 +5,63 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1-beta.3]
+
+Adds a fifth example, an output, and an opt-in shared-storage pattern to every
+example. The module's only behavioural change is the new output, so an upgrade
+from `0.0.1-beta.2` plans clean unless you opt into shared storage.
+
+### Added
+
+- `n8n_webhook_url` output: the base URL n8n advertises in every production
+  webhook, form and MCP URL it generates. The module exposed `n8n_url`, the
+  editor address, and nothing carrying `WEBHOOK_URL`, so a caller running the
+  split-hostname topology had no way to assert the one value that defines it.
+- `examples/homelab-cloudflare-split-ingress`: the split-hostname topology
+  behind a Cloudflare Tunnel. One proxied CNAME per hostname, `proxy_hops`
+  defaulting to 2 for the extra edge, both DNS and storage opt-in.
+- Optional shared `ReadWriteMany` storage in all five examples, off by
+  default. Queue mode runs main, worker and webhook-processor pods that share
+  no filesystem, and the chart's own `data` volume is an `emptyDir` on main
+  only, so anything one pod writes to local disk is invisible to the other
+  two. Setting `shared_storage_class` creates one claim, mounts it into all
+  three, and moves binary data onto it.
+- `proxy_hops` input in both split-ingress examples. `N8N_PROXY_HOPS` was
+  hardcoded to `"1"`, which is right behind ingress-nginx alone and wrong
+  behind anything in front of it.
+
+### Fixed
+
+- Examples that set `shared_storage_class` could fail their first apply with
+  `namespaces "..." not found`. Handing namespace creation to the example left
+  the module's Secrets, CNPG `Cluster` and Valkey release with no dependency on
+  it, so Terraform was free to schedule them first. The examples now pass the
+  namespace resource attribute through `k8s_namespace`.
+- `kubectl_config_command` in every example read `current-context` from
+  `kubeconfig_path` and then set it in the *default* kubeconfig: a no-op when
+  the two matched, and a switch to the wrong cluster when they did not. It now
+  exports `KUBECONFIG`, quoted, with a leading `~/` rewritten to `$HOME/`.
+- The hostname validation in both split-ingress examples accepted names with an
+  empty label or a label ending in a hyphen. Both reach the `Ingress` host
+  field and are rejected by the API server, so the failure surfaced on apply
+  rather than at plan.
+- `k8s_ingress_host` was set in both split-ingress examples where it does
+  nothing: every consumer of it is gated on `create_ingress`.
+- The README pointed OpenTofu users at the registry address. OpenTofu resolves
+  modules against a separate index this module is not published to, so the
+  short form fails with `Module not found`. Usage now gives the git source.
+- `editor_ingress_extra_annotations` claimed an IP allowlist is meaningful only
+  on a path that reaches nginx directly. With `use-forwarded-headers` and
+  `compute-full-forwarded-for` it works through a tunnel too.
+
+### Changed
+
+- `openspec/` and `reports/` are no longer tracked. Neither was ever published,
+  and the comment claiming release tags excluded them described an exclusion
+  nothing implemented.
+- `AGENTS.md` states the commit-message convention, aligned with
+  `CONTRIBUTING.md`.
+
 ## [0.0.1-beta.2]
 
 Documentation only. No inputs, outputs, resources or defaults changed, so an
@@ -83,5 +140,6 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
+[0.0.1-beta.3]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.2
 [0.0.1-beta.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.1

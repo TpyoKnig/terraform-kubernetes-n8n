@@ -58,10 +58,11 @@ for the versioning policy.
 
 | Version      | Security fixes |
 | ------------ | -------------- |
-| 0.0.1-beta.2 | ✅ (current)   |
+| 0.0.1-beta.3 | ✅ (current)   |
 
-`0.0.1-beta.1` is the only earlier tag. It is superseded and receives nothing,
-including security fixes. Upgrade rather than asking for a backport.
+`0.0.1-beta.1` and `0.0.1-beta.2` are the earlier tags. Both are superseded
+and receive nothing, including security fixes. Upgrade rather than asking for a
+backport.
 
 ## Out of scope for this policy
 
