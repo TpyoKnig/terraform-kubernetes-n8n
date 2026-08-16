@@ -102,7 +102,7 @@ The module doesn't verify any of this. A missing operator shows up as a resource
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "0.0.1-beta.4"
+  version = "0.0.1-beta.5"
 
   n8n_domain = "n8n.example.com"
 
@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.4"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.5"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -238,11 +238,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-This is a beta. `0.0.1-beta.4` is the current release, so expect breaking changes and pin a version, like the usage example does.
+This is a beta. `0.0.1-beta.5` is the current release, so expect breaking changes and pin a version, like the usage example does.
 
-Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.4`. Once there is a stable release, ranges start behaving normally.
+Pin it **exactly**. Every release so far is a semver pre-release, and Terraform's range constraints never match a pre-release: `version = "~> 0.0"` resolves to nothing at all rather than to `0.0.1-beta.5`. Once there is a stable release, ranges start behaving normally.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.4"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.0.1-beta.5"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
@@ -449,7 +449,7 @@ This module does not:
 | ---- | ----------- |
 | <a name="output_backing_services"></a> [backing\_services](#output\_backing\_services) | Resolved endpoints for n8n's Postgres and Redis backends. Names the in-cluster CNPG rw Service and Valkey Service on the default path, or the caller-supplied endpoints when postgres\_backend / redis\_backend are "external". The secret names are where each password actually lives; the module never emits those values as outputs, because on the in-cluster path it does not own them: CNPG generates the Postgres password into its own "<cluster>-app" Secret. Useful for a Grafana datasource, a debug pod, or a smoke test that needs to reach the backing services directly. |
 | <a name="output_n8n_encryption_key"></a> [n8n\_encryption\_key](#output\_n8n\_encryption\_key) | n8n encryption key. Back this up in a password manager: losing it makes every stored credential unreadable, and that survives a database restore: restoring Postgres into a new deployment without this key leaves the credentials there but undecryptable. It is also the value to pass as var.n8n\_encryption\_key when rebuilding a deployment against existing data. Null when n8n\_encryption\_key\_secret\_ref is set: the key then lives in a Secret the module never reads, so backing it up belongs to that Secret's owner. |
-| <a name="output_n8n_oauth_callback_url"></a> [n8n\_oauth\_callback\_url](#output\_n8n\_oauth\_callback\_url) | Redirect URI to register with any OAuth2 provider a credential will use (Slack, Google, Microsoft and the rest). n8n builds this from N8N\_EDITOR\_BASE\_URL, which is the editor hostname, not the webhook one: on a split ingress the two differ, and the webhook host routes only the webhook prefixes to pods that serve no /rest routes, so a callback sent there 404s twice over. Exposed because that is not guessable from the other outputs and getting it wrong fails in the provider's UI, at the end of a consent flow, with no n8n log line to find. The /rest segment is n8n's default and stays that way: N8N\_ENDPOINT\_REST is reserved by the module, so this cannot drift from what the workload serves. |
+| <a name="output_n8n_oauth_callback_url"></a> [n8n\_oauth\_callback\_url](#output\_n8n\_oauth\_callback\_url) | Redirect URI to register with any OAuth2 provider a credential will use (Slack, Google, Microsoft and the rest). n8n builds this from N8N\_EDITOR\_BASE\_URL, which is the editor hostname, not the webhook one: on a split ingress the two differ, and the webhook host routes only the /rest/projects prefix that n8n's Agents chat integrations require, so this callback path matches no rule there and the ingress 404s it before it reaches a pod. Exposed because that is not guessable from the other outputs and getting it wrong fails in the provider's UI, at the end of a consent flow, with no n8n log line to find. The /rest segment is n8n's default and stays that way: N8N\_ENDPOINT\_REST is reserved by the module, so this cannot drift from what the workload serves. |
 | <a name="output_n8n_service_name"></a> [n8n\_service\_name](#output\_n8n\_service\_name) | Name of the Kubernetes Service fronting the n8n main pods (the editor UI and REST API), on port 5678. Point a caller-owned Ingress at this when create\_ingress = false. |
 | <a name="output_n8n_service_port"></a> [n8n\_service\_port](#output\_n8n\_service\_port) | Port both n8n Services listen on. Use with n8n\_service\_name / n8n\_webhook\_service\_name when building your own Ingress. |
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | URL n8n is served at. The module creates no DNS record for it: publishing the hostname is caller-owned on this platform, because how a name reaches a self-hosted cluster depends entirely on the setup (a tunnel, a public LoadBalancer, split-horizon DNS, a reverse proxy). |
