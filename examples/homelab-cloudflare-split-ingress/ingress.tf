@@ -37,14 +37,13 @@ locals {
   )
 }
 
-# ── Webhook host: webhook traffic, plus the agents callback prefix ────────────
+# ── Webhook host: webhook traffic, plus /rest ─────────────────────────────────
 # No catch-all rule, deliberately. A request to any path not listed below gets
 # the controller's default 404 and never reaches the editor. That is the point
 # of the second hostname: it is the one that faces the internet, so the only
 # things reachable on it are the surfaces that have to be.
 #
-# /rest/projects is one of them, which was not obvious. See the note on the
-# rule itself.
+# /rest is one of them, which was not obvious. See the note on the rule itself.
 
 resource "kubernetes_ingress_v1" "webhook" {
   metadata {
@@ -88,11 +87,18 @@ resource "kubernetes_ingress_v1" "webhook" {
         # do with N8N_EDITOR_BASE_URL, so no amount of module configuration
         # fixes it: the path has to be routed for OAuth to complete at all.
         #
-        # Scoped to /rest/projects rather than /rest, because that is the
-        # whole surface those three constructions use and it is a literal
-        # prefix, so it needs no regex and no controller-specific annotation.
-        # /rest/login, /rest/credentials and the rest of the REST API stay off
-        # this hostname, which is what the no-catch-all rule above is for.
+        # The whole /rest prefix, not just the /rest/projects subtree those
+        # three constructions currently use. Enumerating them means this rule
+        # is correct only until n8n adds a fourth, and it would fail the same
+        # silent way: a 404 at the end of a consent flow with nothing logged.
+        # The prefix is the durable version of the same fix.
+        #
+        # The cost is real and worth stating: the authenticated REST API is
+        # reachable on this hostname, /rest/login and /rest/credentials
+        # included. Every one of those routes enforces its own authentication,
+        # so what changes is reachability rather than access, but this is the
+        # hostname that faces the internet. Narrow it to /rest/projects if you
+        # would rather have the smaller surface and re-check it on upgrade.
         #
         # It has to be reachable from the internet, not just from inside the
         # cluster: the OAuth callback is a browser redirect the admin follows,
@@ -100,7 +106,7 @@ resource "kubernetes_ingress_v1" "webhook" {
         # Telegram. Telegram in particular inspects this base URL and silently
         # drops to polling mode if it is not a public https:// name.
         path {
-          path      = "/rest/projects"
+          path      = "/rest"
           path_type = "Prefix"
           backend {
             service {

@@ -27,7 +27,7 @@ output "n8n_url" {
 }
 
 output "oauth_callback_url" {
-  description = "Redirect URI to register with any OAuth2 provider a credential will use. It sits on editor_host, never on webhook_host: n8n builds this one from N8N_EDITOR_BASE_URL, which is the editor hostname. The webhook Ingress does route /rest/projects, but for the Agents chat integrations, which is a different flow. Read it from the module rather than building it here, so the value stays whatever n8n was actually configured with."
+  description = "Redirect URI to register with any OAuth2 provider a credential will use. It sits on editor_host, never on webhook_host: n8n builds this one from N8N_EDITOR_BASE_URL, which is the editor hostname. The webhook Ingress does route /rest, for the Agents chat integrations, so this path answers there as well; that does not make it the advertised callback, and registering the webhook hostname with a provider still leaves the consent flow redirecting to a name n8n never issued this URI for. Read it from the module rather than building it here, so the value stays whatever n8n was actually configured with."
   value       = module.n8n.n8n_oauth_callback_url
 }
 

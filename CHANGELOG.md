@@ -7,6 +7,41 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.0.1-beta.6]
+
+Widens the rule `0.0.1-beta.5` added: the split-ingress examples now route the
+whole `/rest` prefix on the webhook hostname rather than the `/rest/projects`
+subtree.
+
+No module input, output or rendered value changes. Upgrading replans the two
+example `Ingress` objects and only for deployments built from those examples.
+
+### Changed
+
+- **The webhook hostname routes `/rest` instead of `/rest/projects`.** The
+  three constructions that need it all live under `/rest/projects` today, so
+  the narrower rule was correct at the time and would stay correct only until
+  n8n adds a fourth. It would then fail the same silent way the original bug
+  did: a 404 at the end of a consent flow with nothing logged. The prefix is
+  the durable version of the same fix, and it matches what the deployment this
+  was found on actually runs.
+
+  The cost is stated rather than buried: the authenticated REST API is
+  reachable on the internet-facing hostname, `/rest/login` and
+  `/rest/credentials` included. Every one of those routes enforces its own
+  authentication, so what changes is reachability rather than access. The
+  example README now carries that trade-off, and says how to narrow the rule
+  back or remove it.
+
+### Fixed
+
+- The `n8n_oauth_callback_url` description, and its re-export in both examples,
+  claimed the OAuth2 credential callback 404s on the webhook hostname. That was
+  the mechanism when only `/rest/projects` was routed there; with `/rest`
+  routed, the path answers on both names. The reason to register the editor one
+  is that it is what n8n advertises, not that the other fails, and the
+  descriptions say that now.
+
 ## [0.0.1-beta.5]
 
 Closes the one item `0.0.1-beta.4` shipped as known and not fixed: on a split
@@ -270,7 +305,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.5...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.6...HEAD
+[0.0.1-beta.6]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.6
 [0.0.1-beta.5]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.5
 [0.0.1-beta.4]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.3

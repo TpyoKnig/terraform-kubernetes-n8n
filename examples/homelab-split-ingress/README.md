@@ -6,8 +6,7 @@ Two hostnames instead of one, on the same Kubernetes-native backend as [`../home
 editor_host   →  n8n-main                editor UI, REST API, /webhook-test
 webhook_host  →  n8n-webhook-processor   /webhook, /webhook-waiting, /form,
                                          /form-waiting, /mcp
-              →  n8n-main                /rest/projects (Agents chat
-                                         integrations)
+              →  n8n-main                /rest (Agents chat integrations)
 ```
 
 **No license required.** Splitting webhook processors off the main process is queue-mode behaviour, and n8n ships queue mode in the Community edition. See [compare editions](https://docs.n8n.io/deploy/host-n8n/community-edition-features), which lists queue mode among what is included.
@@ -16,7 +15,7 @@ webhook_host  →  n8n-webhook-processor   /webhook, /webhook-waiting, /form,
 
 Not for load. Both hostnames land on the same ingress controller, and the webhook processors are already separate pods in `../homelab`: that part is the module's queue-mode wiring, not the ingress.
 
-The split buys **one authentication boundary you can actually use**. n8n's own SSO is a licensed feature and this module deploys the Community edition, so the identity boundary has to sit in front of n8n rather than inside it: and it cannot cover the whole deployment, because webhook senders are machines that cannot complete an interactive login. With two hostnames you can put Cloudflare Access (or an OIDC proxy, or an IP allowlist) in front of `editor_host` while `webhook_host` stays open. `webhook_host` serves the webhook prefixes plus `/rest/projects`, and nothing else: everything not routed gets the controller's 404, so an unauthenticated caller reaching it cannot get to the editor or to `/rest/login`. `/rest/projects` is there because n8n's Agents chat integrations build their OAuth callbacks and platform webhooks onto the webhook hostname; see [Why the webhook host also routes /rest/projects](#why-the-webhook-host-also-routes-restprojects).
+The split buys **one authentication boundary you can actually use**. n8n's own SSO is a licensed feature and this module deploys the Community edition, so the identity boundary has to sit in front of n8n rather than inside it: and it cannot cover the whole deployment, because webhook senders are machines that cannot complete an interactive login. With two hostnames you can put Cloudflare Access (or an OIDC proxy, or an IP allowlist) in front of `editor_host` while `webhook_host` stays open. `webhook_host` serves the webhook prefixes plus `/rest`, and nothing else: everything not routed gets the controller's 404, so an unauthenticated caller reaching it cannot get to the editor UI. `/rest` is there because n8n's Agents chat integrations build their OAuth callbacks and platform webhooks onto the webhook hostname, and it does mean the authenticated REST API is reachable on this name, so read [Why the webhook host also routes /rest](#why-the-webhook-host-also-routes-rest) before deciding your policy.
 
 The secondary benefit is that rate limiting, WAF rules and request-size limits can be applied to the untrusted hostname alone, where they belong.
 
@@ -24,7 +23,7 @@ The secondary benefit is that rate limiting, WAF rules and request-size limits c
 
 Everything [`../homelab`](../homelab) creates, minus the module's own `Ingress` pair, plus:
 
-- `Ingress/n8n-webhook` - `webhook_host`, the five webhook path prefixes plus `/rest/projects`, no catch-all
+- `Ingress/n8n-webhook` - `webhook_host`, the five webhook path prefixes plus `/rest`, no catch-all
 - `Ingress/n8n-editor` - `editor_host`, `/` to the mains, with the same webhook prefixes routed to the webhook processors ahead of it
 
 The webhook prefixes come from the module's `n8n_webhook_path_prefixes` output rather than being hardcoded, so neither `Ingress` drifts as n8n adds endpoint families.
@@ -35,17 +34,19 @@ The module runs the chart with `disableProductionWebhooksOnMainProcess = true`, 
 
 `/webhook-test` is deliberately *not* in that list: manual "listen for test event" executions run on the mains, so it stays on the catch-all.
 
-## Why the webhook host also routes /rest/projects
+## Why the webhook host also routes /rest
 
 n8n's Agents chat integrations build the Slack app-install URL and the platform event callbacks by appending `/rest/projects/<id>/agents/...` onto `getWebhookBaseUrl()`, which is `WEBHOOK_URL`, which is `webhook_host`. Those are main-pod routes, so without the rule, connecting a Slack agent returns **404 at the end of the OAuth flow**, after the user has already granted consent, and nothing in n8n logs it.
 
 This is upstream n8n's construction and unrelated to `N8N_EDITOR_BASE_URL`, so no module configuration avoids it. The path has to be routed for those OAuth flows to complete at all.
 
-It is scoped to `/rest/projects` rather than all of `/rest`, because that is the entire surface those three constructions use. `/rest/login`, `/rest/credentials` and the rest of the REST API stay off this hostname. It is a literal prefix, so it needs no regex and no controller-specific annotation, and it works the same on any ingress controller.
+The rule is the whole `/rest` prefix rather than the `/rest/projects` subtree those three constructions currently use. Enumerating them makes the rule correct only until n8n adds a fourth, and it would fail the same silent way. The prefix is the durable version of the same fix.
 
-It does have to be reachable from the internet rather than only from inside the cluster: the OAuth callback is a redirect the admin's browser follows, and the platform webhooks are server-to-server POSTs from Slack and Telegram. Telegram inspects this base URL and silently drops to polling mode if it is not a public `https://` name.
+**The cost is that the authenticated REST API is reachable on this hostname**, `/rest/login` and `/rest/credentials` included. Every one of those routes enforces its own authentication, so what changes is reachability rather than access — but this is the hostname that faces the internet, and it is worth deciding rather than inheriting. Narrow the rule to `/rest/projects` if you would rather have the smaller surface and re-check it on n8n upgrades, or delete the block entirely if you do not use Agents chat integrations.
 
-If you do not use Agents chat integrations, deleting the `/rest/projects` block in `ingress.tf` restores the smaller surface. The OAuth2 *credential* callback is unaffected either way: that one lives on `editor_host`, built from `N8N_EDITOR_BASE_URL`, and is exposed as the `oauth_callback_url` output.
+Only part of it has to be reachable from the internet, which is worth knowing if you are scoping a policy. The OAuth callbacks are browser redirects the admin follows, so those only need to be reachable from the admin's browser. The platform webhooks are server-to-server POSTs from Slack and Telegram, so those genuinely need the public name; n8n inspects the same base URL and silently drops Telegram to polling mode if it is not a public `https://` one.
+
+The OAuth2 *credential* callback is a separate flow and is unaffected by any of this: n8n builds it from `N8N_EDITOR_BASE_URL`, advertises it on `editor_host`, and exposes it as the `oauth_callback_url` output.
 
 ## Prerequisites
 
@@ -204,7 +205,7 @@ The task-runner sidecar does not get the mount: `n8n_extra_volume_mounts` reache
 | <a name="input_shared_storage_size"></a> [shared\_storage\_size](#input\_shared\_storage\_size) | Size of the shared RWX claim. Only used when shared\_storage\_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow. | `string` | `"20Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the CNPG and Valkey PVCs. Empty uses whatever the cluster's default StorageClass is. | `string` | `""` | no |
 | <a name="input_timezone"></a> [timezone](#input\_timezone) | Timezone n8n schedules Cron triggers in (GENERIC\_TIMEZONE). | `string` | `"UTC"` | no |
-| <a name="input_webhook_host"></a> [webhook\_host](#input\_webhook\_host) | Hostname serving production webhooks, forms, waiting webhooks and MCP. Passed to the module as n8n\_webhook\_url, so it is what n8n hands out in every generated webhook URL. Also routes /rest/projects to the main pods, which n8n's Agents chat integrations require because they build their OAuth callbacks and platform webhooks onto this hostname; see the example README. Nothing else is routed on this name: a request to any other path gets the ingress controller's 404. | `string` | `"hooks.example.com"` | no |
+| <a name="input_webhook_host"></a> [webhook\_host](#input\_webhook\_host) | Hostname serving production webhooks, forms, waiting webhooks and MCP. Passed to the module as n8n\_webhook\_url, so it is what n8n hands out in every generated webhook URL. Also routes /rest to the main pods, which n8n's Agents chat integrations require because they build their OAuth callbacks and platform webhooks onto this hostname; that puts the authenticated REST API on this name, so see the example README before deciding your policy. Nothing else is routed on this name: a request to any other path gets the ingress controller's 404. | `string` | `"hooks.example.com"` | no |
 | <a name="input_webhook_ingress_extra_annotations"></a> [webhook\_ingress\_extra\_annotations](#input\_webhook\_ingress\_extra\_annotations) | Annotations added to the webhook Ingress only, on top of ingress\_extra\_annotations. Rate limiting belongs here if the controller is doing it rather than an upstream WAF: {"nginx.ingress.kubernetes.io/limit-rps" = "20"}. This is the hostname exposed to unauthenticated callers, so it is the one worth bounding. | `map(string)` | `{}` | no |
 
 ## Outputs
@@ -216,7 +217,7 @@ The task-runner sidecar does not get the mount: `n8n_extra_volume_mounts` reache
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that points kubectl at the cluster this example deployed to. Consumed by tests/scripts/smoke-test.sh. |
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | Editor URL under the name tests/scripts/smoke-test.sh reads. Points at editor\_host: the smoke test checks the editor's health endpoint, which the webhook hostname deliberately does not serve. |
 | <a name="output_namespace"></a> [namespace](#output\_namespace) | Namespace the n8n release and its backing services were deployed into. |
-| <a name="output_oauth_callback_url"></a> [oauth\_callback\_url](#output\_oauth\_callback\_url) | Redirect URI to register with any OAuth2 provider a credential will use. It sits on editor\_host, never on webhook\_host: n8n builds this one from N8N\_EDITOR\_BASE\_URL, which is the editor hostname. The webhook Ingress does route /rest/projects, but for the Agents chat integrations, which is a different flow. Read it from the module rather than building it here, so the value stays whatever n8n was actually configured with. |
+| <a name="output_oauth_callback_url"></a> [oauth\_callback\_url](#output\_oauth\_callback\_url) | Redirect URI to register with any OAuth2 provider a credential will use. It sits on editor\_host, never on webhook\_host: n8n builds this one from N8N\_EDITOR\_BASE\_URL, which is the editor hostname. The webhook Ingress does route /rest, for the Agents chat integrations, so this path answers there as well; that does not make it the advertised callback, and registering the webhook hostname with a provider still leaves the consent flow redirecting to a name n8n never issued this URI for. Read it from the module rather than building it here, so the value stays whatever n8n was actually configured with. |
 | <a name="output_webhook_base_url"></a> [webhook\_base\_url](#output\_webhook\_base\_url) | Public base URL for webhooks, forms, waiting webhooks and MCP. This is what n8n hands out in generated webhook URLs (passed to the module as n8n\_webhook\_url). |
 | <a name="output_webhook_path_prefixes"></a> [webhook\_path\_prefixes](#output\_webhook\_path\_prefixes) | Path prefixes routed to the webhook processors on both hostnames. Read from the module rather than hardcoded, so the Ingresses cannot drift as n8n adds endpoints. |
 <!-- END_TF_DOCS -->

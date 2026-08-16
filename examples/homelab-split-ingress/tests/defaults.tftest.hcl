@@ -79,7 +79,7 @@ run "oauth_callbacks_are_advertised_on_the_editor_host" {
     error_message = "OAuth callbacks must be advertised on editor_host; got ${module.n8n.n8n_oauth_callback_url}."
   }
 
-  # The webhook Ingress does now route /rest/projects, for the Agents chat
+  # The webhook Ingress does now route /rest, for the Agents chat
   # integrations covered in the run below, but it is still the wrong host to
   # advertise this on: N8N_EDITOR_BASE_URL is what n8n puts in the redirect URI,
   # and pointing the two at different hostnames is how the beta.4 bug worked.
@@ -101,21 +101,21 @@ run "agent_oauth_callbacks_reach_the_mains_on_the_webhook_host" {
   command = plan
 
   assert {
-    condition     = contains([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.path], "/rest/projects")
-    error_message = "The webhook Ingress must route /rest/projects, or connecting a Slack agent 404s at the end of the OAuth flow."
+    condition     = contains([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.path], "/rest")
+    error_message = "The webhook Ingress must route /rest, or connecting a Slack agent 404s at the end of the OAuth flow."
   }
 
   assert {
-    condition     = one([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.backend[0].service[0].name if p.path == "/rest/projects"]) == module.n8n.n8n_service_name
-    error_message = "/rest/projects on the webhook host must reach the main pods; the webhook processors register no /rest routes."
+    condition     = one([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.backend[0].service[0].name if p.path == "/rest"]) == module.n8n.n8n_service_name
+    error_message = "/rest on the webhook host must reach the main pods; the webhook processors register no /rest routes."
   }
 
   # The rule only works because it is a prefix match: every real callback is
-  # /rest/projects/<id>/agents/..., never /rest/projects itself. Switched to
-  # Exact, nothing would match and the two assertions above would still pass.
+  # /rest/projects/<id>/agents/..., never /rest itself. Switched to Exact,
+  # nothing would match and the two assertions above would still pass.
   assert {
-    condition     = one([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.path_type if p.path == "/rest/projects"]) == "Prefix"
-    error_message = "/rest/projects must be a Prefix match; an Exact match routes none of the agent callback paths."
+    condition     = one([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.path_type if p.path == "/rest"]) == "Prefix"
+    error_message = "/rest must be a Prefix match; an Exact match routes none of the agent callback paths."
   }
 }
 
