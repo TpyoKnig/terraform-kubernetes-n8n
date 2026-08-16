@@ -181,6 +181,14 @@ run "agent_oauth_callbacks_reach_the_mains_on_the_webhook_host" {
     condition     = one([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.backend[0].service[0].name if p.path == "/rest/projects"]) == module.n8n.n8n_service_name
     error_message = "/rest/projects on the webhook host must reach the main pods; the webhook processors register no /rest routes."
   }
+
+  # The rule only works because it is a prefix match: every real callback is
+  # /rest/projects/<id>/agents/..., never /rest/projects itself. Switched to
+  # Exact, nothing would match and the two assertions above would still pass.
+  assert {
+    condition     = one([for p in kubernetes_ingress_v1.webhook.spec[0].rule[0].http[0].path : p.path_type if p.path == "/rest/projects"]) == "Prefix"
+    error_message = "/rest/projects must be a Prefix match; an Exact match routes none of the agent callback paths."
+  }
 }
 
 run "webhooks_are_advertised_on_the_webhook_host" {
