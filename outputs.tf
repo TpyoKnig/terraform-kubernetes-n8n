@@ -41,7 +41,7 @@ output "n8n_webhook_url" {
 }
 
 output "n8n_oauth_callback_url" {
-  description = "Redirect URI to register with any OAuth2 provider a credential will use (Slack, Google, Microsoft and the rest). n8n builds this from N8N_EDITOR_BASE_URL, which is the editor hostname, not the webhook one: on a split ingress the two differ, and the webhook host routes only the webhook prefixes to pods that serve no /rest routes, so a callback sent there 404s twice over. Exposed because that is not guessable from the other outputs and getting it wrong fails in the provider's UI, at the end of a consent flow, with no n8n log line to find. The /rest segment is n8n's default and stays that way: N8N_ENDPOINT_REST is reserved by the module, so this cannot drift from what the workload serves."
+  description = "Redirect URI to register with any OAuth2 provider a credential will use (Slack, Google, Microsoft and the rest). n8n builds this from N8N_EDITOR_BASE_URL, which is the editor hostname, not the webhook one: on a split ingress the two differ, and the pods behind the webhook host register no /rest routes at all, so a callback sent there 404s even when that hostname routes a /rest prefix for the agents integrations. Exposed because that is not guessable from the other outputs and getting it wrong fails in the provider's UI, at the end of a consent flow, with no n8n log line to find. The /rest segment is n8n's default and stays that way: N8N_ENDPOINT_REST is reserved by the module, so this cannot drift from what the workload serves."
   value       = "${local.k8s_editor_base_url}/rest/oauth2-credential/callback"
 }
 

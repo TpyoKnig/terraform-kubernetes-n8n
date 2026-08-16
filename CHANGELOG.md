@@ -7,6 +7,42 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.0.1-beta.5]
+
+Closes the one item `0.0.1-beta.4` shipped as known and not fixed: on a split
+ingress, connecting a Slack agent returned 404 at the end of the OAuth flow.
+
+Both split-ingress examples now route `/rest/projects` on the webhook hostname
+to the main pods. No module input, output or rendered value changes, so
+upgrading replans only the two example Ingress objects, and only if you deploy
+from those examples. A single-hostname deployment is untouched.
+
+### Fixed
+
+- **Agents chat integrations 404 on a split ingress.** n8n builds the Slack
+  app-install URL and the platform event callbacks by appending
+  `/rest/projects/<id>/agents/...` onto `getWebhookBaseUrl()`, which is
+  `WEBHOOK_URL`, which is the webhook hostname. Those are main-pod routes, and
+  the webhook Ingress routed none of them, so the callback 404ed after the user
+  had already granted consent, with nothing logged. Upstream n8n's
+  construction, unrelated to `N8N_EDITOR_BASE_URL` and not fixable by
+  configuration: verified from inside the pods that a webhook-processor serves
+  no `/rest` route at all (404 on every one, against 401/200 on a main), so the
+  path has to be routed. Both split-ingress examples gained the rule, each
+  covered by a test that fails without it.
+
+### Changed
+
+- The webhook hostname in both split-ingress examples now serves
+  `/rest/projects` in addition to the webhook prefixes. Scoped to that prefix
+  rather than all of `/rest`, because it is the entire surface those
+  constructions use: `/rest/login`, `/rest/credentials` and the rest of the
+  REST API stay off that hostname. It is a literal prefix, so it needs no regex
+  and no controller-specific annotation. The examples' READMEs and variable
+  descriptions now describe that surface rather than claiming nothing else is
+  routed there, and deleting the block restores the old surface for anyone not
+  using Agents chat integrations.
+
 ## [0.0.1-beta.4]
 
 The AI Assistant round. Adds an input for secret-backed environment variables
@@ -234,7 +270,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.4...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.5...HEAD
+[0.0.1-beta.5]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.5
 [0.0.1-beta.4]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.3
 [0.0.1-beta.2]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.2

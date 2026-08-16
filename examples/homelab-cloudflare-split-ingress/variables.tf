@@ -34,7 +34,7 @@ variable "editor_host" {
 }
 
 variable "webhook_host" {
-  description = "Hostname serving production webhooks, forms, waiting webhooks and MCP. Passed to the module as n8n_webhook_url, so it is what n8n hands out in every generated webhook URL. Nothing else is routed on this name: a request to any other path gets the ingress controller's 404, which is what makes it safe to leave open to the internet."
+  description = "Hostname serving production webhooks, forms, waiting webhooks and MCP. Passed to the module as n8n_webhook_url, so it is what n8n hands out in every generated webhook URL. Also routes /rest/projects to the main pods, which n8n's Agents chat integrations require because they build their OAuth callbacks and platform webhooks onto this hostname; see the example README. Nothing else is routed on this name: a request to any other path gets the ingress controller's 404."
   type        = string
   default     = "hooks.example.com"
 

@@ -37,11 +37,14 @@ locals {
   )
 }
 
-# ── Webhook host: production webhook traffic only ─────────────────────────────
-# No catch-all rule, deliberately. A request to any other path on this hostname
-# gets the controller's default 404 and never reaches the editor. That is the
-# whole point of the second hostname: it is the one that faces the internet, so
-# the only thing reachable on it is the surface that has to be.
+# ── Webhook host: webhook traffic, plus the agents callback prefix ────────────
+# No catch-all rule, deliberately. A request to any path not listed below gets
+# the controller's default 404 and never reaches the editor. That is the point
+# of the second hostname: it is the one that faces the internet, so the only
+# things reachable on it are the surfaces that have to be.
+#
+# /rest/projects is one of them, which was not obvious. See the note on the
+# rule itself.
 
 resource "kubernetes_ingress_v1" "webhook" {
   metadata {
@@ -71,6 +74,38 @@ resource "kubernetes_ingress_v1" "webhook" {
                 name = module.n8n.n8n_webhook_service_name
                 port { number = module.n8n.n8n_service_port }
               }
+            }
+          }
+        }
+
+        # Agents chat integrations, and the reason this hostname serves more
+        # than webhooks. n8n builds the Slack app-install URL and the platform
+        # event callbacks by appending /rest/projects/<id>/agents/... onto
+        # getWebhookBaseUrl(), which is WEBHOOK_URL, which is this hostname.
+        # Those are main-pod routes, so without this rule connecting a Slack
+        # agent 404s at the end of the OAuth flow, after the user has already
+        # granted consent. It is upstream n8n's construction and has nothing to
+        # do with N8N_EDITOR_BASE_URL, so no amount of module configuration
+        # fixes it: the path has to be routed for OAuth to complete at all.
+        #
+        # Scoped to /rest/projects rather than /rest, because that is the
+        # whole surface those three constructions use and it is a literal
+        # prefix, so it needs no regex and no controller-specific annotation.
+        # /rest/login, /rest/credentials and the rest of the REST API stay off
+        # this hostname, which is what the no-catch-all rule above is for.
+        #
+        # It has to be reachable from the internet, not just from inside the
+        # cluster: the OAuth callback is a browser redirect the admin follows,
+        # and the platform webhooks are server-to-server POSTs from Slack and
+        # Telegram. Telegram in particular inspects this base URL and silently
+        # drops to polling mode if it is not a public https:// name.
+        path {
+          path      = "/rest/projects"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = module.n8n.n8n_service_name
+              port { number = module.n8n.n8n_service_port }
             }
           }
         }
