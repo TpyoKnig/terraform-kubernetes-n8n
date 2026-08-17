@@ -18,8 +18,8 @@ body:
     id: module_version
     attributes:
       label: Module version
-      description: The `version = ...` you have pinned (e.g. `0.0.1-beta.5`), or commit SHA if pulled from a branch.
-      placeholder: "0.0.1-beta.5"
+      description: The `version = ...` you have pinned (e.g. `0.1.0`), or commit SHA if pulled from a branch.
+      placeholder: "0.1.0"
     validations:
       required: true
 
