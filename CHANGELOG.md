@@ -7,6 +7,27 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.0], First stable release
+
+Same module tree as `0.0.1-beta.5`. Nothing to plan on upgrade, and no input,
+output or rendered value changes: this exists so that version constraints work.
+
+Every tag before this one is a semver pre-release, and neither Terraform nor
+OpenTofu matches a range constraint against a pre-release. `version = "~> 0.0"`
+resolved to nothing at all rather than to `0.0.1-beta.5`, so the only usable
+pin was an exact one, and consumers got no patch upgrades without editing the
+version by hand. Dropping the suffix fixes that and nothing else.
+
+Still pre-1.0. Under semver a `0.x` minor bump may break the input surface, so
+`~> 0.1` is the constraint to use: it takes patches and holds the minor. `1.0.0`
+is a promise to make when the variables stop moving.
+
+### Changed
+
+- Documentation now pins `~> 0.1` where it pinned `0.0.1-beta.5` exactly, and
+  the pin-exactly rationale is replaced by the range guidance above. The git
+  source form is unchanged in mechanism and moves to `?ref=0.1.0`.
+
 ## [0.0.1-beta.5]
 
 Closes the one item `0.0.1-beta.4` shipped as known and not fixed: on a split
@@ -270,7 +291,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.0.1-beta.5...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.1.0
 [0.0.1-beta.5]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.5
 [0.0.1-beta.4]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.4
 [0.0.1-beta.3]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.3
