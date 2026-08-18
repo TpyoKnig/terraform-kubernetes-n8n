@@ -189,7 +189,16 @@ locals {
     "N8N_LOG_LEVEL",
     "N8N_LOG_OUTPUT",
     "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS",
+    # All three are set together by n8n_metrics_enabled, so all three are
+    # reserved. Listing only N8N_METRICS left the other two appendable: a
+    # caller could put N8N_METRICS_INCLUDE_QUEUE_METRICS in n8n_extra_env and
+    # the module rendered the name twice in one container's env list, which is
+    # the silent last-wins override this list exists to prevent. There is no
+    # N8N_METRICS_ prefix entry because the remaining N8N_METRICS_INCLUDE_*
+    # groups are genuinely the caller's to set.
     "N8N_METRICS",
+    "N8N_METRICS_INCLUDE_QUEUE_METRICS",
+    "N8N_METRICS_INCLUDE_CACHE_METRICS",
     "N8N_REINSTALL_MISSING_PACKAGES",
     "N8N_COMMUNITY_PACKAGES_PREVENT_LOADING",
     "N8N_COMMUNITY_PACKAGES_REGISTRY",

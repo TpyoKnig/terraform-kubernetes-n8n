@@ -1312,6 +1312,85 @@ run "no_extra_env_name_collides_with_a_chart_rendered_name" {
   }
 }
 
+# The duplicate check above only sees what the module itself renders, because
+# n8n_extra_env is empty in that run. n8n_metrics_enabled sets three names but
+# only N8N_METRICS was reserved, so the other two could be appended by a caller
+# and the module rendered one of them twice in a single container's env list.
+# Kubernetes takes the last, silently, which is the exact failure the reserved
+# list exists to prevent.
+
+run "the_metrics_include_toggles_the_module_owns_are_reserved" {
+  command = plan
+
+  variables {
+    n8n_metrics_enabled = true
+    n8n_extra_env = [
+      { name = "N8N_METRICS_INCLUDE_QUEUE_METRICS", value = "false" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "the_metrics_include_toggles_are_reserved_in_the_secret_form_too" {
+  command = plan
+
+  variables {
+    n8n_metrics_enabled = true
+    n8n_extra_env_from_secret = [
+      { name = "N8N_METRICS_INCLUDE_CACHE_METRICS", secret_name = "s", secret_key = "k" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+# The other side of it: the module still sets all three, exactly once each. A
+# reserved name that stops being rendered is just a name the caller can no
+# longer set.
+run "enabling_metrics_renders_all_three_env_vars_once" {
+  command = plan
+
+  variables {
+    n8n_metrics_enabled = true
+  }
+
+  assert {
+    condition = nonsensitive(length([
+      for e in local.k8s_values_config.config.extraEnv :
+      e if contains([
+        "N8N_METRICS",
+        "N8N_METRICS_INCLUDE_QUEUE_METRICS",
+        "N8N_METRICS_INCLUDE_CACHE_METRICS",
+      ], e.name) && e.value == "true"
+    ])) == 3
+    error_message = "n8n_metrics_enabled must render N8N_METRICS, N8N_METRICS_INCLUDE_QUEUE_METRICS and N8N_METRICS_INCLUDE_CACHE_METRICS, each once and each true."
+  }
+}
+
+# The remaining N8N_METRICS_INCLUDE_* groups are the caller's. Reserving the
+# whole N8N_METRICS_ prefix would have been the lazy fix and would have taken
+# those away, leaving no way to turn on the webhook, scheduler or DB-pool
+# families the module has no opinion about.
+run "the_metrics_groups_the_module_does_not_set_stay_callable" {
+  command = plan
+
+  variables {
+    n8n_metrics_enabled = true
+    n8n_extra_env = [
+      { name = "N8N_METRICS_INCLUDE_WORKFLOW_ID_LABEL", value = "true" },
+    ]
+  }
+
+  assert {
+    condition = nonsensitive(length([
+      for e in local.k8s_values_config.config.extraEnv :
+      e if e.name == "N8N_METRICS_INCLUDE_WORKFLOW_ID_LABEL"
+    ])) == 1
+    error_message = "A N8N_METRICS_INCLUDE_* group the module does not set must remain settable through n8n_extra_env."
+  }
+}
+
 # ── The external Postgres path honours what the caller configured ─────────────
 # The mirror of the external-Redis block above, and added for the same reason:
 # port, database and user were hardcoded in the rendered values tree, the last
