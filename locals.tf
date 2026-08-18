@@ -775,8 +775,17 @@ locals {
           { name = "N8N_UNVERIFIED_PACKAGES_ENABLED", value = tostring(var.n8n_unverified_packages_enabled) },
         ],
 
+        # Only the request timeout belongs here. It is read by n8n itself —
+        # how long the broker waits for a runner to accept a task — so the n8n
+        # containers are the right place for it.
+        #
+        # N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT is deliberately NOT here. It is read
+        # by the launcher, which runs in the separate task-runner sidecar, and
+        # config.extraEnv reaches the n8n containers only. Setting it here left
+        # the sidecar on the chart default no matter what the caller asked for.
+        # It is set via taskRunners.launcher.autoShutdownTimeout instead — see
+        # k8s_values_task_runners below.
         var.n8n_task_runners_enabled ? [
-          { name = "N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT", value = tostring(var.n8n_task_runner_auto_shutdown_timeout) },
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
         ] : [],
 
@@ -936,6 +945,28 @@ locals {
           configMapName = "${local.cnpg_release_name}-task-runners"
           configMapKey  = "n8n-task-runners.json"
         }
+      } : {},
+
+      # Idle shutdown for the runner processes. This has to be the nested
+      # launcher key: the chart reads taskRunners.launcher.autoShutdownTimeout
+      # (_configmap-env.tpl) and renders it into the SIDECAR's environment as
+      # N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT, inside the taskRunnerSidecarEnv
+      # define. It is the only key in the chart that carries this value; there
+      # is no flat taskRunners.autoShutdownTimeout in 1.10.0 or 1.11.0.
+      #
+      # 0 disables idle shutdown entirely — the runner process the launcher
+      # spawns checks `idleTimeout === 0` and skips arming its timer
+      # (task-runner.js, `if (this.idleTimeout === 0) return`). That
+      # trades a resident runner process against cold start, and the cold start
+      # is not small: a Code node measured at ~17ms warm took ~7.4s cold.
+      #
+      # Kept as its own merge argument rather than folded in with customConfig
+      # above. In a `cond ? {...} : {}` the two branches are unified to a common
+      # type, and an object mixing this number with customConfig's strings
+      # collapses to map(string) — which turns the 0 into "0" before it ever
+      # reaches the chart.
+      var.n8n_task_runners_enabled ? {
+        launcher = { autoShutdownTimeout = var.n8n_task_runner_auto_shutdown_timeout }
       } : {},
 
       # The runner sidecar's tag. Omitted when null so the chart falls back to

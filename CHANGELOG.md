@@ -7,6 +7,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- `n8n_task_runner_auto_shutdown_timeout` now reaches the task-runner sidecar.
+  It was rendered into `config.extraEnv`, which the chart puts on the n8n
+  containers only, so the launcher never saw it and the sidecar stayed on the
+  chart default of 15 no matter what the caller set. It is now set on
+  `taskRunners.launcher.autoShutdownTimeout`, the key the chart renders into
+  the sidecar's environment. Callers who set this input and saw no change in
+  runner behaviour will see it take effect on the next apply; callers who left
+  it at the default get the same 15 seconds as before.
+
 ## [0.1.0], First stable release
 
 Same module tree as `0.0.1-beta.5`. Nothing to plan on upgrade, and no input,
