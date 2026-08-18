@@ -58,12 +58,14 @@ for the versioning policy.
 
 | Version      | Security fixes |
 | ------------ | -------------- |
-| 0.1.0        | ✅ (current)   |
+| 0.2.0        | ✅ (current)   |
+| 0.1.0        | ❌             |
 
-`0.0.1-beta.1` through `0.0.1-beta.5` are the earlier tags. All are
-superseded and receive nothing, including security fixes. Upgrade rather than
-asking for a backport. `0.1.0` is the same tree as `0.0.1-beta.5`, so that
-upgrade is a retag with nothing to plan.
+`0.1.0` and `0.0.1-beta.1` through `0.0.1-beta.5` are the earlier tags. All
+are superseded and receive nothing, including security fixes. Upgrade rather
+than asking for a backport. `0.1.0` to `0.2.0` plans clean unless you set
+`n8n_task_runner_auto_shutdown_timeout` or pass a reserved metrics variable
+through `n8n_extra_env`; see the changelog.
 
 ## Out of scope for this policy
 
