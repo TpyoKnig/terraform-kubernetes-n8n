@@ -9,6 +9,27 @@
 # default with one that permits stdlib and, optionally, external packages via
 # var.n8n_python_external_allow.
 
+locals {
+  # N8N_RUNNERS_MAX_CONCURRENCY, or nothing at all. The chart has no typed
+  # value for it in 1.10.0 or 1.11.0 and no hook for adding env to the sidecar,
+  # so env-overrides in this ConfigMap is the only place it can be set. That is
+  # also the correct place: the runner process reads it (BaseRunnerConfig for
+  # JavaScript, TaskRunnerConfig for Python), not n8n, so config.extraEnv would
+  # put it on containers that never look at it.
+  #
+  # Omitted entirely when null, rather than defaulted to a number here, because
+  # the two runners disagree about the default: 10 for JavaScript, 5 for
+  # Python. Any value this module picked would silently move one of them.
+  #
+  # Stringified because these are environment variables. The other overrides in
+  # both blocks are strings, so an un-stringified number would be converted by
+  # type unification anyway; doing it here keeps that visible rather than
+  # incidental.
+  task_runner_concurrency_override = var.n8n_task_runner_max_concurrency == null ? {} : {
+    N8N_RUNNERS_MAX_CONCURRENCY = tostring(var.n8n_task_runner_max_concurrency)
+  }
+}
+
 resource "kubernetes_config_map_v1" "task_runners_config" {
   count = var.n8n_task_runners_enabled ? 1 : 0
 
@@ -38,11 +59,11 @@ resource "kubernetes_config_map_v1" "task_runners_config" {
             "N8N_SENTRY_DSN", "N8N_VERSION",
             "ENVIRONMENT", "DEPLOYMENT_NAME", "HOME",
           ]
-          env-overrides = {
+          env-overrides = merge({
             NODE_FUNCTION_ALLOW_BUILTIN          = var.n8n_js_builtin_allow
             NODE_FUNCTION_ALLOW_EXTERNAL         = var.n8n_js_external_allow
             N8N_RUNNERS_HEALTH_CHECK_SERVER_HOST = "0.0.0.0"
-          }
+          }, local.task_runner_concurrency_override)
         },
         {
           runner-type              = "python"
@@ -59,10 +80,10 @@ resource "kubernetes_config_map_v1" "task_runners_config" {
             "N8N_SENTRY_DSN", "N8N_VERSION",
             "ENVIRONMENT", "DEPLOYMENT_NAME",
           ]
-          env-overrides = {
+          env-overrides = merge({
             N8N_RUNNERS_STDLIB_ALLOW   = var.n8n_python_stdlib_allow
             N8N_RUNNERS_EXTERNAL_ALLOW = var.n8n_python_external_allow
-          }
+          }, local.task_runner_concurrency_override)
         },
       ]
     })

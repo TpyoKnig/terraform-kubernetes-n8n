@@ -682,7 +682,7 @@ variable "n8n_task_runner_cpu_request" {
 }
 
 variable "n8n_task_runner_cpu_limit" {
-  description = "CPU limit for task runner sidecar containers (e.g. 1, 2000m)"
+  description = "CPU limit for task runner sidecar containers (e.g. 1, 2000m). Size this against Python workloads specifically: the Python runner executes each task in a forked child process (multiprocessing with the forkserver start method), so it is genuinely CPU-hungry in a way that \"it's only a sidecar\" does not suggest. On a Python Code-node benchmark this was the dominant of the two runner-throughput levers, worth 3.8x on its own against 2.2x for n8n_task_runner_max_concurrency, and 6.6x with both raised. JavaScript Code nodes on the same workload ran roughly 20x faster than Python ones and are not where this bites."
   type        = string
   default     = "1"
 
@@ -724,6 +724,17 @@ variable "n8n_task_runner_auto_shutdown_timeout" {
   description = "Seconds of inactivity before an idle task-runner process exits. Maps to taskRunners.launcher.autoShutdownTimeout, which the chart renders into the task-runner SIDECAR's environment as N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT — not into the n8n containers, where the launcher does not run. Set to 0 to disable idle shutdown entirely: the runner process the launcher spawns checks `idleTimeout === 0` and skips arming its timer. The trade is a resident runner process against cold-start latency, and the cold start is not small — a Code node that takes ~17ms on a warm runner takes several seconds on a cold one, because the launcher has to start the Node or Python process before the task can run. Leave the default if runner memory matters more than first-request latency; set 0 for latency-sensitive workflows that fire intermittently."
   type        = number
   default     = 15
+}
+
+variable "n8n_task_runner_max_concurrency" {
+  description = "Maximum number of tasks a single task-runner process will execute at once, wired to N8N_RUNNERS_MAX_CONCURRENCY through the env-overrides block of the n8n-task-runners.json ConfigMap the release mounts, which is what puts it in the runner process rather than in the n8n containers where nothing reads it. Applies to both the JavaScript and the Python runner. Leave null (the default) to keep each runner's own default, which are not the same number: 10 for JavaScript, 5 for Python. Raising it is the cheaper of the two runner-throughput levers, because more overlap costs no extra CPU request where n8n_task_runner_cpu_limit does, but it is the smaller one: on a Python Code-node benchmark, 5 to 15 alone gave 2.2x, the CPU limit alone gave 3.8x, and both together 6.6x. Note that runner saturation is invisible to queue-depth autoscaling — at 5 concurrent the Redis queue never grew while requests still took 17s, so KEDA saw nothing to scale. Per-pod runner capacity and pod count are not substitutes for each other."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_task_runner_max_concurrency == null || try(var.n8n_task_runner_max_concurrency >= 1, false)
+    error_message = "n8n_task_runner_max_concurrency must be at least 1, or null to leave each runner on its own default. 0 would render a runner that accepts no tasks."
+  }
 }
 
 variable "n8n_task_runner_request_timeout" {
