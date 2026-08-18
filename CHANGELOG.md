@@ -7,6 +7,28 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.2.0], The task-runner round
+
+Two fixes, two description corrections and one new input, all in the
+task-runner and metrics surface. Both fixes are inputs that silently did
+nothing, which is why this is a minor bump rather than a patch: the values you
+set start taking effect.
+
+`n8n_task_runner_auto_shutdown_timeout` reached the wrong containers, so the
+runner sidecar stayed on the chart's 15 seconds whatever you asked for. If you
+set that input, the sidecar's environment changes on the next apply and the
+main and worker pods restart. Leaving it at the default plans clean.
+
+`n8n_metrics_enabled` sets three environment variables and only reserved one of
+them. Passing either `N8N_METRICS_INCLUDE_QUEUE_METRICS` or
+`N8N_METRICS_INCLUDE_CACHE_METRICS` through `n8n_extra_env` or
+`n8n_extra_env_from_secret` is now a plan-time error rather than a duplicate
+env entry. That is the one upgrade that can fail: delete the entry, since the
+module already sets the same value.
+
+`n8n_task_runner_max_concurrency` is new and defaults to null, which changes
+nothing until you set it.
+
 ### Added
 
 - `n8n_task_runner_max_concurrency` input: the maximum number of tasks a single
@@ -343,7 +365,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.0
 [0.1.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.1.0
 [0.0.1-beta.5]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.5
 [0.0.1-beta.4]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.4

@@ -102,7 +102,7 @@ The module doesn't verify any of this. A missing operator shows up as a resource
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "~> 0.1"
+  version = "~> 0.2"
 
   n8n_domain = "n8n.example.com"
 
@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.1.0"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.0"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -238,11 +238,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.1.0` is the current release and the first stable one. It is the same tree as `0.0.1-beta.5`, tagged without the pre-release suffix so that range constraints resolve at all: Terraform never matches a range against a pre-release, so `version = "~> 0.0"` resolved to nothing rather than to `0.0.1-beta.5`. The `0.0.1-beta.*` tags stay where they are and keep working as exact pins.
+`0.2.0` is the current release. It fixes two inputs that silently did nothing — the task-runner idle-shutdown timeout reached the wrong containers, and two of the three environment variables `n8n_metrics_enabled` sets were not reserved — and adds `n8n_task_runner_max_concurrency`. Upgrading from `0.1.0` plans clean unless you set the idle-shutdown timeout, which starts taking effect, or pass a reserved metrics variable through `n8n_extra_env` or `n8n_extra_env_from_secret`, either of which is now a plan-time error. `0.1.0` and the `0.0.1-beta.*` tags stay where they are and keep working as exact pins.
 
-Still pre-1.0, so a minor bump may break the input surface. `~> 0.1` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
+Still pre-1.0, so a minor bump may break the input surface. `~> 0.2` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.1.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
