@@ -633,6 +633,44 @@ run "task_runner_timeouts_are_gated_on_task_runners" {
   }
 }
 
+# The idle-shutdown timeout has to reach the task-runner SIDECAR, and
+# config.extraEnv reaches the n8n containers only. Emitting it there meant the
+# input silently did nothing: callers set 0 and the sidecar stayed on the
+# chart's default of 15.
+run "the_runner_idle_shutdown_reaches_the_sidecar_not_the_n8n_containers" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled              = true
+    n8n_task_runner_auto_shutdown_timeout = 0
+  }
+
+  assert {
+    condition     = local.k8s_values_task_runners.taskRunners.launcher.autoShutdownTimeout == 0
+    error_message = "The idle-shutdown timeout must be set on taskRunners.launcher.autoShutdownTimeout, the only key the chart renders into the sidecar's environment."
+  }
+
+  # Guards the regression directly: if this ever moves back into extraEnv it
+  # lands on the n8n containers, where nothing reads it.
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv :
+      e if e.name == "N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT"
+    ]) == 0
+    error_message = "N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT must not be rendered into config.extraEnv; the launcher runs in the sidecar and never sees it there."
+  }
+
+  # The request timeout genuinely is an n8n-side setting, so it stays put. This
+  # keeps the fix from over-correcting and moving both.
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv :
+      e if e.name == "N8N_RUNNERS_TASK_REQUEST_TIMEOUT"
+    ]) == 1
+    error_message = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT is read by n8n itself and must stay in config.extraEnv."
+  }
+}
+
 # ── The external Redis path honours what the caller configured ────────────────
 # Every value below was hardcoded in the rendered values tree at one point, so
 # a caller-supplied port, ACL username, TLS flag or timeout reached nothing.
