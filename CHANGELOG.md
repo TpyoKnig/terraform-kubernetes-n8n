@@ -18,6 +18,23 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   runner behaviour will see it take effect on the next apply; callers who left
   it at the default get the same 15 seconds as before.
 
+- `N8N_METRICS_INCLUDE_QUEUE_METRICS` and `N8N_METRICS_INCLUDE_CACHE_METRICS`
+  are now reserved names. `n8n_metrics_enabled` has always set them alongside
+  `N8N_METRICS`, but only `N8N_METRICS` was on the reserved list, so a caller
+  could also pass one of them through `n8n_extra_env` and the module rendered
+  the same name twice in one container's env list. Kubernetes takes the last
+  one silently, which is the override the reserved list exists to prevent.
+  Setting either through `n8n_extra_env` or `n8n_extra_env_from_secret` is now
+  a plan-time error. The remaining `N8N_METRICS_INCLUDE_*` groups are
+  unaffected and stay callable: the module has no opinion about them.
+
+### Changed
+
+- `n8n_metrics_enabled`'s description now lists all three environment
+  variables it sets rather than only `N8N_METRICS`, and says that the endpoint
+  being on is not the same as the metrics being on, since most of n8n's
+  `N8N_METRICS_INCLUDE_*` families default to false. No behaviour change.
+
 ## [0.1.0], First stable release
 
 Same module tree as `0.0.1-beta.5`. Nothing to plan on upgrade, and no input,
