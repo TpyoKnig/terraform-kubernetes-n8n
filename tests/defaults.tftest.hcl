@@ -671,6 +671,66 @@ run "the_runner_idle_shutdown_reaches_the_sidecar_not_the_n8n_containers" {
   }
 }
 
+# ── Runner concurrency ───────────────────────────────────────────────────────
+# The chart has no typed value for N8N_RUNNERS_MAX_CONCURRENCY, so it goes in
+# the launcher ConfigMap's env-overrides, which is where the runner process
+# actually reads it. Both runner types get it, and neither gets it when the
+# input is null: JavaScript defaults to 10 and Python to 5, so any number this
+# module invented as a default would silently move one of them.
+
+run "runner_concurrency_reaches_both_runner_types" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled        = true
+    n8n_task_runner_max_concurrency = 15
+  }
+
+  assert {
+    condition = alltrue([
+      for r in jsondecode(kubernetes_config_map_v1.task_runners_config[0].data["n8n-task-runners.json"])["task-runners"] :
+      try(r["env-overrides"]["N8N_RUNNERS_MAX_CONCURRENCY"], null) == "15"
+    ])
+    error_message = "Both the javascript and python runner blocks must carry N8N_RUNNERS_MAX_CONCURRENCY, as the string \"15\": these are environment variables."
+  }
+
+  # The override must not displace what was already in each block.
+  assert {
+    condition = alltrue([
+      try(jsondecode(kubernetes_config_map_v1.task_runners_config[0].data["n8n-task-runners.json"])["task-runners"][0]["env-overrides"]["N8N_RUNNERS_HEALTH_CHECK_SERVER_HOST"], null) == "0.0.0.0",
+      try(jsondecode(kubernetes_config_map_v1.task_runners_config[0].data["n8n-task-runners.json"])["task-runners"][1]["env-overrides"]["N8N_RUNNERS_STDLIB_ALLOW"], null) == "*",
+    ])
+    error_message = "Merging the concurrency override must leave each runner's existing env-overrides in place."
+  }
+}
+
+run "runner_concurrency_is_absent_when_the_caller_names_nothing" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled = true
+  }
+
+  assert {
+    condition = alltrue([
+      for r in jsondecode(kubernetes_config_map_v1.task_runners_config[0].data["n8n-task-runners.json"])["task-runners"] :
+      !contains(keys(r["env-overrides"]), "N8N_RUNNERS_MAX_CONCURRENCY")
+    ])
+    error_message = "With n8n_task_runner_max_concurrency null the key must be omitted entirely, leaving JavaScript on 10 and Python on 5."
+  }
+}
+
+run "a_runner_concurrency_of_zero_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled        = true
+    n8n_task_runner_max_concurrency = 0
+  }
+
+  expect_failures = [var.n8n_task_runner_max_concurrency]
+}
+
 # ── The external Redis path honours what the caller configured ────────────────
 # Every value below was hardcoded in the rendered values tree at one point, so
 # a caller-supplied port, ACL username, TLS flag or timeout reached nothing.

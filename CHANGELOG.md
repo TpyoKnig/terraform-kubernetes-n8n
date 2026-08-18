@@ -7,6 +7,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `n8n_task_runner_max_concurrency` input: tasks a single task-runner process
+  will execute at once, wired to `N8N_RUNNERS_MAX_CONCURRENCY` through the
+  `env-overrides` block of the `n8n-task-runners.json` ConfigMap. The name was
+  already in that file's `allowed-env` list for both runners, so only the input
+  was missing. The chart has no typed value for it and no hook for adding
+  environment to the sidecar, and `config.extraEnv` would put it on containers
+  that never read it, so the ConfigMap is the only correct place. Defaults to
+  null, which omits the key and leaves each runner on its own default: 10 for
+  JavaScript, 5 for Python. Those disagree, so no single number could be a
+  neutral default here.
+
 ### Fixed
 
 - `n8n_task_runner_auto_shutdown_timeout` now reaches the task-runner sidecar.
@@ -34,6 +47,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   variables it sets rather than only `N8N_METRICS`, and says that the endpoint
   being on is not the same as the metrics being on, since most of n8n's
   `N8N_METRICS_INCLUDE_*` families default to false. No behaviour change.
+
+- `n8n_task_runner_cpu_limit`'s description now says what it costs to leave at
+  the default. On a Python Code-node benchmark, a single worker with KEDA
+  pinned, raising the sidecar CPU limit was worth 3.8x on its own and 6.6x
+  together with concurrency, which makes it the dominant of the two runner
+  throughput levers. The reason is specific to Python: that runner executes
+  each task in a forked child process, so it is CPU-hungry in a way a sidecar
+  is not assumed to be. No default changed. Worth reading alongside the note
+  that runner saturation is invisible to queue-depth autoscaling, since at low
+  concurrency the Redis queue stays empty while requests still stall, and KEDA
+  sees nothing to scale.
 
 ## [0.1.0], First stable release
 
