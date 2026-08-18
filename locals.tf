@@ -950,12 +950,13 @@ locals {
       # Idle shutdown for the runner processes. This has to be the nested
       # launcher key: the chart reads taskRunners.launcher.autoShutdownTimeout
       # (_configmap-env.tpl) and renders it into the SIDECAR's environment as
-      # N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT. There is also a flat
-      # taskRunners.autoShutdownTimeout in the chart's values.yaml that nothing
-      # reads, so setting that one silently does nothing.
+      # N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT, inside the taskRunnerSidecarEnv
+      # define. It is the only key in the chart that carries this value; there
+      # is no flat taskRunners.autoShutdownTimeout in 1.10.0 or 1.11.0.
       #
-      # 0 disables idle shutdown entirely — the launcher checks
-      # `idleTimeout === 0` and skips arming its timer (task-runner.js). That
+      # 0 disables idle shutdown entirely — the runner process the launcher
+      # spawns checks `idleTimeout === 0` and skips arming its timer
+      # (task-runner.js, `if (this.idleTimeout === 0) return`). That
       # trades a resident runner process against cold start, and the cold start
       # is not small: a Code node measured at ~17ms warm took ~7.4s cold.
       #
