@@ -65,7 +65,7 @@ for the versioning policy.
 are superseded and receive nothing, including security fixes. Upgrade rather
 than asking for a backport. `0.1.0` to `0.2.0` plans clean unless you set
 `n8n_task_runner_auto_shutdown_timeout` or pass a reserved metrics variable
-through `n8n_extra_env`; see the changelog.
+through `n8n_extra_env` or `n8n_extra_env_from_secret`; see the changelog.
 
 ## Out of scope for this policy
 

@@ -238,7 +238,7 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.2.0` is the current release. It fixes two inputs that silently did nothing — the task-runner idle-shutdown timeout reached the wrong containers, and two of the three environment variables `n8n_metrics_enabled` sets were not reserved — and adds `n8n_task_runner_max_concurrency`. Upgrading from `0.1.0` plans clean unless you set the idle-shutdown timeout, which starts taking effect, or pass a reserved metrics variable through `n8n_extra_env`, which is now a plan-time error. `0.1.0` and the `0.0.1-beta.*` tags stay where they are and keep working as exact pins.
+`0.2.0` is the current release. It fixes two inputs that silently did nothing — the task-runner idle-shutdown timeout reached the wrong containers, and two of the three environment variables `n8n_metrics_enabled` sets were not reserved — and adds `n8n_task_runner_max_concurrency`. Upgrading from `0.1.0` plans clean unless you set the idle-shutdown timeout, which starts taking effect, or pass a reserved metrics variable through `n8n_extra_env` or `n8n_extra_env_from_secret`, either of which is now a plan-time error. `0.1.0` and the `0.0.1-beta.*` tags stay where they are and keep working as exact pins.
 
 Still pre-1.0, so a minor bump may break the input surface. `~> 0.2` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
