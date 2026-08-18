@@ -9,8 +9,8 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
-- `n8n_task_runner_max_concurrency` input: tasks a single task-runner process
-  will execute at once, wired to `N8N_RUNNERS_MAX_CONCURRENCY` through the
+- `n8n_task_runner_max_concurrency` input: the maximum number of tasks a
+  single task-runner process will execute at once, wired to `N8N_RUNNERS_MAX_CONCURRENCY` through the
   `env-overrides` block of the `n8n-task-runners.json` ConfigMap. The name was
   already in that file's `allowed-env` list for both runners, so only the input
   was missing. The chart has no typed value for it and no hook for adding
