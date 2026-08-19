@@ -30,28 +30,61 @@ resource "kubectl_manifest" "cnpg_cluster" {
       name      = local.cnpg_cluster_name
       namespace = local.namespace_name
     }
-    spec = {
-      instances = var.cnpg_instances
-      imageName = "ghcr.io/cloudnative-pg/postgresql:${var.cnpg_postgres_image_tag}"
+    spec = merge(
+      {
+        instances = var.cnpg_instances
+        imageName = "ghcr.io/cloudnative-pg/postgresql:${var.cnpg_postgres_image_tag}"
 
-      bootstrap = {
-        initdb = {
-          database = var.cnpg_database_name
-          owner    = var.cnpg_database_owner
+        # CloudNativePG creates a PodDisruptionBudget over the primary unless
+        # told not to, and at cnpg_instances = 1, this module's default, that
+        # object is minAvailable = 1 against a single pod: allowedDisruptions
+        # is 0 and the node hosting Postgres can never be drained. Found on a
+        # live cluster after the chart's own main-pod PDB was disabled for
+        # exactly the same reason; disabling one and leaving the other still
+        # leaves a node that a Talos upgrade stalls on.
+        #
+        # The default follows the instance count rather than being a flat
+        # false, because the two cases genuinely differ. With replicas, the
+        # budget does what a budget is for: it stops a second Postgres node
+        # being drained while the first is still coming back, and CNPG will
+        # still let replicas be evicted. With one instance there is no second
+        # copy to protect, so the object cannot preserve availability and can
+        # only withhold it.
+        enablePDB = var.cnpg_pdb_enabled != null ? var.cnpg_pdb_enabled : var.cnpg_instances > 1
+
+        bootstrap = {
+          initdb = {
+            database = var.cnpg_database_name
+            owner    = var.cnpg_database_owner
+          }
         }
-      }
 
-      storage = merge(
-        { size = var.cnpg_storage_size },
-        length(var.cnpg_storage_class) > 0 ? { storageClass = var.cnpg_storage_class } : {},
-      )
+        storage = merge(
+          { size = var.cnpg_storage_size },
+          length(var.cnpg_storage_class) > 0 ? { storageClass = var.cnpg_storage_class } : {},
+        )
 
-      postgresql = {
-        parameters = {
-          max_connections = tostring(var.cnpg_max_connections)
+        postgresql = {
+          parameters = {
+            max_connections = tostring(var.cnpg_max_connections)
+          }
         }
-      }
-    }
+      },
+
+      # Continuous WAL archiving and the object store behind it, passed through
+      # verbatim. Omitted entirely when null, which is the default and is what
+      # this Cluster has always been: a database whose only copy is its PVC.
+      #
+      # Passthrough rather than a typed surface, which is a deliberate
+      # exception to how this module treats every other input. CNPG is moving
+      # this exact field from the in-tree spec.backup.barmanObjectStore to the
+      # Barman Cloud Plugin, and the spelling that is correct depends on the
+      # operator version the caller installed, which the module has no way to
+      # read. A typed API here would encode one of the two and be confidently
+      # wrong on the other half of the installed base. See var.cnpg_backup and
+      # docs/operations.md for the two shapes and a worked example.
+      var.cnpg_backup == null ? {} : { backup = var.cnpg_backup },
+    )
   })
 
   # Server-side apply keeps the operator as the field manager for everything
@@ -155,4 +188,28 @@ resource "kubectl_manifest" "cnpg_pooler" {
   # CNPG provisions the cnpg_pooler_pgbouncer auth role into the Cluster when
   # the Pooler appears, so the Cluster has to exist first.
   depends_on = [kubectl_manifest.cnpg_cluster]
+}
+
+# The same failure main_pdb_blocks_the_main_pod_node_drain warns about, one
+# layer down. CNPG's budget is minAvailable = 1 over the primary, so forcing it
+# on for a single-instance cluster is allowed disruptions of zero for the life
+# of the deployment. Only the explicit true is warned about: the null default
+# already resolves to false at one instance, so nobody arrives here by accident.
+check "cnpg_pdb_blocks_the_postgres_node_drain" {
+  assert {
+    condition     = local.cnpg_enabled && var.cnpg_pdb_enabled == true ? var.cnpg_instances > 1 : true
+    error_message = "cnpg_pdb_enabled is true with cnpg_instances = ${var.cnpg_instances}, so CloudNativePG maintains a PodDisruptionBudget of minAvailable = 1 over a single Postgres pod. Allowed disruptions is then zero permanently: `kubectl drain` on the node holding it never completes, and a Talos node upgrade stalls in drain rather than failing, which reads as a hung upgrade rather than a policy decision. A budget keeps N replicas up while a node goes away, and with one instance there is no N to keep. Leave cnpg_pdb_enabled null to let the instance count decide, or raise cnpg_instances above 1 so the budget has a replica to protect."
+  }
+}
+
+# cnpg_backup is read only by the Cluster this file renders, and that Cluster is
+# not created on the external path. Silence there costs more than most: the
+# caller has written a destination and a credentials Secret, so the
+# configuration reads as done, and what they have is a database with no
+# archiving that nothing will tell them about until they need a restore.
+check "cnpg_backup_needs_the_cnpg_backend" {
+  assert {
+    condition     = var.cnpg_backup != null ? local.cnpg_enabled : true
+    error_message = "cnpg_backup is set but postgres_backend is \"${var.postgres_backend}\", so this module renders no CloudNativePG Cluster and the value reaches nothing. Backing up an external database is the operator's own business, whatever runs it. Set postgres_backend = \"cnpg\" to use this input, or clear it to silence this warning."
+  }
 }

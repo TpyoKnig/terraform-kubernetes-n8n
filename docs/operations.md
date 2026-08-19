@@ -377,14 +377,92 @@ S3-compatible endpoint works, and MinIO on a NAS is enough for a lab.
 module.** A `Cluster` CR with no `backup` stanza is a database whose only
 copy is a PVC. Before putting workflows you care about on it, either:
 
-- configure `barmanObjectStore` on the CNPG cluster (S3, MinIO, or any
+- set `cnpg_backup` to turn on continuous WAL archiving (S3, MinIO, or any
   S3-compatible endpoint: a NAS running MinIO is enough for a lab), or
 - back it up out of band: `kubectl cnpg backup`, or a `pg_dump` CronJob
   against the rw Service.
 
-`terraform destroy` removes the `Cluster` CR. Whether the PVCs go with it
-depends on your `StorageClass` reclaim policy, not on Terraform. Check for
-orphaned `PersistentVolume`s after a destroy.
+### `cnpg_backup`
+
+The input is passed through to the Cluster's `spec.backup` verbatim, which is
+an exception to how every other input here works: the field's own shape has
+changed under CloudNativePG and a typed surface would have frozen one version
+of it.
+
+**It reaches the in-tree path only.** CloudNativePG deprecated
+`spec.backup.barmanObjectStore` in 1.26 in favour of the Barman Cloud Plugin,
+and the plugin is not configured here: it wants an entry under the Cluster's
+`spec.plugins` and a separate `ObjectStore` resource, neither of which this
+module renders. On 1.26 and later the in-tree form still works and is still
+what this input writes, so nothing breaks today, but a cluster that has moved
+to the plugin cannot be configured through `cnpg_backup` at all. Check what
+your operator is with `kubectl get deployment -n cnpg-system -o
+jsonpath='{..image}'`.
+
+In-tree form. Note that `retentionPolicy` is deprecated on the same schedule
+as `barmanObjectStore`, not separately from it: the whole in-tree stanza moves
+to the plugin together, and under the plugin retention is set on the
+`ObjectStore` resource instead:
+
+```hcl
+cnpg_backup = {
+  retentionPolicy = "30d" # deprecated with barmanObjectStore, not apart from it
+  barmanObjectStore = {
+    destinationPath = "s3://n8n-backups/"
+    endpointURL     = "https://minio.example.com"
+    s3Credentials = {
+      accessKeyId     = { name = "minio-creds", key = "ACCESS_KEY_ID" }
+      secretAccessKey = { name = "minio-creds", key = "SECRET_ACCESS_KEY" }
+    }
+    wal = { compression = "gzip" }
+  }
+}
+```
+
+The credentials Secret is yours to create, in the same namespace, and stays out
+of this module for the same reason `db_password_secret_ref` does: reading it
+here would put the value in Terraform state.
+
+**WAL archiving alone is not a backup.** It is the half that lets you roll
+forward; you still need a base backup to roll forward *from*. That is a
+separate `ScheduledBackup` custom resource, which this module does not create:
+
+```hcl
+resource "kubectl_manifest" "n8n_pg_backup" {
+  yaml_body = yamlencode({
+    apiVersion = "postgresql.cnpg.io/v1"
+    kind       = "ScheduledBackup"
+    metadata   = { name = "n8n-pg-nightly", namespace = module.n8n.namespace }
+    spec = {
+      schedule             = "0 0 2 * * *" # CNPG takes six fields, seconds first
+      backupOwnerReference = "self"
+      cluster              = { name = "n8n-pg" }
+      # Omitted, so it defaults to barmanObjectStore, matching the in-tree
+      # cnpg_backup above. On a cluster using the Barman Cloud Plugin this
+      # needs method = "plugin" and a pluginConfiguration block instead, and
+      # a ScheduledBackup left on the default there produces nothing.
+    }
+  })
+}
+```
+
+Restore is `bootstrap.recovery` on a **new** Cluster, not an edit to this one,
+so a real restore drill means standing up a second cluster and pointing n8n at
+it. Do it once before you need it.
+
+### What `terraform destroy` takes with it
+
+`terraform destroy` removes the `Cluster` CR, and CNPG deletes its PVCs behind
+it. Whether the underlying volumes survive depends on your `StorageClass`
+reclaim policy, not on Terraform: set it to `Retain` for anything you would
+miss. Check for orphaned `PersistentVolume`s after a destroy either way.
+
+The module does not put `prevent_destroy` on the Cluster, and cannot make that
+conditional: Terraform requires a literal in a `lifecycle` block, so a
+module-level toggle for it is not expressible. A hardcoded one would make
+`terraform destroy` impossible for every consumer, including the throwaway test
+deployments this module is developed against. Reclaim policy is the lever that
+actually works here.
 
 n8n's encryption key matters as much as the database: workflow credentials
 are encrypted with it, and a database restored without the matching key

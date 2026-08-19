@@ -1811,6 +1811,151 @@ run "an_overlay_declaring_the_key_without_enabled_keeps_the_module_value" {
   expect_failures = [check.network_policy_blocks_the_otel_collector]
 }
 
+# ── The CNPG primary's disruption budget ──────────────────────────────────────
+# CloudNativePG creates a PodDisruptionBudget over the primary unless told
+# otherwise, and at cnpg_instances = 1 that is minAvailable = 1 over a single
+# pod: allowedDisruptions 0, and the node hosting Postgres can never be
+# drained. Found on a live cluster, after the chart's own main-pod PDB was
+# disabled for the same reason.
+run "the_cnpg_pdb_is_off_for_a_single_instance" {
+  command = plan
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.enablePDB == false
+    error_message = "A single-instance CNPG cluster must not carry a PodDisruptionBudget: minAvailable = 1 over one pod is allowedDisruptions 0, which blocks every drain of the node Postgres landed on."
+  }
+}
+
+# With replicas the budget does what a budget is for, so the default flips.
+run "the_cnpg_pdb_is_on_when_there_are_replicas_to_protect" {
+  command = plan
+
+  variables {
+    cnpg_instances = 3
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.enablePDB == true
+    error_message = "With replicas the PDB stops a second Postgres node being drained while the first is still catching up, which is worth keeping."
+  }
+}
+
+run "the_cnpg_pdb_can_be_forced_either_way" {
+  command = plan
+
+  variables {
+    cnpg_instances   = 3
+    cnpg_pdb_enabled = false
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.enablePDB == false
+    error_message = "An explicit cnpg_pdb_enabled must override the instance-count default."
+  }
+}
+
+# Forcing the budget on at one instance is the configuration the variable
+# description calls out as the one that blocks drains, so it must not be
+# reachable without a warning.
+run "forcing_the_cnpg_pdb_on_at_one_instance_is_warned_about" {
+  command = plan
+
+  variables {
+    cnpg_pdb_enabled = true
+    cnpg_instances   = 1
+  }
+
+  expect_failures = [check.cnpg_pdb_blocks_the_postgres_node_drain]
+}
+
+run "forcing_the_cnpg_pdb_on_with_replicas_draws_no_warning" {
+  command = plan
+
+  variables {
+    cnpg_pdb_enabled = true
+    cnpg_instances   = 2
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.enablePDB == true
+    error_message = "With a replica to protect the budget is the point, so an explicit true stands."
+  }
+}
+
+# ── CNPG backup passthrough ───────────────────────────────────────────────────
+# Null renders no backup stanza at all, which is what this Cluster has always
+# been. The key must be absent rather than present-and-empty: the CNPG webhook
+# rejects an empty backup block naming a field the caller never wrote.
+run "the_cnpg_cluster_writes_no_backup_stanza_by_default" {
+  command = plan
+
+  assert {
+    condition     = !contains(keys(yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec), "backup")
+    error_message = "spec.backup must be omitted when cnpg_backup is null, not rendered empty."
+  }
+}
+
+run "cnpg_backup_reaches_the_cluster_spec" {
+  command = plan
+
+  variables {
+    cnpg_backup = {
+      retentionPolicy = "30d"
+      barmanObjectStore = {
+        destinationPath = "s3://n8n-backups/"
+        endpointURL     = "https://minio.example.com"
+      }
+    }
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.backup.retentionPolicy == "30d"
+    error_message = "cnpg_backup must reach spec.backup, or a caller configures archiving that never happens and believes they have backups."
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.backup.barmanObjectStore.destinationPath == "s3://n8n-backups/"
+    error_message = "Nested keys must pass through verbatim; the input is a passthrough precisely so the caller's own CNPG spelling survives."
+  }
+
+  # The rest of the spec has to survive the merge that added the stanza.
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.instances == var.cnpg_instances
+    error_message = "Adding a backup stanza must not disturb the rest of the Cluster spec."
+  }
+}
+
+run "cnpg_backup_rejects_an_empty_object" {
+  command = plan
+
+  variables {
+    cnpg_backup = {}
+  }
+
+  expect_failures = [var.cnpg_backup]
+}
+
+# On the external path there is no Cluster for this to reach, and the caller has
+# written a destination and a credentials Secret by then, so the configuration
+# reads as done while nothing archives.
+run "cnpg_backup_on_the_external_backend_is_warned_about" {
+  command = plan
+
+  variables {
+    postgres_backend = "external"
+    db_host          = "postgres.example.com"
+    db_password      = "not-a-real-password"
+
+    cnpg_backup = {
+      barmanObjectStore = {
+        destinationPath = "s3://n8n-backups/"
+      }
+    }
+  }
+
+  expect_failures = [check.cnpg_backup_needs_the_cnpg_backend]
+}
+
 # ── Proxy hops ────────────────────────────────────────────────────────────────
 # The count was a literal 1 gated on create_ingress, so a caller running their
 # own routing got no N8N_PROXY_HOPS at all and n8n attributed every request to

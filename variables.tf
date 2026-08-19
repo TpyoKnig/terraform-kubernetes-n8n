@@ -911,6 +911,28 @@ variable "cnpg_postgres_image_tag" {
   }
 }
 
+variable "cnpg_pdb_enabled" {
+  description = "Whether CloudNativePG maintains a PodDisruptionBudget over the Postgres primary (the Cluster's `spec.enablePDB`). Null (the default) decides from cnpg_instances: off for a single instance, on for two or more. That split is the point. CNPG's budget is minAvailable = 1 over the primary, so on a single-instance cluster, which is this module's default, allowed disruptions is 0 and the node hosting Postgres can never be drained: `kubectl drain` hangs and a Talos node upgrade stalls in drain rather than failing. With replicas the same object earns its keep, stopping a second Postgres node from being drained while the first is still catching up, and CNPG still permits evicting replicas. Set true or false to override the choice; true on a single instance is the configuration that blocks drains, so pick it only if a Postgres restart is genuinely worse than a stuck node upgrade. This field needs CloudNativePG 1.23 or later, which is where spec.enablePDB was added. On anything older the API server prunes it as an unknown field, so the setting is accepted without complaint, the operator carries on creating the budget, and the drain still hangs; nothing in the plan or the applied Cluster reports that the value went nowhere. Every supported CNPG minor is well past 1.23, but check with `kubectl get deployment -n cnpg-system -o jsonpath='{..image}'` if the cluster has been running a while. Only used when postgres_backend = \"cnpg\"."
+  type        = bool
+  default     = null
+}
+
+variable "cnpg_backup" {
+  description = "The CloudNativePG Cluster's `spec.backup`, passed through verbatim. Null (the default) writes no backup stanza, which is what this module has always produced: a database whose only copy is its PVC, with `terraform destroy` and a StorageClass reclaim policy of Delete between you and every workflow, credential and execution it holds. Setting it turns on continuous WAL archiving to the object store you name, which is the half that gives point-in-time recovery. Note that a base backup still needs a `Backup` or `ScheduledBackup` custom resource, which is a separate object outside this module; docs/operations.md has a worked example of both halves. This is a passthrough rather than a typed input, deliberately and unlike every other input here, because the field's own shape has changed under CloudNativePG and a typed surface would have frozen one version of it. The trade is that a malformed value is rejected by the CNPG webhook at apply rather than by Terraform at plan. Note the limit of what it reaches: CloudNativePG deprecated `spec.backup.barmanObjectStore` in 1.26 in favour of the Barman Cloud Plugin, and the plugin is configured through the Cluster's `spec.plugins` plus a separate `ObjectStore` resource, neither of which this module renders. The in-tree form this input writes still works on 1.26 and later, but a cluster that has moved to the plugin cannot be configured through here at all. Only used when postgres_backend = \"cnpg\"; on the external path it is silently inert, which a plan-time check warns about."
+  type        = any
+  default     = null
+
+  validation {
+    # An empty object is almost certainly a half-written config rather than an
+    # intent, and it would render `backup: {}` into the spec for the operator
+    # to reject with a message about a field nobody set. keys() is wrapped in
+    # try() because the type is any: a list or a string would otherwise fail
+    # with Terraform's generic type-mismatch error instead of this message.
+    condition     = var.cnpg_backup == null ? true : try(length(keys(var.cnpg_backup)) > 0, false)
+    error_message = "cnpg_backup must be null or a non-empty object. An empty object renders an empty backup stanza that the CloudNativePG webhook rejects, naming a field you did not write; a list or a string is rejected here rather than rendered, because keys() cannot be taken of one and the try() around it turns that into this message instead of Terraform's generic type mismatch."
+  }
+}
+
 variable "cnpg_lan_expose" {
   description = "Expose the CloudNativePG read-write endpoint on a LoadBalancer address so clients outside the cluster (Grafana, a migration tool) can reach it without kubectl port-forward. Ignored when postgres_backend != \"cnpg\". Set enabled = false (the default) to skip. Requesting a specific address is allocator-specific: ip is rendered as the io.cilium/lb-ipam-ips annotation, which only Cilium LB-IPAM reads, so on MetalLB, kube-vip or a cloud controller set annotations instead with whatever key that allocator honours (metallb.universe.tf/loadBalancerIPs, kube-vip.io/loadbalancerIPs, and so on) and leave ip empty. Setting neither still creates the Service and lets the allocator pick an address. Nothing authenticates in front of this Service: PostgreSQL still demands its password, but the endpoint is reachable by anything on that network, so keep it on a trusted one."
   type = object({
