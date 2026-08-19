@@ -50,6 +50,29 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   not the cluster total is the limit that binds, and how to measure your own
   workflow without the load generator becoming the thing you measured.
 
+- `n8n_binary_data_mode` and `n8n_binary_data_path` move binary payloads off
+  Postgres and onto a shared volume. Default `"database"`, which is what n8n
+  does in queue mode and what this module has always produced, so nothing
+  changes unless you opt in.
+
+  Selecting `"filesystem"` requires a writable `n8n_extra_volume_mounts` entry
+  covering the path, checked at plan time. That combination without a shared
+  volume is the reason the guard exists: each pod gets its own empty directory,
+  and in queue mode the pod that writes a payload is rarely the pod that reads
+  it back, so the execution reports success against a reference to a file that
+  is not there. Nothing errors and nothing logs.
+
+  Setting `N8N_DEFAULT_BINARY_DATA_MODE` through `n8n_extra_env` still works and
+  still wins, because it was the only way to reach this before these inputs
+  existed. It does not get the mount check.
+
+### Fixed
+
+- `backing_services.binary_storage` reported the constant `"filesystem"` on
+  every path, including the default one where binary data goes to Postgres. It
+  now reports the effective mode, following an `n8n_extra_env` override where
+  one is set. Wrong since the initial release; see issue #18.
+
 ### Changed
 
 - `backing_services.postgres_host` resolves to the pooler Service when

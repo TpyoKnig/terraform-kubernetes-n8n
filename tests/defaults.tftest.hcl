@@ -2082,3 +2082,124 @@ run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
 
   expect_failures = [var.cnpg_max_connections]
 }
+
+# ── Binary data mode ──────────────────────────────────────────────────────────
+
+# The output used to be the string "filesystem" regardless of configuration,
+# which was wrong on the default path: the module always runs queue mode, and
+# n8n puts binary data in Postgres there unless told otherwise. See issue #18.
+run "binary_storage_output_reports_database_by_default" {
+  command = plan
+
+  assert {
+    condition     = output.backing_services.binary_storage == "database"
+    error_message = "With no binary data configuration the module leaves n8n at its queue-mode default, which is database; got ${output.backing_services.binary_storage}."
+  }
+}
+
+# Database mode renders nothing. Emitting N8N_DEFAULT_BINARY_DATA_MODE=database
+# would only restate n8n's own default while claiming a name a caller may be
+# setting through n8n_extra_env.
+run "binary_data_database_mode_emits_no_env" {
+  command = plan
+
+  assert {
+    condition     = length([for e in local.k8s_values_config.config.extraEnv : e if e.name == "N8N_DEFAULT_BINARY_DATA_MODE"]) == 0
+    error_message = "Database mode must not render N8N_DEFAULT_BINARY_DATA_MODE."
+  }
+}
+
+# Filesystem mode renders the mode and the path together. The path is the half
+# people miss: without it n8n writes under its own default rather than the
+# volume that was mounted, which loses data exactly as quietly as no mount.
+run "binary_data_filesystem_mode_emits_mode_and_path" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/n8n-shared"
+
+    n8n_extra_volumes = [{
+      name                    = "shared"
+      persistent_volume_claim = { claim_name = "n8n-shared" }
+    }]
+
+    n8n_extra_volume_mounts = [{
+      name       = "shared"
+      mount_path = "/opt/n8n-shared"
+      read_only  = false
+    }]
+  }
+
+  assert {
+    condition     = contains([for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_DEFAULT_BINARY_DATA_MODE"], "filesystem")
+    error_message = "Filesystem mode must render N8N_DEFAULT_BINARY_DATA_MODE=filesystem."
+  }
+
+  assert {
+    condition     = contains([for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_STORAGE_PATH"], "/opt/n8n-shared/storage")
+    error_message = "Filesystem mode must render N8N_STORAGE_PATH under n8n_binary_data_path."
+  }
+
+  assert {
+    condition     = output.backing_services.binary_storage == "filesystem"
+    error_message = "The output must follow the configured mode; got ${output.backing_services.binary_storage}."
+  }
+}
+
+# The whole point of the guard. Filesystem mode with no shared mount gives each
+# pod its own empty directory, and in queue mode the pod that writes a payload
+# is rarely the pod that reads it back. Nothing errors at runtime, which is why
+# this has to error at plan.
+run "binary_data_filesystem_mode_requires_a_mount" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+  }
+
+  expect_failures = [var.n8n_binary_data_mode]
+}
+
+# A read-only mount is not a place to write payloads to, and the pods would
+# fail at the first binary rather than at plan.
+run "binary_data_filesystem_mode_rejects_a_read_only_mount" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/n8n-shared"
+
+    n8n_extra_volumes = [{
+      name                    = "shared"
+      persistent_volume_claim = { claim_name = "n8n-shared" }
+    }]
+
+    n8n_extra_volume_mounts = [{
+      name       = "shared"
+      mount_path = "/opt/n8n-shared"
+      read_only  = true
+    }]
+  }
+
+  expect_failures = [var.n8n_binary_data_mode]
+}
+
+# n8n_extra_env keeps working, because it was the only way to reach this before
+# the input existed. config.extraEnv is appended last and Kubernetes takes the
+# last value, so the caller's entry wins, and the output has to say so rather
+# than repeat the input back.
+run "binary_storage_output_follows_an_extra_env_override" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
+    ]
+  }
+
+  assert {
+    condition     = output.backing_services.binary_storage == "filesystem"
+    error_message = "The output must report the effective mode, including a caller override through n8n_extra_env; got ${output.backing_services.binary_storage}."
+  }
+}

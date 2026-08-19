@@ -143,23 +143,31 @@ module "n8n" {
 
   n8n_custom_extensions_path = "/opt/n8n-shared/nodes"
 
-  # Put binary data on the shared volume too. Both lines are required, and the
-  # mode is the one people miss: n8n defaults binary data to "filesystem" in
-  # regular mode but to "database" in scaling mode, and this module always runs
-  # queue mode. Attach the volume without setting the mode and every payload
-  # still goes to Postgres -- the mount is there, empty, and nothing reports a
-  # problem.
-  n8n_extra_env = [
-    { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-    { name = "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage" },
-  ]
+  # Put binary data on the shared volume too. The mount alone does nothing:
+  # n8n defaults binary data to "filesystem" in regular mode but to "database"
+  # in scaling mode, and this module always runs queue mode, so without the
+  # mode every payload still goes to Postgres while the volume sits there
+  # empty and nothing reports a problem.
+  n8n_binary_data_mode = "filesystem"
+  n8n_binary_data_path = "/opt/n8n-shared"
 }
 ```
 
-`N8N_STORAGE_PATH`, not `N8N_BINARY_DATA_STORAGE_PATH`: the latter still works
-but n8n's own deprecation list says "Use N8N_STORAGE_PATH instead"
-(`packages/cli/src/deprecation/deprecation.service.ts`), and a deprecated name
-in an example is a warning in someone's logs later.
+The module refuses `n8n_binary_data_mode = "filesystem"` unless a writable
+`n8n_extra_volume_mounts` entry covers `n8n_binary_data_path`, which is the
+check that turns the silent version of this mistake into a plan error. Getting
+it wrong used to cost an execution's payloads and say nothing.
+
+These were two hand-written `n8n_extra_env` entries before the inputs existed,
+and that still works: `config.extraEnv` is appended last, Kubernetes takes the
+last value, and a caller's `N8N_DEFAULT_BINARY_DATA_MODE` wins over the
+module's. `backing_services.binary_storage` reports the effective mode either
+way. Prefer the inputs, because only they get the mount check.
+
+The module renders `N8N_STORAGE_PATH`, not `N8N_BINARY_DATA_STORAGE_PATH`: the
+latter still works but n8n's own deprecation list says "Use N8N_STORAGE_PATH
+instead" (`packages/cli/src/deprecation/deprecation.service.ts`), and a
+deprecated name is a warning in someone's logs later.
 
 Verified on a three-node cluster: a worker on one node wrote a file, and the
 main pod and a webhook processor on two *other* nodes read it back byte for

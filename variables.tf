@@ -1406,6 +1406,55 @@ variable "n8n_custom_extensions_path" {
   }
 }
 
+variable "n8n_binary_data_mode" {
+  description = "Where n8n writes the binary payloads a workflow produces: \"database\" stores them as base64 inside the execution row, \"filesystem\" writes them to disk under n8n_binary_data_path. Defaults to \"database\", which is what n8n itself does in queue mode and therefore what this module has always produced; changing it is opt-in. The default is safe rather than good. Every binary a workflow touches is base64 in a Postgres row, so a 10MB attachment is roughly 13MB of WAL, replication traffic and backup, and execution pruning becomes the only thing reclaiming it. \"filesystem\" avoids that, and in queue mode it needs a volume all three pod types share: main, worker and webhook-processor each handle different stages of the same execution, and a payload written to one pod's local disk does not exist for the next. The module refuses filesystem without a mount covering the path, because that combination reports success and loses data."
+  type        = string
+  default     = "database"
+  nullable    = false
+
+  validation {
+    condition     = contains(["database", "filesystem"], var.n8n_binary_data_mode)
+    error_message = "n8n_binary_data_mode must be one of: database, filesystem. n8n also supports \"s3\", which this module does not configure: it pins s3.enabled false with no input to turn it on, so selecting it here would name a backend that was never set up."
+  }
+
+  validation {
+    # The failure this prevents is silent. Filesystem mode with no shared
+    # volume gives every pod its own empty directory, so a worker writes a
+    # payload the main pod cannot read and the execution reports success with
+    # a broken reference. Nothing errors, nothing logs, and the loss surfaces
+    # whenever someone opens an old execution.
+    condition = var.n8n_binary_data_mode != "filesystem" || anytrue([
+      for mount in var.n8n_extra_volume_mounts :
+      mount.read_only == false && (
+        var.n8n_binary_data_path == mount.mount_path ||
+        startswith(var.n8n_binary_data_path, "${mount.mount_path}/")
+      )
+    ])
+    error_message = "n8n_binary_data_mode = \"filesystem\" needs a writable mount in n8n_extra_volume_mounts covering n8n_binary_data_path, backed by an RWX volume in n8n_extra_volumes. This module always runs queue mode, where main, worker and webhook-processor handle different stages of one execution, so a payload on one pod's local disk is invisible to the next. Without the shared mount the execution still reports success and the data is gone. Add the volume and the mount, or leave the mode at \"database\"."
+  }
+}
+
+variable "n8n_binary_data_path" {
+  description = "Directory n8n writes binary payloads to when n8n_binary_data_mode is \"filesystem\", rendered as N8N_STORAGE_PATH with n8n appending its own storage/ subdirectory. Ignored in database mode. Keep it outside /home/node/.n8n: the chart already mounts its own data volume there on the main pod, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not receive n8n_extra_volume_mounts, so this path exists in the n8n container only."
+  type        = string
+  default     = "/opt/n8n-shared"
+  nullable    = false
+
+  validation {
+    # Written with strcontains and split rather than one regex: an HCL string
+    # is not a raw literal, so the backslashes a path regex needs are an
+    # escape-sequence trap for the next person to touch this.
+    condition = alltrue([
+      startswith(var.n8n_binary_data_path, "/"),
+      !can(regex("[[:space:]]", var.n8n_binary_data_path)),
+      !strcontains(var.n8n_binary_data_path, "//"),
+      !contains(split("/", var.n8n_binary_data_path), "."),
+      !contains(split("/", var.n8n_binary_data_path), ".."),
+    ])
+    error_message = "n8n_binary_data_path must be an absolute path with no whitespace, no empty segments and no . or .. components."
+  }
+}
+
 variable "n8n_extra_volumes" {
   description = "Volumes to add to the main, worker and webhook-processor pods, mapped to the chart's extraVolumes. Each entry needs a name and exactly one source: config_map, secret, or persistent_volume_claim. Those three are the sources that can carry files into a pod on their own, which is the point of the input: paired with n8n_extra_volume_mounts and n8n_custom_extensions_path, they load community nodes from a ConfigMap or a shared ReadWriteMany claim instead of from a custom image, which is the alternative to rebuilding an image for every package change. Other uses fit too, a CA bundle from a secret being the common one. default_mode is an octal string (\"0644\"), not a number, because Terraform reads a leading zero as decimal and would silently apply the wrong permissions. Volume sources beyond those three (csi, nfs, projected) are not exposed. Names must be unique, and \"data\" and \"task-runner-config\" are reserved by the chart."
   type = list(object({

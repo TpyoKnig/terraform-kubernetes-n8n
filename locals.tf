@@ -170,6 +170,19 @@ locals {
     )
   ]
 
+  # ── Binary data ────────────────────────────────────────────────────────────
+  # N8N_DEFAULT_BINARY_DATA_MODE is deliberately not in the reserved list below,
+  # because setting it through n8n_extra_env was the only way to reach it before
+  # n8n_binary_data_mode existed and that path still has to work. config.extraEnv
+  # is appended last and Kubernetes takes the last value, so a caller's entry
+  # still wins over the module's. The output has to report what the pods will
+  # actually do rather than what the input asked for, so it reads the override.
+  n8n_binary_data_mode_override = try(
+    [for e in var.n8n_extra_env : e.value if e.name == "N8N_DEFAULT_BINARY_DATA_MODE"][0],
+    null
+  )
+  n8n_binary_data_mode_effective = coalesce(local.n8n_binary_data_mode_override, var.n8n_binary_data_mode)
+
   # ── n8n_extra_env collision guard ──────────────────────────────────────────
   # config.extraEnv is appended LAST in every n8n container's env list (see the
   # n8n Helm chart's deployment-*.yaml templates), and Kubernetes resolves
@@ -755,6 +768,18 @@ locals {
       extraEnv = concat(
         var.create_ingress ? [
           { name = "N8N_PROXY_HOPS", value = "1" },
+        ] : [],
+
+        # Binary data. Emitted only in filesystem mode: "database" is what n8n
+        # already does in queue mode, so rendering it would add a variable that
+        # changes nothing and reserve a name a caller may be setting themselves.
+        # The path goes with it every time. Setting the mode alone leaves n8n
+        # writing under its own default rather than the volume that was
+        # mounted, which is the same silent loss the input's validation exists
+        # to prevent, arrived at from the other direction.
+        var.n8n_binary_data_mode == "filesystem" ? [
+          { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
+          { name = "N8N_STORAGE_PATH", value = "${var.n8n_binary_data_path}/storage" },
         ] : [],
 
         # Split ingress only. See k8s_split_ingress_urls above for why the

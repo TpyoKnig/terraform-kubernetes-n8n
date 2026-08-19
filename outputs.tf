@@ -87,6 +87,8 @@ output "backing_services" {
     postgres_direct_host = local.cnpg_enabled ? local.cnpg_service_host : null
     redis_host           = local.k8s_redis_host
     redis_secret         = local.k8s_redis_secret_name
-    binary_storage       = "filesystem"
+    # Reports what the pods do, not what was asked for: a caller can still set
+    # N8N_DEFAULT_BINARY_DATA_MODE through n8n_extra_env, and that wins.
+    binary_storage = local.n8n_binary_data_mode_effective
   }
 }

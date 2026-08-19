@@ -130,10 +130,7 @@ module "n8n" {
   #
   #   kubectl create secret generic ai-assistant-secrets   #     --from-literal=anthropic-api-key=...   #     --from-literal=sandbox-api-key=...
   #
-  # n8n_extra_env is assigned below for shared storage, so these are entries to
-  # add to that list rather than a second assignment: a second one is a
-  # duplicate argument and Terraform rejects it before plan. Wrap the existing
-  # value in concat() and put them in the second element.
+  # n8n_extra_env is unset in this example, so these go in as a plain list:
   #
   #   { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
   #   { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
@@ -170,15 +167,17 @@ module "n8n" {
     read_only  = false
   }] : []
 
-  # Both lines are required, and the mode is the one people miss. n8n defaults
-  # binary data to filesystem in regular mode but to database in scaling mode,
-  # and this module always runs queue mode. Mount the volume without setting the
-  # mode and every payload still goes to Postgres: the mount is there, empty,
-  # and nothing reports a problem.
-  n8n_extra_env = var.shared_storage_class != null ? [
-    { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-    { name = "N8N_STORAGE_PATH", value = "${var.shared_mount_path}/storage" },
-  ] : []
+  # The mount alone does nothing. n8n defaults binary data to filesystem in
+  # regular mode but to database in scaling mode, and this module always runs
+  # queue mode, so without the mode below every payload still goes to Postgres
+  # while the volume sits there empty and nothing reports a problem.
+  #
+  # These two used to be hand-written N8N_DEFAULT_BINARY_DATA_MODE and
+  # N8N_STORAGE_PATH entries in n8n_extra_env. The module owns them now, and it
+  # refuses filesystem mode unless a writable mount covers the path, which is
+  # the check that turns the silent version of this mistake into a plan error.
+  n8n_binary_data_mode = var.shared_storage_class != null ? "filesystem" : "database"
+  n8n_binary_data_path = var.shared_mount_path
 
   # No depends_on here on purpose. n8n_extra_volumes already references the
   # claim, which is the ordering edge: Terraform cannot create the release until
