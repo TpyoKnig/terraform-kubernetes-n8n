@@ -1976,6 +1976,48 @@ run "an_extra_values_overlay_cannot_select_rolling_update_silently" {
   expect_failures = [check.rolling_update_still_overlaps_two_mains]
 }
 
+# In Helm an explicit null deletes rather than defaults. `strategy: null` in the
+# overlay removes the module's Recreate from the merged values, and the
+# Deployment falls back to Kubernetes' own RollingUpdate at maxSurge 25% --
+# strictly worse than selecting RollingUpdate here, which at least pins the
+# surge to 0. A coalesce over the value alone reads this as "not set" and stays
+# quiet on the most dangerous configuration of the three.
+run "an_overlay_deleting_the_strategy_still_warns" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy: null
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An overlay setting strategy: null deletes the module's value in Helm, which must be recognised as handing the strategy to Kubernetes rather than as leaving the input in force."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# Emptying just the type is the same deletion one level down.
+run "an_overlay_nulling_the_strategy_type_still_warns" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        type: null
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An overlay setting strategy.type: null empties the field, which must be recognised as handing the strategy to Kubernetes."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
 # An overlay that says nothing about the strategy must leave the input in force.
 run "an_unrelated_overlay_leaves_the_strategy_alone" {
   command = plan
@@ -1990,6 +2032,11 @@ run "an_unrelated_overlay_leaves_the_strategy_alone" {
   assert {
     condition     = local.n8n_main_strategy_effective == "Recreate"
     error_message = "An overlay that never mentions strategy must leave n8n_main_strategy deciding."
+  }
+
+  assert {
+    condition     = !local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An absent strategy key is not a deletion; only an explicit null is."
   }
 }
 

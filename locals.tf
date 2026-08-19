@@ -690,9 +690,30 @@ locals {
   # as the PDB below: n8n_extra_helm_values is merged after the module's own
   # values and Helm gives the later file precedence, so the overlay can select
   # RollingUpdate regardless of what the typed input says.
+  #
+  # Three cases, not two, because in Helm an explicit null is a deletion rather
+  # than an absence. `strategy: null` in the overlay removes the module's
+  # strategy from the merged values entirely, and `strategy: {type: null}`
+  # empties the field, so both hand the Deployment to Kubernetes' own default,
+  # which is RollingUpdate at maxSurge 25%. That is worse than asking for
+  # RollingUpdate here, because the module's own rendering at least pins
+  # maxSurge to 0. A coalesce cannot tell that apart from the key being absent,
+  # so key presence is tested separately from the value.
+  n8n_extra_values_keys = try(keys(yamldecode(var.n8n_extra_helm_values)), [])
+
+  n8n_extra_declares_strategy = contains(local.n8n_extra_values_keys, "strategy")
+
   n8n_main_strategy_via_extra_values = try(yamldecode(var.n8n_extra_helm_values).strategy.type, null)
 
-  n8n_main_strategy_effective = coalesce(local.n8n_main_strategy_via_extra_values, var.n8n_main_strategy)
+  n8n_main_strategy_effective = (
+    !local.n8n_extra_declares_strategy ? var.n8n_main_strategy : (
+      local.n8n_main_strategy_via_extra_values != null ? local.n8n_main_strategy_via_extra_values : "RollingUpdate"
+    )
+  )
+
+  # True only for the deletion cases above, where nothing pins maxSurge and the
+  # incoming main goes Ready beside the outgoing one rather than after it.
+  n8n_main_strategy_left_to_kubernetes = local.n8n_extra_declares_strategy && local.n8n_main_strategy_via_extra_values == null
 
   # Whether a PodDisruptionBudget ends up in the release at all, by either
   # route. Named because the check block asks exactly this question, and a
