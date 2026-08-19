@@ -469,10 +469,6 @@ locals {
         port        = local.valkey_enabled ? 6379 : var.redis_port
         username    = local.valkey_enabled || local.redis_username_value == null ? "" : local.redis_username_value
         database    = 0
-        passwordSecret = {
-          name = local.k8s_redis_secret_name
-          key  = local.k8s_redis_secret_password_key
-        }
 
         # The chart's only use of redis.worker.timeout is to render
         # N8N_GRACEFUL_SHUTDOWN_TIMEOUT (templates/configmap.yaml), in seconds,
@@ -484,6 +480,19 @@ locals {
           timeout = var.n8n_termination_grace_period
         }
       },
+      # Only when there is a credential to point at. The valkey path always
+      # has one (the module generates it); the external path has one only when
+      # the caller supplied a token or a secret ref. Rendered unconditionally,
+      # this named "n8n-redis-secret" on the no-auth external path - a Secret
+      # the module only creates when auth is active - and the chart's
+      # `if and .name .key` guard passed, so every pod carried a secretKeyRef
+      # to a Secret that does not exist and sat in CreateContainerConfigError.
+      local.valkey_enabled || local.redis_auth_active ? {
+        passwordSecret = {
+          name = local.k8s_redis_secret_name
+          key  = local.k8s_redis_secret_password_key
+        }
+      } : {},
       # Empty unless n8n_redis_timeout_threshold is set, so the chart's own
       # 10000 continues to apply and existing releases render unchanged.
       local.redis_timeout_values,
