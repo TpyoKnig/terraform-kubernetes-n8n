@@ -9,6 +9,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `check.an_ingress_in_front_means_at_least_one_proxy_hop` warns when
+  `n8n_proxy_hops = 0` while an Ingress is being rendered. Zero is a valid
+  answer only when nothing proxies to the pods; behind an Ingress the
+  connecting address is always the controller's, so trusting no
+  `X-Forwarded-For` entry makes every request look like it came from one host
+  and quietly defeats IP allowlists, rate limits and audit logging.
+
+  The check reads whether an Ingress is really rendered rather than
+  `create_ingress` alone, because `n8n_extra_helm_values` is merged last and
+  can add the Ingress the module did not create or remove the one it did. An
+  explicit null there is a deletion, which leaves chart 1.10.0's own
+  `ingress.enabled` of false, so a deleted key means no Ingress just as an
+  explicit false does.
+
 - `n8n_main_strategy` sets the main Deployment's rollout strategy, and
   **defaults to `Recreate`, which changes how the main Deployment rolls.** The
   worker and webhook-processor Deployments are untouched and keep rolling as
@@ -57,6 +71,30 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   refuse. The main restarting briefly during a drain is the accepted cost of
   single-main Community mode. A `check` block warns at plan time for anyone
   who sets it back to true.
+
+- `n8n_proxy_hops` sets `N8N_PROXY_HOPS` on every pod type, replacing a
+  hardcoded literal that only existed on one routing path.
+
+  The module wrote `N8N_PROXY_HOPS = 1` when it owned the Ingress and nothing
+  at all when `create_ingress = false`. A caller running their own routing is
+  behind a proxy just the same, so on that path n8n trusted no
+  `X-Forwarded-For` entry and attributed every request to the ingress
+  controller's own address, which quietly flattens every rate limit, audit log
+  line and IP-based restriction to a single source. Both split-ingress examples
+  had worked around it by setting the name through `n8n_extra_env`, which is
+  the escape hatch doing a typed input's job.
+
+  The name is now reserved against `n8n_extra_env` and
+  `n8n_extra_env_from_secret`, because the module writes it: two entries of one
+  name in a container's env list is the duplicate that fails every later helm
+  upgrade's strategic merge patch, rollback included.
+
+  **Migration:** if you set `N8N_PROXY_HOPS` through `n8n_extra_env`, that is
+  now rejected at plan time. Move the value to `n8n_proxy_hops`. Both
+  split-ingress examples are updated. Deployments with `create_ingress = false`
+  that set nothing will start sending `N8N_PROXY_HOPS = 1`, which is almost
+  certainly the correction they wanted; set it explicitly if your chain is
+  longer or shorter.
 
 ### Changed
 
@@ -160,6 +198,33 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   The pod period is now the drain sleep plus the budget, on main, worker and
   webhook processor alike, which is what makes the variable's description true.
 
+- `n8n_image_pull_secrets` now actually reaches the pods. It was a no-op: the
+  input created a ServiceAccount, attached the registry credentials to it, and
+  then no pod ever ran as it.
+
+  The design was right and half-built. `local.n8n_manages_service_account` and
+  `local.n8n_service_account_name` worked out that the module should take the
+  account over and under which name, `kubernetes_service_account_v1.n8n`
+  created it, and a comment explained the two-name scheme that makes enabling
+  it on a live deployment safe. The rendered chart values ignored all of it and
+  passed `serviceAccount.create = true, name = "n8n"` unconditionally, so the
+  chart's helper went on resolving its own account.
+
+  The symptom was a private `n8n_image_repository` failing as ImagePullBackOff
+  with the credentials sitting right there, inside an atomic release that waits
+  for readiness and then rolls back with nothing in the output naming the
+  ServiceAccount. Nothing asserted the `serviceAccount` values, which is how it
+  survived the suite.
+
+  With the default empty pull-secret list the rendered values are byte-for-byte
+  what they were, so nothing changes for deployments that do not use the input.
+
+- `helm_release.n8n` now depends on `kubernetes_service_account_v1.n8n`. The
+  ordering was described in `locals.tf` as the reason the two-name scheme
+  works, and nothing enforced it: the release consumes only the account's
+  name, which is a local, so no implicit edge existed. On the apply that first
+  enables `n8n_image_pull_secrets` the pods could be admitted against an
+  account Terraform had not created yet.
 
 - `check.custom_image_tag_needs_a_task_runner_tag` no longer warns on a
   private mirror of the stock image. It used "the caller set a tag" as its

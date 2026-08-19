@@ -218,6 +218,11 @@ locals {
     "N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES",
     "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES",
     "WEBHOOK_URL",
+    # Owned by n8n_proxy_hops, which renders it on every path. Unreserved, the
+    # module wrote it whenever create_ingress was true while n8n_extra_env
+    # would still accept a second entry of the same name, and two entries in
+    # one env list is the duplicate that wedges the next helm upgrade.
+    "N8N_PROXY_HOPS",
     "N8N_TEMPLATES_ENABLED",
     "N8N_PERSONALIZATION_ENABLED",
     "N8N_OTEL_ENABLED",
@@ -799,6 +804,32 @@ locals {
     )
   )
 
+  # Same five-way split as the strategy above, for ingress.enabled. Needed
+  # because n8n_proxy_hops is checked against whether an Ingress is actually in
+  # front of the pods, and create_ingress is only the module's half of that
+  # answer: the overlay is merged last and decides.
+  #
+  # The two deletion rows land differently here than they do for strategy.
+  # Deleting the key does not hand the decision to Kubernetes, it hands it back
+  # to chart 1.10.0's own values.yaml, where `ingress.enabled` is false. So a
+  # deletion means no Ingress, which is the same answer as an explicit false
+  # and the reason both collapse to one branch below.
+  n8n_extra_declares_ingress = contains(local.n8n_extra_values_keys, "ingress")
+
+  n8n_extra_deletes_ingress = local.n8n_extra_declares_ingress && try(local.n8n_extra_values_decoded.ingress, null) == null
+
+  n8n_extra_declares_ingress_enabled = contains(try(keys(local.n8n_extra_values_decoded.ingress), []), "enabled")
+
+  n8n_ingress_enabled_via_extra_values = try(local.n8n_extra_values_decoded.ingress.enabled, null)
+
+  n8n_extra_deletes_ingress_enabled = local.n8n_extra_declares_ingress_enabled && local.n8n_ingress_enabled_via_extra_values == null
+
+  n8n_ingress_rendered = (
+    local.n8n_extra_deletes_ingress || local.n8n_extra_deletes_ingress_enabled ? false : (
+      local.n8n_ingress_enabled_via_extra_values != null ? local.n8n_ingress_enabled_via_extra_values : var.create_ingress
+    )
+  )
+
   # Whether a PodDisruptionBudget ends up in the release at all, by either
   # route. Named because the check block asks exactly this question, and a
   # check reading `!a && !b` makes the reader reconstruct what the two halves
@@ -951,9 +982,23 @@ locals {
       timezone = var.n8n_timezone
 
       extraEnv = concat(
-        var.create_ingress ? [
-          { name = "N8N_PROXY_HOPS", value = "1" },
-        ] : [],
+        # Rendered on both paths, and from an input rather than a literal.
+        #
+        # The literal 1 was only ever right for the topology the module renders
+        # itself, and it was gated on create_ingress, so a caller running their
+        # own routing got no N8N_PROXY_HOPS at all: n8n then trusts no
+        # X-Forwarded-For entry and attributes every request to the ingress
+        # controller's own address. Both split-ingress examples worked around
+        # that by setting the name through n8n_extra_env, which is the escape
+        # hatch doing a typed input's job, and which no longer works now that
+        # the name is reserved.
+        #
+        # Reserved because the module writes it: a second entry of the same
+        # name in one container's env list is the duplicate that makes every
+        # later helm upgrade fail its strategic merge patch, rollback included.
+        [
+          { name = "N8N_PROXY_HOPS", value = tostring(var.n8n_proxy_hops) },
+        ],
 
         # Binary data. Emitted only in filesystem mode: "database" is what n8n
         # already does in queue mode, so rendering it would add a variable that
@@ -1355,10 +1400,26 @@ locals {
     }
   }
 
+  # The other half of the ServiceAccount takeover described at
+  # n8n_manages_service_account above. Both keys were hardcoded here
+  # (create = true, name = "n8n") while that local and the ServiceAccount
+  # resource in n8n.tf did all the work of deciding otherwise, so setting
+  # n8n_image_pull_secrets created an account the chart's helper never named
+  # and no pod ever ran as. The registry credentials were attached to an object
+  # nothing used, and a private n8n_image_repository failed as ImagePullBackOff
+  # inside an atomic release that then rolled back with nothing naming the
+  # cause.
+  #
+  # With the default empty pull-secret list this renders exactly what it
+  # rendered before (create = true, name = "n8n"), so nothing moves for a
+  # deployment that does not use the input. The chart gates its own
+  # ServiceAccount on create, and its Role and RoleBinding on rbac.create
+  # instead, so handing the account over keeps the RBAC and re-points the
+  # binding's subject at the module's account by name.
   k8s_values_service_account = {
     serviceAccount = {
-      create = true
-      name   = local.cnpg_release_name
+      create = !local.n8n_manages_service_account
+      name   = local.n8n_service_account_name
     }
   }
 

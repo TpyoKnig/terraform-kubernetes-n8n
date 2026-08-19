@@ -1443,6 +1443,189 @@ run "attesting_keda_still_leaves_the_webhook_processor_an_autoscaler" {
   }
 }
 
+# ── Proxy hops ────────────────────────────────────────────────────────────────
+# The count was a literal 1 gated on create_ingress, so a caller running their
+# own routing got no N8N_PROXY_HOPS at all and n8n attributed every request to
+# the ingress controller's own address. Both split-ingress examples worked
+# around that through n8n_extra_env, which is the escape hatch doing a typed
+# input's job.
+run "proxy_hops_are_rendered_on_both_routing_paths" {
+  command = plan
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_PROXY_HOPS"
+    ]) == "1"
+    error_message = "N8N_PROXY_HOPS must render from n8n_proxy_hops when the module owns the Ingress."
+  }
+}
+
+run "proxy_hops_reach_a_caller_owned_ingress_too" {
+  command = plan
+
+  variables {
+    create_ingress = false
+    n8n_proxy_hops = 2
+  }
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_PROXY_HOPS"
+    ]) == "2"
+    error_message = "N8N_PROXY_HOPS must render with create_ingress = false. A caller running their own routing is behind a proxy just the same, and emitting nothing there makes n8n read the ingress controller as the client for every request."
+  }
+}
+
+# The module writes this name, so a second entry of the same name from the
+# escape hatch is the duplicate that fails every later helm upgrade's
+# strategic merge patch, rollback included.
+run "proxy_hops_are_reserved_against_the_env_escape_hatch" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [{ name = "N8N_PROXY_HOPS", value = "3" }]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "proxy_hops_reject_a_count_that_is_not_a_hop" {
+  command = plan
+
+  variables {
+    n8n_proxy_hops = 1.5
+  }
+
+  expect_failures = [var.n8n_proxy_hops]
+}
+
+# Zero hops is legitimate, but only with nothing in front of the pods. Behind
+# an Ingress the connecting address is always the controller's, so trusting no
+# forwarded header makes every request look like it came from one host.
+# create_ingress is only half the answer: n8n_extra_helm_values is merged last
+# and decides whether an Ingress is really rendered, so the check reads the
+# effective value and the five merge outcomes are each covered below.
+run "zero_hops_behind_the_modules_own_ingress_is_caught" {
+  command = plan
+
+  variables {
+    create_ingress = true
+    n8n_proxy_hops = 0
+  }
+
+  expect_failures = [check.an_ingress_in_front_means_at_least_one_proxy_hop]
+}
+
+run "zero_hops_with_nothing_in_front_is_allowed" {
+  command = plan
+
+  variables {
+    create_ingress = false
+    n8n_proxy_hops = 0
+  }
+
+  assert {
+    condition     = !local.n8n_ingress_rendered
+    error_message = "With create_ingress = false and no overlay, no Ingress is rendered, so zero hops is the honest answer and the check must stay quiet."
+  }
+}
+
+# The overlay can add the Ingress the module did not create. create_ingress is
+# false here, so a check reading the input alone would say nothing.
+run "an_overlay_that_adds_an_ingress_is_caught_too" {
+  command = plan
+
+  variables {
+    create_ingress        = false
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        enabled: true
+    YAML
+  }
+
+  expect_failures = [check.an_ingress_in_front_means_at_least_one_proxy_hop]
+}
+
+# And it can remove the one the module did create, which is the false-positive
+# direction: create_ingress is true, so a check reading the input alone would
+# fire on a deployment that has no Ingress at all.
+run "an_overlay_that_removes_the_ingress_silences_the_check" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        enabled: false
+    YAML
+  }
+
+  assert {
+    condition     = !local.n8n_ingress_rendered
+    error_message = "An overlay setting ingress.enabled false wins over create_ingress, so nothing is in front of the pods and zero hops is correct."
+  }
+}
+
+# Both deletion shapes. Helm treats an explicit null as a deletion rather than
+# an absence, and what is left is chart 1.10.0's own ingress.enabled, which is
+# false. So a deleted key means no Ingress, the same as an explicit false.
+run "nulling_the_ingress_key_falls_back_to_the_charts_own_false" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = "ingress: null"
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_ingress && !local.n8n_ingress_rendered
+    error_message = "ingress: null deletes the module's whole block, leaving the chart's own default of false."
+  }
+}
+
+run "nulling_only_ingress_enabled_is_told_apart_from_the_whole_key" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        enabled: null
+        className: nginx
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_ingress_enabled && !local.n8n_extra_deletes_ingress
+    error_message = "Nulling ingress.enabled deletes only that key; the sibling className survives the merge, so the whole-key deletion must stay false."
+  }
+
+  assert {
+    condition     = !local.n8n_ingress_rendered
+    error_message = "Either deletion leaves ingress.enabled unset, and the chart defaults it to false."
+  }
+}
+
+# The two merge rows, where the module's value has to survive untouched.
+run "an_overlay_declaring_ingress_without_enabled_keeps_the_module_value" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        className: nginx
+    YAML
+  }
+
+  expect_failures = [check.an_ingress_in_front_means_at_least_one_proxy_hop]
+}
+
 # ── A worker floor of zero deletes the pool ───────────────────────────────────
 # The input was documented as accepting 0 because "KEDA scales a ScaledObject
 # to zero natively". KEDA does, but this value is also
@@ -2120,6 +2303,62 @@ run "a_fractional_shutdown_budget_is_rejected_too" {
   expect_failures = [var.n8n_termination_grace_period]
 }
 
+
+# ── ServiceAccount ownership ──────────────────────────────────────────────────
+# The chart renders imagePullSecrets nowhere, on the pod spec or on the
+# ServiceAccount, so attaching them to the account the pods already run as is
+# the only lever a private registry has. That means the module takes the
+# account over, but only when there is something to attach.
+#
+# Both keys below were hardcoded (create = true, name = "n8n") while the locals
+# and the ServiceAccount resource decided otherwise, so the whole input was a
+# no-op: an account was created that no pod ever ran as. No assertion covered
+# the serviceAccount values, which is exactly how it survived.
+run "the_chart_keeps_its_service_account_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.create == true
+    error_message = "With no image pull secrets the chart must go on creating its own ServiceAccount, or an existing deployment's account changes owner for no reason."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.name == "n8n"
+    error_message = "The default account name must stay \"n8n\", the name the chart has always used, so nothing moves for a deployment that does not use image pull secrets."
+  }
+}
+
+run "image_pull_secrets_hand_the_service_account_to_the_module" {
+  command = plan
+
+  variables {
+    n8n_image_pull_secrets = ["registry-creds"]
+    n8n_image_repository   = "registry.internal.example.com/n8n"
+  }
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.create == false
+    error_message = "With image pull secrets set the chart must stop creating the account, or Helm and Terraform both own one and the apply fails on a name that already exists."
+  }
+
+  # The two owners use different names on purpose: the module's account is
+  # created alongside the chart's on the apply that first enables this, rather
+  # than colliding with it.
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.name == "n8n-pull"
+    error_message = "The chart must be pointed at the module's own account name. Pointing it at the chart's name collides with the account Helm still owns on the enabling apply."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.name == local.n8n_service_account_name
+    error_message = "The chart's serviceAccount.name and the ServiceAccount resource in n8n.tf must read the same local, or the pods run as an account that carries no pull secrets."
+  }
+
+  assert {
+    condition     = one(kubernetes_service_account_v1.n8n[*].metadata[0].name) == "n8n-pull"
+    error_message = "The module must create the account it points the chart at."
+  }
+}
 
 # ── The single main pod's rollout strategy ────────────────────────────────────
 # The chart ships `strategy: {}` behind a `with`, so it renders nothing and the

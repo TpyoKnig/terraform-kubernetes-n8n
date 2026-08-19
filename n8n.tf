@@ -261,6 +261,15 @@ resource "helm_release" "n8n" {
     kubernetes_secret.n8n,
     kubernetes_secret.n8n_db,
     kubernetes_secret.n8n_redis,
+    # The ordering the two-name scheme in locals.tf depends on, and which was
+    # described there while nothing enforced it. On the apply that first sets
+    # n8n_image_pull_secrets, the release switches serviceAccount.create to
+    # false and names the module's account: that account has to exist first, or
+    # the new pods fail admission looking for a ServiceAccount Terraform has
+    # not created yet. There is no attribute reference between the two to carry
+    # the edge implicitly, because the release consumes only the name, which is
+    # a local.
+    kubernetes_service_account_v1.n8n,
     helm_release.valkey,
     kubectl_manifest.cnpg_cluster,
     # Ordering, not just tidiness. When the pooler is enabled the release's
@@ -387,6 +396,24 @@ check "image_pull_secrets_need_a_custom_image" {
   assert {
     condition     = length(var.n8n_image_pull_secrets) > 0 ? var.n8n_image_repository != null : true
     error_message = "n8n_image_pull_secrets is set but n8n_image_repository is null, so every image the pods pull comes from a public registry: the chart's docker.n8n.io/n8nio/n8n and, with task runners on, n8nio/runners. Neither needs credentials, so the secrets are attached and never used. The cost is not zero: setting this input moves ownership of the ServiceAccount from the chart to the module. Clear it to hand the account back, or set n8n_image_repository to the private image these credentials are for."
+  }
+}
+
+check "an_ingress_in_front_means_at_least_one_proxy_hop" {
+  assert {
+    # n8n_proxy_hops = 0 says nothing proxies to the pods, so no
+    # X-Forwarded-For entry is trusted and req.ip is whoever opened the
+    # connection. That is right for a caller routing straight to the Service
+    # and wrong whenever an Ingress is in front, because the connection is
+    # then always the controller's.
+    #
+    # Read through local.n8n_ingress_rendered rather than create_ingress:
+    # n8n_extra_helm_values is merged last, so an overlay can add the Ingress
+    # this module did not create, or remove the one it did. The deletion rows
+    # resolve to false there because chart 1.10.0 defaults ingress.enabled to
+    # false, so a deleted key and an explicit false mean the same thing.
+    condition     = local.n8n_ingress_rendered && var.n8n_proxy_hops == 0 ? false : true
+    error_message = "n8n_proxy_hops is 0 while an Ingress is being rendered in front of the pods${var.create_ingress ? " (create_ingress = true)" : " (n8n_extra_helm_values enables ingress even though create_ingress is false)"}. Zero tells n8n to trust no X-Forwarded-For entry, so it reads the connecting address as the client, and behind an Ingress that address is always the controller's. Every request then looks like it came from one host: IP allowlists match everything or nothing, rate limits apply to the controller rather than to callers, and audit log lines all name the same source. Nothing errors, and the values look right in kubectl. Set n8n_proxy_hops to the number of proxies between the client and a pod, counting the Ingress controller as one; 0 belongs only to a deployment that is reached directly with nothing in front of it."
   }
 }
 
