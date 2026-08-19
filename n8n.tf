@@ -48,14 +48,21 @@ locals {
 # output description, and README.md.
 
 # ── Task runner auth token ─────────────────────────────────────────────────────
-# Generated once and stored in state. Used as the shared secret between the n8n
-# task broker (port 5679) and the runner sidecars on main and worker pods.
-# Only active when n8n_task_runners_enabled = true.
-
-resource "random_password" "task_runner_token" {
-  length  = 32
-  special = false
-}
+# The module generates none, and there used to be a random_password here that
+# said otherwise. Its comment described it as the shared secret between the
+# task broker and the runner sidecars; it was referenced by nothing, reached no
+# chart value, and sat in state being read by no one.
+#
+# The chart owns this credential and owns it correctly. secret-task-runners.yaml
+# mints a token when taskRunners.authToken.existingSecret is unset, and looks
+# the existing Secret up first so a helm upgrade preserves the value rather than
+# rotating it. Taking it over would mean a module-managed Secret plus the
+# existingSecret wiring, to replace something that already works.
+#
+# There is also no skew to protect against, which is the usual argument for
+# pinning a shared secret from outside: the broker and the runner it
+# authenticates are containers in the same pod, so they read the same Secret at
+# the same start and cannot disagree.
 
 locals {
   # Per-credential key defaults when a *_secret_ref input's optional `key` is
@@ -129,6 +136,17 @@ resource "kubernetes_secret" "n8n" {
   # the real one whenever k8s_ingress_host was set, so anyone inspecting the
   # Secret was reading a wrong answer. Removed; the chart never referenced it,
   # so nothing about the pods changes.
+  # Three of these four are not secret. N8N_HOST, N8N_PORT and N8N_PROTOCOL are
+  # public facts about where n8n answers, and they are in a Secret because the
+  # chart's coreSecretsEnv helper reads all four from one place: secretRefs
+  # names a Secret, not a Secret and a ConfigMap. Splitting them out is not
+  # available without giving up that helper.
+  #
+  # Worth knowing when reasoning about blast radius, because it cuts the
+  # reassuring way: anyone who can read this Secret gets the encryption key, so
+  # the fact that most of its contents are harmless does not make the object
+  # harmless. Treat read access to it as equivalent to read access to every
+  # credential in the database.
   data = {
     N8N_ENCRYPTION_KEY = local.n8n_encryption_key
     N8N_HOST           = local.n8n_domain

@@ -3,7 +3,7 @@
 
 provider "registry.terraform.io/gavinbunney/kubectl" {
   version     = "1.19.0"
-  constraints = ">= 1.14.0"
+  constraints = "~> 1.14"
   hashes = [
     "h1:9QkxPjp0x5FZFfJbE+B7hBOoads9gmdfj9aYu5N4Sfc=",
     "h1:EL1HfCDfY/pabIJ2kXuppTvqhgY9hfLu2o4TonJheT8=",

@@ -59,10 +59,22 @@ resource "kubectl_manifest" "cnpg_cluster" {
   # allowlist unnecessary.
   server_side_apply = true
 
-  # CRD must exist before this applies. The module does not install the CNPG
-  # operator; that is a cluster-wide prerequisite the caller confirms via
-  # existing_eks_cluster_prerequisites_confirmed (analogously to the
-  # BYO-cluster path).
+  # The Cluster CRD must exist before this applies. The module does not install
+  # the CloudNativePG operator, for the reason AGENTS.md gives for every
+  # cluster-wide operator: it is a singleton serving every workload on the
+  # cluster, and a module that installed one would own upgrading and destroying
+  # it on behalf of workloads it cannot see.
+  #
+  # Unlike KEDA there is no attestation input for it either, and none is
+  # needed. A missing KEDA operator leaves a ScaledObject that never reconciles
+  # and pins workers at their floor without failing anything, which is why that
+  # one is worth asking about. A missing CNPG operator fails this apply
+  # outright, with the API server naming the unknown kind, so the error already
+  # says what is wrong.
+  #
+  # (An earlier version of this comment cited
+  # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this
+  # module's AWS sibling and has never existed here.)
   depends_on = [kubernetes_namespace.n8n]
 }
 

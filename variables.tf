@@ -60,11 +60,21 @@ variable "n8n_additional_domains" {
     error_message = "n8n_additional_domains must not contain duplicates."
   }
 
-  # ACM's default quota is 10 names per certificate, the primary domain
-  # included, so 9 is the most that can be added here.
+  # The ceiling is inherited from this module's AWS sibling, where ACM's
+  # default quota of 10 names per certificate made 9 the most that could be
+  # added. Nothing on this platform enforces that number: Let's Encrypt allows
+  # 100 names per certificate and cert-manager imposes no limit of its own, so
+  # the real constraint is whichever issuer you named in
+  # k8s_ingress_cluster_issuer.
+  #
+  # Kept anyway, as a typo guard rather than a quota. Ten hostnames on one n8n
+  # deployment is already unusual, and every name here lands on one Certificate
+  # whose issuance is all-or-nothing: a single name whose DNS is wrong fails
+  # the whole SAN set, so a long list turns one mistake into a total outage.
+  # Raise it deliberately if you genuinely need more.
   validation {
     condition     = length(var.n8n_additional_domains) <= 9
-    error_message = "At most 9 additional domains are supported (ACM allows 10 names per certificate including n8n_domain)."
+    error_message = "At most 9 additional domains are supported, so 10 hostnames in total. This is a deliberate ceiling rather than a platform limit: Let's Encrypt allows 100 names per certificate. Every name here shares one Certificate, and issuance is all-or-nothing, so one name with wrong DNS fails the whole set."
   }
 }
 
@@ -858,10 +868,19 @@ variable "cnpg_storage_class" {
 }
 
 variable "cnpg_postgres_image_tag" {
-  description = "Postgres image tag for CNPG (ghcr.io/cloudnative-pg/postgresql:<tag>). Only used when postgres_backend = \"cnpg\"."
+  description = "Postgres image tag for CNPG (ghcr.io/cloudnative-pg/postgresql:<tag>). Only used when postgres_backend = \"cnpg\". Defaults to the major version alone, so PostgreSQL minor releases are picked up as they are published. That is the opposite of what n8n_image_tag does, on purpose: a PostgreSQL minor is security and bug fixes only, is data and wire compatible with the rest of its major, and upgrades by restarting the instance, which CloudNativePG performs as a controlled rolling operation. An n8n upgrade runs one-way schema migrations, which is why that one is pinned and this one is not, and pinning here instead would leave the database on a known-vulnerable minor until somebody remembered to bump it. Set a full version (e.g. \"16.10\") to freeze it anyway, for a reproducible rebuild or an air-gapped mirror that carries only certain tags. Changing the MAJOR version is a different matter entirely: CloudNativePG does not upgrade a major in place, so it needs a new Cluster and a dump/restore or a logical replication cutover."
   type        = string
   default     = "16"
   nullable    = false
+
+  validation {
+    # A bare major, or a full major.minor. The image publishes both, and this
+    # rejects the shapes that quietly resolve to something else: an empty
+    # string (the operator would take the image's own latest), a leading "v",
+    # and a tag carrying a registry or digest.
+    condition     = can(regex("^[0-9]+(\\.[0-9]+)?$", var.cnpg_postgres_image_tag))
+    error_message = "cnpg_postgres_image_tag must be a PostgreSQL major (\"16\") or major.minor (\"16.10\"). No leading \"v\", no digest, and no empty string: the tag is interpolated straight into the Cluster's imageName, so anything else surfaces as a pod that cannot pull rather than as a plan error."
+  }
 }
 
 variable "cnpg_lan_expose" {
@@ -1123,7 +1142,7 @@ variable "valkey_storage_class" {
 }
 
 variable "metrics_lan_expose" {
-  description = "Expose n8n-main port 5678 on a LoadBalancer address so a Prometheus outside the cluster can scrape /metrics without k8s-API-proxy setup. Requires n8n_metrics_enabled = true to serve useful data. Requesting a specific address is allocator-specific, exactly as for cnpg_lan_expose: ip renders the io.cilium/lb-ipam-ips annotation that only Cilium LB-IPAM reads, and annotations carries whatever key another allocator honours. n8n's metrics endpoint is unauthenticated by design, so this belongs on a trusted network or not at all."
+  description = "Expose the n8n main pod's HTTP port (5678) on a LoadBalancer address so a Prometheus outside the cluster can scrape /metrics without k8s-API-proxy setup. Requires n8n_metrics_enabled = true for /metrics to serve anything useful. Note what is actually exposed: n8n serves metrics on its ordinary HTTP port, the same one the editor and the REST API answer on, so this Service publishes the whole application to that network and not only the metrics path. There is no way to expose one path here, because the split would have to happen in an HTTP proxy and a Service routes by port. Requesting a specific address is allocator-specific, exactly as for cnpg_lan_expose: ip renders the io.cilium/lb-ipam-ips annotation that only Cilium LB-IPAM reads, and annotations carries whatever key another allocator honours. Both the metrics endpoint and the editor behind it are unauthenticated at this layer, so this belongs on a trusted network or not at all."
   # ponytail: this reads like an Observability input, but it lives here next to
   # cnpg_lan_expose, its structural twin, so the two LAN-exposure objects
   # can be compared without jumping banners.

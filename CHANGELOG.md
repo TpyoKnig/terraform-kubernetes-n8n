@@ -178,6 +178,37 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Narrowed the `gavinbunney/kubectl` constraint from `>= 1.14` to `~> 1.14` in
+  every root, the only unbounded provider constraint in the repo. It owns every
+  custom resource the module writes (the CNPG `Cluster` and `Pooler`, and the
+  `ClusterIssuer` in `modules/tls-letsencrypt`), so a future 2.0 arriving on an
+  unrelated apply is not a risk worth carrying. Lock files refreshed.
+
+- `cnpg_postgres_image_tag` gains a validation and an explanation of why it
+  floats on the major version while `n8n_image_tag` is pinned: a PostgreSQL
+  minor is security and bug fixes, data and wire compatible, applied by a
+  restart CloudNativePG performs as a rolling operation, whereas an n8n upgrade
+  runs one-way schema migrations. Pinning here would park the database on a
+  known-vulnerable minor until someone remembered to bump it.
+
+- Corrected comments and descriptions that misdescribed the code: the values
+  assembly banner claimed the chart 1.11.0 schema while the pin is 1.10.0;
+  `postgres_cnpg.tf` cited `existing_eks_cluster_prerequisites_confirmed`, an
+  input belonging to this module's AWS sibling that has never existed here; the
+  `n8n_additional_domains` ceiling was justified by an ACM quota on a platform
+  with no ACM; and `metrics_lan_expose` was described as exposing `/metrics`
+  when a Service selects a port, so it publishes the editor and REST API on
+  5678 alongside it. `kubernetes_secret.n8n` now says why three of its four
+  keys are not secret, and why that does not make the object safe to read.
+
+- Removed `random_password.task_runner_token`, which was generated on every
+  apply, stored in state, and referenced by nothing. Its comment described it
+  as the shared secret between the task broker and the runner sidecars, which
+  sent anyone debugging a runner authentication problem to a value that had
+  never reached a pod. The chart mints that token itself and looks up the
+  existing Secret first, so it survives an upgrade rather than rotating, and
+  the broker and runner are containers in the same pod and cannot skew.
+
 - `n8n_webhook_hpa_enabled = false` now removes the webhook processor's
   autoscaler on the KEDA path as well. The input's documented purpose is to let
   a caller attach their own policy, and off the KEDA path it worked, because
