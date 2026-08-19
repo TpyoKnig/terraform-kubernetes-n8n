@@ -253,10 +253,21 @@ resource "helm_release" "n8n" {
     helm_release.valkey,
     kubectl_manifest.cnpg_cluster,
     # Ordering, not just tidiness. When the pooler is enabled the release's
-    # DB host points at the Pooler Service, so a release that rolls before the
-    # Pooler exists starts pods against a name that does not resolve. They
+    # DB host points at the Pooler Service, so a release that rolls with no
+    # Pooler at all starts pods against a name that will never resolve. They
     # CrashLoop, the release's own wait times out, and an atomic upgrade rolls
-    # the whole thing back. Cheap edge, expensive absence.
+    # the whole thing back with nothing in the output naming the cause. That is
+    # the failure this edge removes, and it is the unrecoverable one.
+    #
+    # What it does not remove: the CR is applied, not awaited. CNPG creates the
+    # PgBouncer Deployment and its Service asynchronously afterwards, so a pod
+    # that starts inside that window still fails to resolve the host. That
+    # failure is transient and self-healing, because the Service appears within
+    # seconds and the pod's restart backoff is far inside the release timeout.
+    # There is no cheap barrier for the difference: the kubectl provider offers
+    # wait_for_rollout, which speaks only Deployment, StatefulSet and DaemonSet,
+    # and a Pooler is none of those. A time_sleep would be a guess wearing the
+    # costume of a fix. Left as-is deliberately.
     kubectl_manifest.cnpg_pooler,
     kubernetes_config_map_v1.task_runners_config,
   ]

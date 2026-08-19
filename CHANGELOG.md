@@ -22,9 +22,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   tier at 16 beside a webhook-processor tier at 8, at the default pool size of
   10, asks for 250 against roughly 197 usable. Past the limit pods do not slow
   down: a new worker cannot initialise its pool, exits non-zero and CrashLoops,
-  and requests already in flight stall until the client gives up. With a pooler
-  the connection count is `cnpg_pooler_pool_size x cnpg_pooler_instances`
-  regardless of how far the tiers scale.
+  and requests already in flight stall until the client gives up. In the
+  default transaction mode the connection count is then
+  `cnpg_pooler_pool_size x cnpg_pooler_instances` regardless of how far the
+  tiers scale. Session mode is offered but does not do this: it holds a server
+  connection for the life of each client session, and n8n's TypeORM pool is
+  long-lived, so server connections still track pod count.
 
   `cnpg_pooler_enabled = true` requires `db_postgresdb_ssl_enabled = false`,
   and the module refuses the combination at plan time. The pooler serves its
