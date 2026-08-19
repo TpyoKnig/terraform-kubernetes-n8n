@@ -401,6 +401,54 @@ run "an_empty_kubeconfig_path_is_rejected" {
   expect_failures = [var.kubeconfig_path]
 }
 
+run "a_bare_home_directory_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # "~/" resolves to $HOME/ - the same directory-as-KUBECONFIG failure the
+  # empty path is rejected for, arrived at through the tilde branch.
+  variables {
+    kubeconfig_path = "~/"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_bare_tilde_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # pathexpand("~") is the home directory for the providers, while the smoke
+  # test would treat it as a relative path - two different wrong answers.
+  variables {
+    kubeconfig_path = "~"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_dressed_up_home_directory_spelling_is_rejected_too" {
+  command = plan
+
+  # "~/./" is the same directory as "~/" to everything that expands it, and
+  # would slip past an exact string comparison.
+  variables {
+    kubeconfig_path = "~/./"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_backslash_separated_home_spelling_is_rejected" {
+  command = plan
+
+  # The Windows spelling of the same directory. The trailing-backslash rule
+  # catches "~\\", so the dot form is the one that needs the pattern.
+  variables {
+    kubeconfig_path = "~\\."
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
 run "a_posix_backslash_is_a_filename_character_not_a_separator" {
   command = plan
 

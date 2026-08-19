@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 variable "kubeconfig_path" {
-  description = "Path to kubeconfig used by the kubernetes + helm providers."
+  description = "Path to kubeconfig used by the kubernetes, helm and kubectl providers (the kubectl one applies the CNPG Cluster CR)."
   type        = string
   default     = "~/.kube/config"
   nullable    = false
 
   validation {
-    condition     = var.kubeconfig_path != "" && !can(regex("[\"`$]", var.kubeconfig_path)) && !endswith(var.kubeconfig_path, "\\")
-    error_message = "kubeconfig_path must not be empty, must not contain a double quote, a backtick or a dollar sign, and must not end in a backslash. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command: the first three characters escape the quoting around it, and a trailing backslash escapes the closing quote itself, which leaves the command unterminated and the export silently skipped. An empty path is rejected because it resolves to the example directory rather than to a file, and the smoke test would export a directory as KUBECONFIG."
+    condition     = var.kubeconfig_path != "" && !can(regex("^~([/\\\\]\\.?)*[/\\\\]?$", var.kubeconfig_path)) && !can(regex("[\"`$]", var.kubeconfig_path)) && !endswith(var.kubeconfig_path, "\\")
+    error_message = "kubeconfig_path must not be empty, must not contain a double quote, a backtick or a dollar sign, and must not end in a backslash. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command: the first three characters escape the quoting around it, and a trailing backslash escapes the closing quote itself, which leaves the command unterminated and the export silently skipped. An empty path is rejected because it resolves to the example directory rather than to a file, and the smoke test would export a directory as KUBECONFIG; a bare tilde in any spelling (\"~\", \"~/\", \"~//\", \"~/.\", or backslash-separated forms) is rejected for the same reason, resolving to the home directory itself."
   }
 
 }

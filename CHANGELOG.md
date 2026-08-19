@@ -96,6 +96,23 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- The examples' commented AI-Assistant recipe in `homelab-cloudflare` and
+  `homelab-godaddy` was two revisions stale and actively harmful: it told the
+  reader to `concat()` onto an `n8n_extra_env` assignment that no longer
+  exists, and to pass the secret-backed API key through
+  `n8n_extra_helm_values` `config.extraEnv` - the exact overlay the module now
+  rejects, because Helm replaces that list wholesale and the deployment's own
+  environment silently disappears with it. Both now carry the current recipe
+  (`n8n_extra_env_from_secret`), matching the other examples. Also in the
+  examples: a bare `~/` kubeconfig path is rejected (it resolves to the home
+  directory - the same directory-as-KUBECONFIG failure an empty path was
+  already rejected for), the `kubeconfig_path` description names all three
+  providers that read it, the Cloudflare record comment no longer attributes
+  itself to `examples/homelab`, and four test runs that existed in some
+  examples but had been dropped from their siblings (shared-storage
+  binary-data wiring, DNS gating, namespace ownership) are restored so the six
+  suites assert the same contracts again.
+
 - Three classes of shell bug in `tests/scripts/smoke-test.sh`, each hiding the
   exact failure its check exists to report. Under `set -euo pipefail`, an
   unrouted webhook prefix made the ingress check's `grep` pipeline abort the

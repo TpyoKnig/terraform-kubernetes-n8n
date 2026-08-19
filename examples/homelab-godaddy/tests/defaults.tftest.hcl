@@ -112,6 +112,25 @@ run "a_domain_without_an_address_is_rejected" {
   expect_failures = [var.godaddy_domain]
 }
 
+# With the class set, the example flips the module to filesystem binary data on
+# the shared claim. This asserts the wiring from shared_storage_class through
+# n8n_binary_data_mode to the output, and only that: the rendered environment
+# is not assertable here, because helm_release values resolve to (known after
+# apply) under the mocked providers. The module's own suite asserts what
+# reaches config.extraEnv.
+run "binary_storage_is_filesystem_with_a_shared_volume" {
+  command = plan
+
+  variables {
+    shared_storage_class = "nfs-csi"
+  }
+
+  assert {
+    condition     = module.n8n.backing_services.binary_storage == "filesystem"
+    error_message = "With a shared RWX class the example moves binary data onto the volume. Got: ${module.n8n.backing_services.binary_storage}"
+  }
+}
+
 run "no_shared_claim_without_a_class" {
   command = plan
 
@@ -257,6 +276,54 @@ run "an_empty_kubeconfig_path_is_rejected" {
   # directory as KUBECONFIG. nullable = false stops null, not empty.
   variables {
     kubeconfig_path = ""
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_bare_home_directory_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # "~/" resolves to $HOME/ - the same directory-as-KUBECONFIG failure the
+  # empty path is rejected for, arrived at through the tilde branch.
+  variables {
+    kubeconfig_path = "~/"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_bare_tilde_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # pathexpand("~") is the home directory for the providers, while the smoke
+  # test would treat it as a relative path - two different wrong answers.
+  variables {
+    kubeconfig_path = "~"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_dressed_up_home_directory_spelling_is_rejected_too" {
+  command = plan
+
+  # "~/./" is the same directory as "~/" to everything that expands it, and
+  # would slip past an exact string comparison.
+  variables {
+    kubeconfig_path = "~/./"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_backslash_separated_home_spelling_is_rejected" {
+  command = plan
+
+  # The Windows spelling of the same directory. The trailing-backslash rule
+  # catches "~\\", so the dot form is the one that needs the pattern.
+  variables {
+    kubeconfig_path = "~\\."
   }
 
   expect_failures = [var.kubeconfig_path]

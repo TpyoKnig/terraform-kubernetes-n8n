@@ -93,31 +93,45 @@ module "n8n" {
   # empty namespace unchanged; create the Secret first, then add these.
   #
   #   kubectl create secret generic ai-assistant-secrets \
-  #     --from-literal=anthropic-api-key=... \
+  #     --from-literal=model-api-key=... \
   #     --from-literal=sandbox-api-key=...
   #
-  # n8n_extra_env is assigned below for shared storage, so these are entries to
-  # add to that list rather than a second assignment: a second one is a
-  # duplicate argument and Terraform rejects it before plan. Wrap the existing
-  # value in concat() and put them in the second element.
+  # n8n_extra_env is unset in this example, so this goes in whole, brackets
+  # included, rather than as loose entries to paste somewhere:
   #
-  #   { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
-  #   { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
-  #   { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
-  #   { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
+  #   n8n_extra_env = [
+  #     { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
+  #     { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
+  #     { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
+  #     { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
+  #   ]
   #
   # n8n_extra_env is typed list(object({ name, value })) with no valueFrom
-  # shape, so secret-backed variables go through n8n_extra_helm_values:
+  # shape, so secret-backed variables go through n8n_extra_env_from_secret,
+  # which renders the secretKeyRef for you and keeps the value out of state:
   #
-  # n8n_extra_helm_values = <<-YAML
-  #   config:
-  #     extraEnv:
-  #       - name: N8N_INSTANCE_AI_MODEL_API_KEY
-  #         valueFrom:
-  #           secretKeyRef:
-  #             name: ai-assistant-secrets
-  #             key: anthropic-api-key
-  # YAML
+  # n8n_extra_env_from_secret = [
+  #   {
+  #     name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+  #     secret_name = "ai-assistant-secrets"
+  #     secret_key  = "model-api-key"
+  #   },
+  #   {
+  #     name        = "N8N_SANDBOX_SERVICE_API_KEY"
+  #     secret_name = "ai-assistant-secrets"
+  #     secret_key  = "sandbox-api-key"
+  #   },
+  # ]
+  #
+  # Both keys, not just the model one: the Secret above carries sandbox-api-key
+  # precisely because the sandbox API authenticates with it, and a sandbox
+  # enabled without N8N_SANDBOX_SERVICE_API_KEY cannot execute anything. See
+  # docs/ai-assistant.md for the full worked block.
+  #
+  # Not n8n_extra_helm_values. That sets config.extraEnv wholesale, which Helm
+  # would substitute for the module's own list; the module now rejects such an
+  # overlay at plan time rather than letting the release install misconfigured,
+  # so the input simply refuses this route.
 
   # ── Shared storage ─────────────────────────────────────────────────────────
   # Reaches main, worker and webhook-processor alike, which is exactly what the
