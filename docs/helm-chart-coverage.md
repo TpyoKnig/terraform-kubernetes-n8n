@@ -8,7 +8,7 @@ through the escape hatch.
 Measured against chart **1.10.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
 source at [n8n-io/n8n-hosting](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n)),
 which is the version `n8n_chart_version` pins by default. The chart offers 43
-top-level keys. This module writes 24 of them.
+top-level keys. This module writes 25 of them.
 
 Everything below was measured, not recalled: the values tree was rendered with
 `terraform console` and diffed against the chart's own `values.yaml` at tag
@@ -57,6 +57,7 @@ new schema on the old code. None of that appears in a plan.
 | `queueMode.*` | Hardcoded `enabled = true`. Queue mode is the module's premise, not an option. Worker count and concurrency are exposed as `n8n_worker_*`. |
 | `replicaCount` | Pinned to 1 for the main pool with no input: a second main needs leader election, which n8n gates behind a licence. |
 | `strategy` | Exposed as `n8n_main_strategy`, defaulting to **Recreate**. The chart renders the key empty, so Kubernetes' own RollingUpdate default surged a second main on every rollout; `RollingUpdate` here renders `maxSurge: 0` so it cannot. |
+| `networkPolicy.enabled` | Exposed as `n8n_network_policy_enabled`, defaulting to **false**, matching the chart. It is a port allowlist rather than a segmentation policy: every egress rule the chart writes targets all destinations (`to: []`) and differs only by port, so DNS, the configured database and Redis ports, and 443 reach anywhere and nothing else reaches anything. A `check` warns at plan time when it is on alongside an OTLP collector on 4317/4318. |
 | `lifecycle.*` | Written for all three pod families. `terminationGracePeriodSeconds` is `n8n_termination_grace_period + n8n_prestop_sleep`, because the kubelet runs preStop inside the grace period and n8n's own shutdown budget only starts once preStop returns. `preStop.command` is a sleep of `n8n_prestop_sleep`, replacing the chart's hardcoded `sleep 10`. |
 | `pdb.*` | Exposed as `n8n_main_pdb_enabled`, defaulting to **false**. The chart's default renders `minAvailable: 1` over a main pool this module pins to one replica, which leaves allowed disruptions at zero and blocks draining the node that happens to be hosting the main pod. |
 | `webhookProcessor.*` | Exposed. Separate pool, replica count, and `disableProductionWebhooksOnMainProcess` hardcoded true. |
@@ -88,11 +89,11 @@ new schema on the old code. None of that appears in a plan.
 
 ## Not currently configurable
 
-These 19 chart keys get no typed input and are left at chart defaults:
+These 18 chart keys get no typed input and are left at chart defaults:
 
 `affinity`, `commonAnnotations`, `commonLabels`, `dnsConfig`, `dnsPolicy`,
 `fullnameOverride`, `license`,
-`multiMain`, `nameOverride`, `networkPolicy`, `nodePlacement`,
+`multiMain`, `nameOverride`, `nodePlacement`,
 `nodeSelector`, `persistence`, `podLabels`, `probes`, `rbac`,
 `securityContext`, `service`, `tolerations`.
 

@@ -1443,6 +1443,374 @@ run "attesting_keda_still_leaves_the_webhook_processor_an_autoscaler" {
   }
 }
 
+# ── Pod network policy ────────────────────────────────────────────────────────
+run "the_network_policy_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.networkPolicy.enabled == false
+    error_message = "networkPolicy must default to off, matching the chart. It blocks plaintext http:// egress, which is a decision about the caller's workflows rather than one this module can make for them."
+  }
+}
+
+run "the_network_policy_can_be_turned_on" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled = true
+  }
+
+  assert {
+    condition     = local.k8s_values_final.networkPolicy.enabled == true
+    error_message = "n8n_network_policy_enabled must reach the chart, or the input is accepted and discarded."
+  }
+}
+
+# Both halves are module inputs, so the module can see the collision rather
+# than leaving it to be discovered when the traces stop.
+run "the_network_policy_warns_about_an_unreachable_otel_collector" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel-collector.observability.svc.cluster.local:4318"
+  }
+
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
+# A collector on 443 is reachable through the policy's own egress rule, so the
+# warning must stay quiet: one that fires on a working configuration is one
+# operators learn to ignore.
+run "a_collector_on_443_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "https://otel.example.com"
+  }
+
+  assert {
+    condition     = local.k8s_values_final.networkPolicy.enabled == true
+    error_message = "The policy must still be rendered on this path."
+  }
+}
+
+# The four cases below all reach their collector and must stay quiet. Each one
+# is a port the policy permits, or traffic the policy never sees, and a warning
+# that fires on a working configuration is one operators learn to ignore.
+
+# Loopback never leaves the pod, so no NetworkPolicy applies to it. Writing the
+# sidecar's address out explicitly has to behave the same as leaving the
+# endpoint null and inheriting n8n's own localhost:4318.
+run "an_explicit_loopback_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://localhost:4318"
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A collector on localhost is in the same pod, so the policy cannot block it."
+  }
+}
+
+run "a_dotted_loopback_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://127.0.0.1:4318"
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "127.0.0.0/8 is loopback for the same reason localhost is."
+  }
+}
+
+# "127.something" is a hostname, not an address, and its A record can point at
+# any host in the cluster. Only a numeric address is loopback.
+run "a_hostname_beginning_with_127_is_still_warned_about" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://127.collector.example:4318"
+  }
+
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
+# ::1 has several spellings and they all name the same address.
+run "an_expanded_ipv6_loopback_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://[0:0:0:0:0:0:0:1]:4318"
+  }
+
+  assert {
+    condition     = local.n8n_otel_endpoint_is_loopback
+    error_message = "The expanded form of ::1 is the same loopback address as the compressed one."
+  }
+}
+
+# The allowlist is not just 443. The chart writes an egress rule for the
+# configured database port and another for the Redis port, both to any
+# destination, so a collector sharing one of those ports is reachable. 5432 is
+# an absurd port for a collector; it is here because the question under test is
+# allowlist membership, not plausibility.
+run "a_collector_on_the_database_port_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local:5432"
+  }
+
+  assert {
+    condition     = contains(local.n8n_network_policy_allowed_ports, 5432)
+    error_message = "The database port must be in the allowlist the check compares against."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A port the policy opens to every destination cannot make the collector unreachable."
+  }
+}
+
+# The overlay is merged last, so a database.port set there is the port the chart
+# writes into the policy. The allowlist has to move with it, or the check warns
+# about the port the caller has replaced and stays quiet about the one in force.
+run "an_overlay_moved_database_port_moves_the_allowlist" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local:6543"
+
+    n8n_extra_helm_values = <<-YAML
+      database:
+        port: 6543
+    YAML
+  }
+
+  assert {
+    condition     = contains(local.n8n_network_policy_allowed_ports, 6543)
+    error_message = "The overlay's database port is the one the rendered policy allows."
+  }
+
+  assert {
+    condition     = !contains(local.n8n_network_policy_allowed_ports, 5432)
+    error_message = "The port the overlay replaced is no longer in the rendered policy."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A collector on the overlay's database port is reachable."
+  }
+}
+
+# redis.port takes the same route through the overlay, and the chart writes its
+# own egress rule from it.
+run "an_overlay_moved_redis_port_moves_the_allowlist" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local:6380"
+
+    n8n_extra_helm_values = <<-YAML
+      redis:
+        port: 6380
+    YAML
+  }
+
+  assert {
+    condition     = contains(local.n8n_network_policy_allowed_ports, 6380)
+    error_message = "The overlay's Redis port is the one the rendered policy allows."
+  }
+
+  assert {
+    condition     = !contains(local.n8n_network_policy_allowed_ports, 6379)
+    error_message = "The port the overlay replaced is no longer in the rendered policy."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A collector on the overlay's Redis port is reachable."
+  }
+}
+
+# A bracketed IPv6 literal carries colons of its own, so the port is only the
+# ":digits" after the closing bracket. With none, the scheme decides: this is
+# https, so 443, which the policy allows.
+run "a_bracketed_ipv6_collector_on_https_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "https://[2001:db8::1]"
+  }
+
+  assert {
+    condition     = local.n8n_otel_endpoint_port == 443
+    error_message = "An https:// URL with no explicit port is 443 whatever shape the host is."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "The host's own colons must not be mistaken for a port separator."
+  }
+}
+
+# The other half of the same widening: plain http with no port is 80, which the
+# policy denies, and that must still warn.
+run "a_plaintext_collector_on_the_default_port_is_warned_about" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local"
+  }
+
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
+# A null endpoint means n8n's own default of localhost:4318, which is a sidecar
+# in the same pod, and same-pod traffic never passes a NetworkPolicy.
+run "an_in_pod_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled = true
+    n8n_otel_enabled           = true
+  }
+
+  assert {
+    condition = !contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "N8N_OTEL_EXPORTER_OTLP_ENDPOINT",
+    )
+    error_message = "A null endpoint must stay unrendered so n8n's own localhost default applies."
+  }
+}
+
+# n8n_extra_helm_values is merged after this module's values and Helm gives the
+# later file precedence, so the overlay decides whether the policy exists. The
+# five merge outcomes are covered below. Chart 1.10.0 defaults
+# networkPolicy.enabled to false, so the two deletion rows mean no policy, the
+# same answer as an explicit false.
+run "an_overlay_that_enables_the_policy_is_warned_about_too" {
+  command = plan
+
+  variables {
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel-collector.observability:4318"
+    n8n_extra_helm_values           = <<-YAML
+      networkPolicy:
+        enabled: true
+    YAML
+  }
+
+  # n8n_network_policy_enabled is left at its default of false. Reading the
+  # input alone would say nothing here, and the traces would stop silently.
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
+run "an_overlay_that_disables_the_policy_silences_the_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel-collector.observability:4318"
+    n8n_extra_helm_values           = <<-YAML
+      networkPolicy:
+        enabled: false
+    YAML
+  }
+
+  assert {
+    condition     = !local.n8n_network_policy_rendered
+    error_message = "The overlay wins over the input, so no policy is rendered and there is no collision to warn about."
+  }
+}
+
+run "nulling_the_network_policy_key_falls_back_to_the_charts_own_false" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled = true
+    n8n_extra_helm_values      = "networkPolicy: null"
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_network_policy && !local.n8n_network_policy_rendered
+    error_message = "An explicit null is a deletion rather than an absence, and what is left is the chart's own networkPolicy.enabled of false."
+  }
+}
+
+run "nulling_only_network_policy_enabled_is_told_apart_from_the_whole_key" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled = true
+    # The sibling is arbitrary: chart 1.10.0's networkPolicy block has only
+    # `enabled`, so there is no real second key to use. It is here to make the
+    # map non-empty, which is what separates a nested deletion from a
+    # whole-key one.
+    n8n_extra_helm_values = <<-YAML
+      networkPolicy:
+        enabled: null
+        annotations: {}
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_network_policy_enabled && !local.n8n_extra_deletes_network_policy
+    error_message = "Nulling networkPolicy.enabled deletes only that key; the sibling survives the merge, so the whole-key deletion must stay false."
+  }
+
+  assert {
+    condition     = !local.n8n_network_policy_rendered
+    error_message = "Either deletion leaves networkPolicy.enabled unset, and the chart defaults it to false."
+  }
+}
+
+run "an_overlay_declaring_the_key_without_enabled_keeps_the_module_value" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel-collector.observability:4318"
+    n8n_extra_helm_values           = <<-YAML
+      networkPolicy:
+        annotations: {}
+    YAML
+  }
+
+  # A map merge leaves this module's enabled = true standing, so the collision
+  # is still real and the check must still fire.
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
 # ── Proxy hops ────────────────────────────────────────────────────────────────
 # The count was a literal 1 gated on create_ingress, so a caller running their
 # own routing got no N8N_PROXY_HOPS at all and n8n attributed every request to

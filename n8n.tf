@@ -399,6 +399,38 @@ check "image_pull_secrets_need_a_custom_image" {
   }
 }
 
+check "network_policy_blocks_the_otel_collector" {
+  assert {
+    # The chart's egress rules permit DNS, the database port, the Redis port
+    # and 443, and nothing else. An OTLP collector answers on 4317 or 4318, so
+    # enabling both inputs together stops traces reaching it, and n8n does not
+    # treat a failed export as an error: the deployment looks healthy and the
+    # traces simply stop. Both halves are module inputs, so the module can see
+    # the collision at plan time rather than leaving it to be noticed later.
+    #
+    # The comparison is the endpoint's effective port against the policy's
+    # actual allowlist, not against 443. Three cases pass that a 443-only test
+    # would have warned about: an explicit loopback endpoint, which never
+    # leaves the pod and so never meets a NetworkPolicy at all; a collector
+    # sharing the configured database or Redis port, which the policy permits
+    # to every destination; and an https:// URL whose host is a bracketed IPv6
+    # literal, whose own colons defeat a naive port match.
+    #
+    # A null endpoint is fine for the same reason as loopback: n8n then
+    # defaults to localhost:4318, a sidecar in the same pod.
+    #
+    # Read through local.n8n_network_policy_rendered rather than the input,
+    # because n8n_extra_helm_values is merged last and Helm gives it
+    # precedence, so it decides whether the policy exists. Both directions
+    # matter: reading the input alone would stay quiet when the overlay turns
+    # the policy on behind a default-false input, which is exactly the silent
+    # trace loss this check is for, and would warn about a collision that
+    # cannot happen when the overlay turns it off.
+    condition     = local.n8n_network_policy_rendered && var.n8n_otel_enabled && var.n8n_otel_exporter_otlp_endpoint != null ? local.n8n_otel_collector_reachable_under_network_policy : true
+    error_message = "${var.n8n_network_policy_enabled ? "n8n_network_policy_enabled is true" : "n8n_extra_helm_values enables the chart's NetworkPolicy even though n8n_network_policy_enabled is false, and the overlay is merged last, so it wins"} and n8n_otel_exporter_otlp_endpoint (\"${coalesce(var.n8n_otel_exporter_otlp_endpoint, "null")}\") resolves to port ${local.n8n_otel_endpoint_port}, which is not one this policy permits. Its egress rules allow ${join(", ", distinct([for p in local.n8n_network_policy_allowed_ports : tostring(p)]))} to any destination and nothing else, so the collector becomes unreachable. n8n does not fail on a failed span export, so nothing crashes and no error appears: the traces just stop arriving. Put the collector behind one of those ports, add an egress rule for its own port outside this module, or leave the NetworkPolicy off."
+  }
+}
+
 check "an_ingress_in_front_means_at_least_one_proxy_hop" {
   assert {
     # n8n_proxy_hops = 0 says nothing proxies to the pods, so no

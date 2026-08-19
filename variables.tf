@@ -124,6 +124,13 @@ variable "create_namespace" {
   nullable    = false
 }
 
+variable "n8n_network_policy_enabled" {
+  description = "Whether the chart renders its NetworkPolicy over the n8n pods. False by default, matching the chart. Worth understanding before turning on, because it is a port allowlist rather than a segmentation policy: every egress rule it writes targets all destinations (`to: []`) and differs only by port, so it permits DNS, the configured database port, the configured Redis port and 443 to anywhere, and denies every other port to everywhere. What that buys is real but narrow. n8n makes arbitrary outbound HTTP by design, which makes a workflow or an SSRF-prone node a scanner of whatever the pod network can reach, and this closes the part of that surface on non-allowlisted ports: the Talos API on 50000, SMTP, admin panels on 8080. What it does not close is any destination reachable on a port it allows, which includes anything on 443 (the Kubernetes API included) and any host answering on the configured database or Redis port, a LAN Postgres on 5432 included. This is not the input to reach for if you want a destination-scoped allowlist. Kubernetes unions the policies that select a pod and none of them can subtract, so a second, tighter egress policy cannot take back a port this one has already opened to everywhere; turning both on adds that policy's allowances to this one's rather than narrowing anything, so leave this off and write that policy alone. What it will break, if you use them: workflows calling plaintext http:// endpoints on port 80, and an external OpenTelemetry collector on a port outside the allowlist, which is checked at plan time. A same-pod sidecar collector on loopback is not affected and draws no warning, n8n's default of http://localhost:4318 included, because that traffic never leaves the pod. Requires a CNI that enforces NetworkPolicy; Cilium and Calico do, and a cluster whose CNI ignores it will apply this happily and enforce nothing. Note also that this input is only half the answer: n8n_extra_helm_values is merged after this module's values, so a `networkPolicy.enabled` set there decides whether the policy is rendered, in either direction, and a `database.port` or `redis.port` set there decides which ports it allows. The plan-time check reads those effective values rather than this module's own."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 # ── Ingress ───────────────────────────────────────────────────────────────────
 
 variable "create_ingress" {

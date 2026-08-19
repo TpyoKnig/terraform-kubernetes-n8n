@@ -688,6 +688,27 @@ locals {
     }
   }
 
+  # ── Pod network policy ─────────────────────────────────────────────────────
+  # Off by default, matching the chart, and exposed rather than decided here
+  # because what it costs depends entirely on what the caller's workflows call.
+  #
+  # Worth being precise about what the chart's policy is, since "NetworkPolicy"
+  # suggests more than it delivers: every egress rule it writes has `to: []`,
+  # meaning all destinations, and differs only by port. So it is a port
+  # allowlist. DNS, the configured database port, the configured Redis port and
+  # 443 reach anywhere; everything else reaches nothing.
+  #
+  # That still closes something real. n8n makes arbitrary outbound HTTP by
+  # design, so a workflow, or a node with an SSRF bug, can reach whatever the
+  # pod network can: on a Talos cluster that includes the Talos API on 50000.
+  # What it does not close is anything on 443, the Kubernetes API included, so
+  # this is not a substitute for a policy written against real destinations.
+  k8s_values_network_policy = {
+    networkPolicy = {
+      enabled = var.n8n_network_policy_enabled
+    }
+  }
+
   # ── Rollout strategy for the single main pod ───────────────────────────────
   # The chart ships `strategy: {}`, and its template wraps the key in a `with`,
   # so an empty map renders nothing at all and the Deployment takes Kubernetes'
@@ -828,6 +849,124 @@ locals {
     local.n8n_extra_deletes_ingress || local.n8n_extra_deletes_ingress_enabled ? false : (
       local.n8n_ingress_enabled_via_extra_values != null ? local.n8n_ingress_enabled_via_extra_values : var.create_ingress
     )
+  )
+
+  # And once more for networkPolicy.enabled, for the same reason and with the
+  # same shape as ingress above: the check that warns about a blocked OTLP
+  # collector has to know whether the policy is really rendered, and
+  # n8n_network_policy_enabled is only this module's half of that answer.
+  #
+  # Chart 1.10.0 defaults networkPolicy.enabled to false, so the two deletion
+  # rows mean no policy, which is the same answer as an explicit false. Both
+  # directions matter here. Reading the input alone would stay quiet when the
+  # overlay turns the policy on behind a default-false input, which is the
+  # silent trace loss the check exists to catch, and would warn about a
+  # collision that cannot happen when the overlay turns it off.
+  n8n_extra_declares_network_policy = contains(local.n8n_extra_values_keys, "networkPolicy")
+
+  n8n_extra_deletes_network_policy = local.n8n_extra_declares_network_policy && try(local.n8n_extra_values_decoded.networkPolicy, null) == null
+
+  n8n_extra_declares_network_policy_enabled = contains(try(keys(local.n8n_extra_values_decoded.networkPolicy), []), "enabled")
+
+  n8n_network_policy_enabled_via_extra_values = try(local.n8n_extra_values_decoded.networkPolicy.enabled, null)
+
+  n8n_extra_deletes_network_policy_enabled = local.n8n_extra_declares_network_policy_enabled && local.n8n_network_policy_enabled_via_extra_values == null
+
+  n8n_network_policy_rendered = (
+    local.n8n_extra_deletes_network_policy || local.n8n_extra_deletes_network_policy_enabled ? false : (
+      local.n8n_network_policy_enabled_via_extra_values != null ? local.n8n_network_policy_enabled_via_extra_values : var.n8n_network_policy_enabled
+    )
+  )
+
+  # What that policy actually permits on the way out, so the OTLP check can ask
+  # whether the collector is reachable rather than whether it is on 443.
+  #
+  # templates/networkpolicy.yaml writes one egress rule per port, each with
+  # `to: []`, for 53, database.port when database.useExternal, redis.port when
+  # queueMode.enabled, and 443. This module renders both of those flags true
+  # unconditionally, so both ports are always in the list.
+  #
+  # The two ports are recomputed from their own inputs rather than read back
+  # out of k8s_values_final, which carries the database and Redis passwords and
+  # is sensitive as a whole: an error_message built from it would be suppressed
+  # in full, printing nothing where the port belongs. These expressions are the
+  # same ones k8s_values_database and k8s_values_redis use.
+  #
+  # n8n_extra_helm_values can move either port the same way it can move
+  # networkPolicy.enabled, and the chart writes the policy from whatever
+  # survives the merge, so the allowlist follows the overlay too. Naming the key
+  # replaces the module's value; deleting it with an explicit null falls back to
+  # the chart's own default, 5432 and 6379. A `database: null` or `redis: null`
+  # that deletes the whole block is not modelled: it takes the host and the
+  # credentials with it, so the release is broken well before the policy is.
+  n8n_extra_declares_database_port = contains(try(keys(local.n8n_extra_values_decoded.database), []), "port")
+  n8n_extra_declares_redis_port    = contains(try(keys(local.n8n_extra_values_decoded.redis), []), "port")
+
+  n8n_extra_database_port = try(tonumber(local.n8n_extra_values_decoded.database.port), null)
+  n8n_extra_redis_port    = try(tonumber(local.n8n_extra_values_decoded.redis.port), null)
+
+  n8n_network_policy_database_port = (
+    local.n8n_extra_declares_database_port
+    ? coalesce(local.n8n_extra_database_port, 5432)
+    : (local.cnpg_enabled ? 5432 : var.db_port)
+  )
+
+  n8n_network_policy_redis_port = (
+    local.n8n_extra_declares_redis_port
+    ? coalesce(local.n8n_extra_redis_port, 6379)
+    : local.k8s_redis_port
+  )
+
+  n8n_network_policy_allowed_ports = [
+    53,
+    443,
+    local.n8n_network_policy_database_port,
+    local.n8n_network_policy_redis_port,
+  ]
+
+  # Everything between "://" and the first "/", "?" or "#". Null when the
+  # endpoint is null or not a URL, which the check treats as passing: a
+  # malformed endpoint is n8n's problem to report, not this check's.
+  n8n_otel_endpoint_authority = try(
+    regex("^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*)", var.n8n_otel_exporter_otlp_endpoint)[0],
+    null
+  )
+
+  # A bracketed IPv6 literal carries colons of its own, so the port is only a
+  # ":digits" that follows the closing bracket. Hosts that are names or IPv4
+  # addresses have no colon but the port separator. With no explicit port the
+  # scheme decides, which is the whole reason an https:// URL passes.
+  n8n_otel_endpoint_host = try(
+    lower(regex("^(\\[[^\\]]*\\]|[^:]*)", local.n8n_otel_endpoint_authority)[0]),
+    null
+  )
+
+  n8n_otel_endpoint_port = try(
+    tonumber(regex("^(?:\\[[^\\]]*\\]|[^:]*):([0-9]+)$", local.n8n_otel_endpoint_authority)[0]),
+    can(regex("^(?i:https)://", var.n8n_otel_exporter_otlp_endpoint)) ? 443 : 80
+  )
+
+  # Loopback never leaves the pod, so no NetworkPolicy applies to it and a
+  # sidecar collector is reachable whatever the allowlist says. This is the
+  # same reason a null endpoint is fine: n8n's own default is localhost:4318.
+  #
+  # Only a numeric address counts. "127.collector.example" is a perfectly
+  # ordinary hostname that a prefix match would wave through, and its A record
+  # can point anywhere. The IPv6 pattern accepts every spelling of ::1, which is
+  # any run of zero groups followed by a 1: "::1", "0:0:0:0:0:0:0:1" and
+  # "0000:...:0001" all reach the same address.
+  n8n_otel_endpoint_host_address = local.n8n_otel_endpoint_host == null ? null : trim(local.n8n_otel_endpoint_host, "[]")
+
+  n8n_otel_endpoint_is_loopback = local.n8n_otel_endpoint_host_address == null ? false : (
+    local.n8n_otel_endpoint_host_address == "localhost" ||
+    can(regex("^127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$", local.n8n_otel_endpoint_host_address)) ||
+    can(regex("^[0:]*:0*1$", local.n8n_otel_endpoint_host_address))
+  )
+
+  n8n_otel_collector_reachable_under_network_policy = (
+    local.n8n_otel_endpoint_authority == null ||
+    local.n8n_otel_endpoint_is_loopback ||
+    contains(local.n8n_network_policy_allowed_ports, local.n8n_otel_endpoint_port)
   )
 
   # Whether a PodDisruptionBudget ends up in the release at all, by either
@@ -1505,6 +1644,7 @@ locals {
     local.k8s_values_pdb,
     local.k8s_values_strategy,
     local.k8s_values_lifecycle,
+    local.k8s_values_network_policy,
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,

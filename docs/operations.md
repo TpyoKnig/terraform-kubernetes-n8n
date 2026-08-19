@@ -391,6 +391,57 @@ are encrypted with it, and a database restored without the matching key
 has unreadable credentials. Capture `terraform output -raw
 n8n_encryption_key` somewhere outside the cluster before you need it.
 
+## Network policy
+
+`n8n_network_policy_enabled` renders the chart's `NetworkPolicy` over the n8n
+pods. Off by default.
+
+Read what it actually is before turning it on, because the name promises more
+than it delivers. Every egress rule the chart writes targets `to: []`, meaning
+all destinations, and the rules differ only by port. It is a port allowlist:
+
+| Direction | Allowed |
+| --- | --- |
+| Ingress | port 5678, from n8n's own pods and from anywhere else |
+| Egress | DNS (53), the configured database port, the configured Redis port, and 443, each to any destination |
+
+Everything else is denied.
+
+What that buys is genuine. n8n makes arbitrary outbound HTTP by design, so any
+workflow, or any node with an SSRF bug, can reach whatever the pod network can
+reach. On a Talos cluster that includes the Talos API on 50000. Closing every
+port outside that allowlist removes most of the reachable surface.
+
+What it does not buy is segmentation. Every port in the allowlist stays open to
+every destination: anything answering on 443 is reachable, the Kubernetes API
+included, and so is any host answering on the port you configured for the
+database or for Redis — a LAN Postgres on 5432, for instance.
+
+If you need policy written against real destinations, write a
+`CiliumNetworkPolicy` (or equivalent) against the `app.kubernetes.io/name: n8n`
+selector and **leave this toggle off**. The two do not compose the way it might
+look. Kubernetes unions every policy that selects a pod and no policy can
+subtract, so a destination-scoped rule of yours cannot take back a port this one
+has already opened to `to: []`. Turning both on keeps this policy's allowlist
+and adds whatever yours permits on top. There is no intersection to be had.
+
+Before enabling it, check whether you rely on any of:
+
+- **Workflows calling plaintext `http://` endpoints.** Port 80 is denied. This
+  is the one that breaks real workflows most often.
+- **An external OpenTelemetry collector on 4317 or 4318.** Denied. The module
+  warns at plan time when `n8n_otel_exporter_otlp_endpoint` resolves to a port
+  outside the allowlist above, because n8n does not treat a failed span export
+  as an error: nothing crashes, the traces just stop. A collector reached over
+  443 and one sharing the database or Redis port are unaffected. So is a
+  same-pod sidecar on loopback, n8n's default `http://localhost:4318` included:
+  that traffic never leaves the pod, so no NetworkPolicy governs it.
+- **SMTP for n8n's own mail** (587, 465, 25). Denied.
+- **A CNI that enforces NetworkPolicy.** Cilium and Calico do. A cluster whose
+  CNI ignores policy will apply this object happily and enforce nothing, which
+  is worse than not setting it, because `kubectl get networkpolicy` then reports
+  protection you do not have.
+
 ## LAN-exposed services
 
 Two optional `LoadBalancer` Services, both off by default, exist because a
