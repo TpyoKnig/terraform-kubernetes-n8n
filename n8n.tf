@@ -333,12 +333,28 @@ check "custom_image_repository_needs_an_explicit_tag" {
 
 check "custom_image_tag_needs_a_task_runner_tag" {
   assert {
+    # The hazard is a runner tag the chart derives from an app tag that
+    # n8nio/runners never published. Until n8n_image_tag carried a default,
+    # "the caller set a tag" was a usable proxy for that: the module named no
+    # tag of its own, so any tag present came from the caller and was suspect.
+    #
+    # It stopped being one when the default became a pinned version. A caller
+    # mirroring the stock image sets only n8n_image_repository, inherits the
+    # module's own published-version default, and the runner fallback resolves
+    # correctly - yet the old condition warned, which is the fires-on-the-happy-
+    # path shape the encryption-key note above refuses on principle.
+    #
+    # So test the tag's shape instead, which is what actually decides the
+    # outcome: a bare MAJOR.MINOR.PATCH is what n8nio/runners publishes, and
+    # anything else ("2.35.0-mypackages", "mybuild-42") is a tag only the
+    # caller's registry has. A null tag falls through to the check above, which
+    # owns that case.
     condition = var.n8n_image_repository != null ? (
-      var.n8n_task_runners_enabled ? (
-        var.n8n_image_tag == null || var.n8n_task_runner_image_tag != null
+      var.n8n_task_runners_enabled && var.n8n_task_runner_image_tag == null ? (
+        var.n8n_image_tag == null ? true : can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.n8n_image_tag))
       ) : true
     ) : true
-    error_message = "A custom n8n image (n8n_image_repository + n8n_image_tag) is set with task runners enabled, but n8n_task_runner_image_tag is null. The chart tags the runner sidecar from the app image, so the sidecar resolves to n8nio/runners:<n8n_image_tag> and every main and worker pod fails with ImagePullBackOff unless that exact tag exists upstream, which fails the apply rather than completing with broken pods. Set n8n_task_runner_image_tag to the n8n version the custom image is built from. Ignore this warning if the custom image's tag is itself a published n8n version."
+    error_message = "A custom n8n image is set with task runners enabled, n8n_task_runner_image_tag is null, and n8n_image_tag (\"${coalesce(var.n8n_image_tag, "null")}\") is not a bare n8n version number. The chart tags the runner sidecar from the app image, so the sidecar resolves to n8nio/runners:${coalesce(var.n8n_image_tag, "null")} and every main and worker pod fails with ImagePullBackOff unless that exact tag exists upstream, which fails the apply rather than completing with broken pods. Set n8n_task_runner_image_tag to the n8n version the custom image is built from."
   }
 }
 

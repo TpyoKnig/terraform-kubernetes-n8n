@@ -270,9 +270,9 @@ variable "n8n_chart_version" {
 }
 
 variable "n8n_image_tag" {
-  description = "n8n application image tag to deploy (e.g. \"2.27.4\"). When it is null (the default), the Helm chart's own default applies, currently the floating `stable` tag, which resolves to whatever n8n version is latest at the time each pod starts. Pin this to a concrete version for reproducible, incremental upgrades and to avoid crossing major-version boundaries (e.g. the n8n 2.0 breaking changes) on an unplanned pod reschedule. See <https://docs.n8n.io/2-0-breaking-changes/> for the n8n 2.x migration guide."
+  description = "n8n application image tag to deploy. Defaults to a concrete published version, which the module bumps deliberately with a CHANGELOG entry, on the same policy as the chart version pins above. Set it to null to hand the decision back to the chart, whose own default is the floating `stable` tag: that resolves to whatever n8n version is latest at the moment a node pulls the image, and because the chart hardcodes an IfNotPresent pull policy, a node that already holds a cached layer keeps running the version it pulled whenever that was. The running version therefore follows each node's pull history rather than the configuration, and a pod rescheduled onto a node with no cached layer can silently cross a major-version boundary, run n8n's one-way startup migrations, and leave the other pods on the old version against the new schema. Nothing about that path is visible in a plan, which is why the module pins rather than defers. Pin a different version here to upgrade on your own schedule; see docs/upgrading-n8n.md for the order that upgrade has to follow, and <https://docs.n8n.io/2-0-breaking-changes/> for the n8n 2.x migration guide."
   type        = string
-  default     = null
+  default     = "2.36.2"
 
   validation {
     condition     = var.n8n_image_tag == null ? true : can(regex("^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$", var.n8n_image_tag))

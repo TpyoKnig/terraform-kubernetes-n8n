@@ -7,12 +7,12 @@ This covers bumping the deployed n8n version on an existing deployment. It does 
 | Variable | Controls | Default |
 | --- | --- | --- |
 | `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.10.0"`, pinned |
-| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `null`, meaning the chart's own default applies (currently the floating `stable` tag) |
+| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.36.2"`, pinned |
 | `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning the application image tag |
 
 Bumping the image tag alone gets you a new n8n version without changing the chart's templates or value schema. Bumping the chart version can also change what values the chart accepts, so treat it as the larger-blast-radius change of the two.
 
-Production deployments should pin `n8n_image_tag`. The chart uses `IfNotPresent`, so floating `stable` can resolve differently across nodes and create a mixed-version deployment.
+The image tag is pinned rather than left to the chart, and setting `n8n_image_tag = null` hands it back. Do that only if you have a reason to: the chart's own default is the floating `stable` tag, and the chart pulls `IfNotPresent`, so `stable` resolves to whatever was latest at the moment each node first pulled it. A main pod rescheduled onto a node with no cached layer can therefore land on a newer n8n than the workers beside it, run the startup migrations that version brings, and leave the rest of the deployment talking to a schema they were not built for. No `terraform plan` shows that happening, because nothing in the configuration changed.
 
 ## Before bumping
 

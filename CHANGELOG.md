@@ -7,6 +7,51 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+
+- `n8n_image_tag` now defaults to `"2.36.2"` instead of `null`. **This changes
+  the n8n version an existing deployment runs on the next apply.**
+
+  Null meant the chart's own default applied, which is the floating `stable`
+  tag. Combined with the chart's `IfNotPresent` pull policy, that made the
+  running version a property of when each node last pulled the layer rather
+  than of the configuration: a main pod rescheduled onto a node with no cached
+  image could land on a newer n8n than the workers beside it, run the one-way
+  migrations that version brings on startup, and leave the rest of the
+  deployment querying a schema it was not built for. No plan showed it,
+  because nothing in the configuration had changed.
+
+  A pinned default puts the version back in the plan, on the same policy the
+  four chart version pins already follow: bumping it is a module change with
+  its own entry here.
+
+  **Before upgrading**, check what your pods are actually running
+  (`kubectl exec -n <ns> <pod> -c <container> -- n8n --version`). Check a
+  worker as well as a main: under the floating default they had no reason to
+  agree, and if they disagree, reconcile on the higher of the two first, since
+  that is the version the database schema has already been migrated to.
+
+  Then compare that version with 2.36.2. **Behind it**, this apply is an n8n
+  upgrade and runs database migrations, so read `docs/upgrading-n8n.md` and
+  take a backup first. **Ahead of it**, this apply is a downgrade, and n8n's
+  migrations do not run backwards: set `n8n_image_tag` to the version you are
+  on before applying, because rolling an n8n version back means restoring the
+  database from a backup taken before the upgrade, not changing this tag.
+
+  To keep the old floating behaviour, set `n8n_image_tag = null` explicitly,
+  which remains supported.
+
+### Fixed
+
+- `check.custom_image_tag_needs_a_task_runner_tag` no longer warns on a
+  private mirror of the stock image. It used "the caller set a tag" as its
+  proxy for "this tag may not exist upstream", which stopped being one the
+  moment `n8n_image_tag` carried a default: a caller who set only
+  `n8n_image_repository` inherited the module's own published-version default
+  and got told to set `n8n_task_runner_image_tag` anyway. It now tests the
+  tag's shape, which is what actually decides whether the chart's runner
+  fallback resolves.
+
 ## [0.2.1], The pooler and the wiring audit
 
 A PgBouncer pooler for the CNPG backend, binary data onto a shared volume, and
