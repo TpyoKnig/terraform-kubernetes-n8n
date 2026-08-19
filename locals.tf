@@ -744,19 +744,6 @@ locals {
     config = {
       timezone = var.n8n_timezone
 
-      # Execution limits and history pruning. Typed chart keys rather than
-      # extraEnv, matching the chart's own executions block.
-      executions = {
-        timeout     = var.n8n_execution_timeout
-        timeoutMax  = var.n8n_execution_timeout_max
-        concurrency = { productionLimit = var.n8n_execution_concurrency_limit }
-        pruning = {
-          enabled  = true
-          maxAge   = var.n8n_pruning_max_age
-          maxCount = var.n8n_pruning_max_count
-        }
-      }
-
       extraEnv = concat(
         var.create_ingress ? [
           { name = "N8N_PROXY_HOPS", value = "1" },
@@ -959,11 +946,23 @@ locals {
     }
   }
 
+  # Execution limits and history pruning. The chart reads these from the
+  # top-level `executions` block (templates/_environment-helpers.tpl,
+  # "n8n.executionsEnv"); an earlier version rendered them under
+  # config.executions as well, a key the chart never reads, so timeout,
+  # timeoutMax, the concurrency limit and pruning maxCount were silently
+  # dropped and only pruning enabled/maxAge ever reached the pods. The chart's
+  # own gates still apply: a timeout or productionLimit of -1 emits no env var,
+  # which is n8n's "disabled" spelling for both.
   k8s_values_executions = {
     executions = {
+      timeout     = var.n8n_execution_timeout
+      timeoutMax  = var.n8n_execution_timeout_max
+      concurrency = { productionLimit = var.n8n_execution_concurrency_limit }
       pruning = {
-        enabled = true
-        maxAge  = var.n8n_pruning_max_age
+        enabled  = true
+        maxAge   = var.n8n_pruning_max_age
+        maxCount = var.n8n_pruning_max_count
       }
     }
   }

@@ -513,6 +513,12 @@ run "webhook_ingress_is_absent_when_the_caller_owns_routing" {
 # is worse than not offering it, so each is asserted against the rendered
 # values tree rather than trusted to stay wired.
 
+# The chart reads these from the TOP-LEVEL executions block
+# (_environment-helpers.tpl, "n8n.executionsEnv"). An earlier version of this
+# run asserted them under config.executions, a key the chart never reads, so
+# the test passed while the values were silently dropped. Asserting against
+# k8s_values_final rather than an intermediate local keeps a merge-order
+# mistake from reintroducing that.
 run "execution_limits_and_pruning_reach_the_chart" {
   command = plan
 
@@ -520,27 +526,41 @@ run "execution_limits_and_pruning_reach_the_chart" {
     n8n_execution_timeout           = 3600
     n8n_execution_timeout_max       = 7200
     n8n_execution_concurrency_limit = 25
+    n8n_pruning_max_age             = 168
     n8n_pruning_max_count           = 15000
   }
 
   assert {
-    condition     = local.k8s_values_config.config.executions.timeout == 3600
-    error_message = "n8n_execution_timeout must reach config.executions.timeout."
+    condition     = local.k8s_values_final.executions.timeout == 3600
+    error_message = "n8n_execution_timeout must reach the chart's top-level executions.timeout."
   }
 
   assert {
-    condition     = local.k8s_values_config.config.executions.timeoutMax == 7200
-    error_message = "n8n_execution_timeout_max must reach config.executions.timeoutMax."
+    condition     = local.k8s_values_final.executions.timeoutMax == 7200
+    error_message = "n8n_execution_timeout_max must reach the chart's top-level executions.timeoutMax."
   }
 
   assert {
-    condition     = local.k8s_values_config.config.executions.concurrency.productionLimit == 25
-    error_message = "n8n_execution_concurrency_limit must reach config.executions.concurrency.productionLimit."
+    condition     = local.k8s_values_final.executions.concurrency.productionLimit == 25
+    error_message = "n8n_execution_concurrency_limit must reach the chart's top-level executions.concurrency.productionLimit."
   }
 
   assert {
-    condition     = local.k8s_values_config.config.executions.pruning.maxCount == 15000
-    error_message = "n8n_pruning_max_count must reach config.executions.pruning.maxCount."
+    condition     = local.k8s_values_final.executions.pruning.enabled == true && local.k8s_values_final.executions.pruning.maxAge == 168
+    error_message = "Pruning must stay enabled with n8n_pruning_max_age reaching executions.pruning.maxAge."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.pruning.maxCount == 15000
+    error_message = "n8n_pruning_max_count must reach the chart's top-level executions.pruning.maxCount."
+  }
+
+  # The dead subtree must stay dead: config.executions is not a key the chart
+  # reads, so rendering it again would be a silent no-op wearing the costume of
+  # configuration.
+  assert {
+    condition     = !contains(keys(local.k8s_values_final.config), "executions")
+    error_message = "config.executions must not be rendered; the chart only reads the top-level executions block."
   }
 }
 

@@ -96,6 +96,28 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- `n8n_execution_timeout`, `n8n_execution_timeout_max`,
+  `n8n_execution_concurrency_limit` and `n8n_pruning_max_count` now actually
+  reach the pods. They were rendered under `config.executions`, a key the chart
+  never reads: the chart's executions settings live in a top-level `executions`
+  block, and only pruning `enabled`/`maxAge` happened to also be rendered
+  there. So the four inputs were accepted, validated, documented and silently
+  discarded, and every deployment ran the chart's own defaults instead:
+  no execution timeout (`-1`) rather than the documented 7200, a 3600
+  `timeoutMax` rather than 7200, no concurrency limit rather than 100, and
+  pruning maxCount 10000, which only matched the module default by
+  coincidence. The values now merge into the top-level block, so deployments
+  that never set these inputs will see a plan updating the release values and
+  should expect the documented defaults to start applying, most visibly
+  `EXECUTIONS_TIMEOUT=7200` and `N8N_CONCURRENCY_PRODUCTION_LIMIT=100`. To
+  keep the previous effective behaviour, set `n8n_execution_timeout` and
+  `n8n_execution_concurrency_limit` to `-1`, `n8n_execution_timeout_max` to
+  `3600`, and leave `n8n_pruning_max_count` at its default (10000, which is
+  also what the chart was applying). The contract
+  test asserting these inputs was itself asserting the dead subtree, which is
+  how this survived: it now asserts against the merged values tree and that
+  `config.executions` stays unrendered.
+
 - Five bugs in the examples, all present since they were written and all in the
   copies every example shares.
 

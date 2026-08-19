@@ -60,8 +60,7 @@ your CI can raise, review and roll back, which is the whole point.
 | `redis.tls`, `redis.prefix` | **Deliberately not set**, same reasoning as `database.ssl`. Use `redis_transit_encryption_enabled` and `redis_key_prefix`. |
 | `config.extraEnv` | Exposed as `n8n_extra_env`, applied to every n8n pod. Reserved names are rejected at plan time. |
 | `config.timezone` | Exposed as `n8n_timezone`. |
-| `config.executions.*` | Exposed: concurrency, timeout, timeoutMax, pruning. |
-| `executions.pruning` | Exposed as the `n8n_pruning_*` inputs. |
+| `executions.*` | Exposed: `n8n_execution_timeout` / `_timeout_max` (timeout, timeoutMax), `n8n_execution_concurrency_limit` (concurrency.productionLimit), `n8n_pruning_max_age` / `_max_count` (pruning). The chart reads these top-level only; there is no `config.executions`. |
 | `taskRunners.*` | Exposed: enabled, mode, native Python runner, and the launcher config through the allowlist inputs. |
 | `taskRunners.image.tag` | Exposed as `n8n_task_runner_image_tag`. Omitted when null, so the chart falls back to the application image tag. |
 | `taskRunners.image.repository`, `.resources`, `.broker`, `.launcher` | Not exposed. |
