@@ -246,9 +246,12 @@ one DNS zone will simply fail to issue for a name outside it, at the
 
 ## Webhook URLs
 
-n8n advertises webhook URLs from `WEBHOOK_URL`, and the module sets it on every
-pod through the chart's `config.extraEnv`, not through the Secret that carries
-`N8N_HOST`, which the chart reads only four specific keys from.
+n8n advertises webhook URLs from `WEBHOOK_URL`, and the module sets it through
+the chart's own `webhook.url` value, which the chart renders into its ConfigMap
+for every pod type. (On a split ingress the chart's value is deliberately
+emptied and the module carries both `WEBHOOK_URL` and `N8N_EDITOR_BASE_URL`
+through `config.extraEnv` instead.) It is never in the Secret that carries
+`N8N_HOST`: the chart reads only four specific keys from that.
 
 By default it is `https://` against the ingress host. Set `n8n_webhook_url` to
 override it, which is what a split-ingress topology needs: the editor lives on
@@ -300,7 +303,7 @@ the ceilings exceed it.
 Warning: Check block assertion failed
 
 Autoscaler maxima exceed the CPU this cluster can schedule. At their ceilings
-the n8n pods request 15300m CPU (main 3 × 1250m, worker 10 × 1000m, webhook
+the n8n pods request 12850m CPU (main 1 × 1250m, worker 10 × 1000m, webhook
 8 × 200m), but the 3 schedulable node(s) in this cluster report 11760m
 allocatable CPU in total, before anything else you run on them.
 ```

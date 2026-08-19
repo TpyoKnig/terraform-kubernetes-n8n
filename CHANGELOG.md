@@ -96,6 +96,27 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- A sweep of documentation and comments that contradicted the code. The most
+  load-bearing: `n8n_templates_enabled` / `n8n_personalization_enabled`
+  claimed that setting `true` emits no env var (both are rendered explicitly
+  either way); README and ROADMAP said binary data "stays on filesystem mode"
+  (the default is Postgres, `n8n_binary_data_mode`); `docs/operations.md`
+  said WEBHOOK_URL travels via `config.extraEnv` (it is the chart's
+  `webhook.url` except on a split ingress) and showed a capacity warning with
+  a `main 3 ×` line the code cannot produce; two autoscaling descriptions
+  cited AWS-sibling inputs (`node_max`, `node_instance_type`,
+  `n8n_main_hpa_max_replicas`) and a README section that do not exist here;
+  `docs/helm-chart-coverage.md` called `replicaCount` "exposed" (pinned, no
+  input) and `taskRunners.launcher` "not exposed" (its `autoShutdownTimeout`
+  is a headline 0.2.0 input); `docs/module-contract.md` counted four examples
+  and 7 roots (six and 9); a comment pointed at a `refactoring.tf` that never
+  existed in this repo; four comments still justified guard-style ternaries
+  by a Terraform 1.9 floor (the floor is 1.11, which short-circuits - the
+  style stays as a consistency rule); one comment claimed the chart has no
+  `redis.tls` key (it does; the env route is kept deliberately); and the
+  `n8n_domain` local's comment described lowercasing that happens elsewhere.
+  The Unreleased section also carried two `### Changed` headings.
+
 - The examples' commented AI-Assistant recipe in `homelab-cloudflare` and
   `homelab-godaddy` was two revisions stale and actively harmful: it told the
   reader to `concat()` onto an `n8n_extra_env` assignment that no longer
@@ -250,10 +271,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 - `backing_services.binary_storage` reported the constant `"filesystem"` on
   every path, including the default one where binary data goes to Postgres. It
-  now reports the effective mode, following an `n8n_extra_env` override where
-  one is set. Wrong since the initial release; see issue #18.
-
-### Changed
+  now reports `n8n_binary_data_mode` directly, and an override from the two
+  env inputs is impossible: both names are reserved again (see Changed above).
+  Wrong since the initial release; see issue #18.
 
 - `backing_services.postgres_host` resolves to the pooler Service when
   `cnpg_pooler_enabled` is true. It is what n8n connects to, so anything
