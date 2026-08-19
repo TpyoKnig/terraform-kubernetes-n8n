@@ -210,8 +210,17 @@ check "webhook_resources_sized_for_reinstall_missing_packages" {
 #
 # Only created on the KEDA path. Off it, the chart's own HPA is correct and two
 # controllers on one Deployment would fight over the replica count.
+#
+# Also gated on n8n_webhook_hpa_enabled, which is the input's whole documented
+# purpose: "bring your own autoscaling policy". Off the KEDA path that worked,
+# because the input feeds the chart's hpa.webhookProcessor.enabled and the
+# chart honours it. On the KEDA path the chart ignores that value (its own
+# template is gated on `not keda.enabled`) and this resource was ungated, so
+# turning the input off removed nothing and a caller who attached their own
+# VPA or custom-metrics HPA got it fighting this one over the same Deployment,
+# which is the dual-ownership the KEDA branch is otherwise careful to avoid.
 resource "kubernetes_horizontal_pod_autoscaler_v2" "n8n_webhook_processor" {
-  count = var.k8s_keda_installed ? 1 : 0
+  count = var.k8s_keda_installed && var.n8n_webhook_hpa_enabled ? 1 : 0
 
   metadata {
     name      = "${local.n8n_webhook_service_name}-supplementary"

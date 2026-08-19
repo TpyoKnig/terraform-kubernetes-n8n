@@ -1308,7 +1308,7 @@ variable "n8n_main_pdb_enabled" {
 # ── HPA: webhook processor pods ───────────────────────────────────────────────
 
 variable "n8n_webhook_hpa_enabled" {
-  description = "When true (the default), the module creates kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook, a CPU-based HPA for the webhook processor deployment. The n8n Helm chart skips creating its own webhook HPA whenever keda.enabled is true, which this module always sets, so this module-managed HPA is otherwise the only thing that scales webhook processors at all. Set to false to bring your own autoscaling policy (e.g. a VPA, a custom-metrics HPA, or one managed outside Terraform) for the n8n-webhook-processor Deployment instead. With this false and nothing else targeting that Deployment, it stays fixed at n8n_webhook_hpa_min_replicas: the chart renders webhookProcessor.replicaCount from that same variable unconditionally, so disabling this HPA does not leave the deployment without a replica count, only without anything that changes it."
+  description = "Whether anything autoscales the webhook processor Deployment on CPU. True by default. Which object provides it depends on k8s_keda_installed, and the input governs both: with KEDA attested the module creates kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook_processor, because the chart gates its own webhook HPA on `not keda.enabled` and so renders none; without KEDA the chart's HPA is the one, rendered from this same value. Queue depth is deliberately not used here even on the KEDA path: webhook processors are an HTTP ingest tier and the Bull queue they write into is drained by workers, so a deep queue means add workers, never add receivers. Set to false to bring your own autoscaling policy (a VPA, a custom-metrics HPA, or one managed outside Terraform) for the n8n-webhook-processor Deployment instead, which now removes the module's HPA as well as the chart's rather than leaving one behind to fight yours. With this false and nothing else targeting that Deployment it stays fixed at n8n_webhook_hpa_min_replicas: the chart renders webhookProcessor.replicaCount from that same variable unconditionally, so disabling autoscaling does not leave the deployment without a replica count, only without anything that changes it."
   type        = bool
   default     = true
   nullable    = false
@@ -1997,7 +1997,7 @@ variable "k8s_keda_installed" {
 }
 
 variable "n8n_worker_keda_min_replicas" {
-  description = "Minimum worker replicas. KEDA keeps at least this many workers running even when the queue is empty. Also becomes the deployment's own replica count: the Helm chart renders spec.replicas unconditionally, so leaving it below the autoscaler floor would make every helm upgrade scale down and then wait for the autoscaler to climb back."
+  description = "Minimum worker replicas, and the worker Deployment's own replica count. KEDA keeps at least this many workers running even when the queue is empty. One number feeds three things the chart derives from it: the ScaledObject's minReplicaCount, the CPU HPA's minReplicas off the KEDA path, and queueMode.workerReplicaCount. Must be at least 1. That last one is why: the chart gates the worker Deployment itself on `gt workerReplicaCount 0`, and gates the worker ScaledObject on the same expression, so 0 does not park the pool at zero, it renders no worker Deployment and no autoscaler to bring one back. KEDA's native scale-to-zero is not reachable through this input for that reason: it would need the Deployment to exist with a ScaledObject floor of 0, and a single value cannot say both."
   type        = number
   default     = 1
   nullable    = false
@@ -2008,8 +2008,16 @@ variable "n8n_worker_keda_min_replicas" {
   }
 
   validation {
-    condition     = var.n8n_worker_keda_min_replicas == floor(var.n8n_worker_keda_min_replicas) && var.n8n_worker_keda_min_replicas >= 0
-    error_message = "n8n_worker_keda_min_replicas must be a whole number of replicas, 0 or greater. 0 is allowed here, unlike the two HPA floors: KEDA scales a ScaledObject to zero natively."
+    # 0 used to be accepted here, on the reasoning that KEDA scales a
+    # ScaledObject to zero natively. It does, but this input never reaches
+    # KEDA alone: it is also queueMode.workerReplicaCount, and chart 1.10.0
+    # gates both templates/deployment-worker.yaml and
+    # templates/scaledobject-worker.yaml on `gt (int workerReplicaCount) 0`.
+    # So 0 rendered no worker Deployment, no ScaledObject and no HPA: a
+    # deployment whose editor works, whose webhooks answer, and where no
+    # execution ever runs, with nothing failing to say so.
+    condition     = var.n8n_worker_keda_min_replicas == floor(var.n8n_worker_keda_min_replicas) && var.n8n_worker_keda_min_replicas >= 1
+    error_message = "n8n_worker_keda_min_replicas must be a whole number of replicas, 1 or greater. 0 does not park the worker pool at zero: the chart gates the worker Deployment and the worker ScaledObject on this same number, so 0 renders neither, and nothing is left to scale a worker back up when jobs arrive. The queue then fills while the editor and the webhook processors keep answering normally. KEDA's scale-to-zero would need the Deployment to exist with a ScaledObject floor of 0, which one value cannot express."
   }
 }
 

@@ -60,6 +60,25 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Changed
 
+- `n8n_worker_keda_min_replicas` now requires at least 1. **Breaking for a
+  configuration that was already producing no workers.**
+
+  It accepted 0, documented as safe because "KEDA scales a ScaledObject to zero
+  natively". KEDA does, but this input never reaches KEDA on its own: it is
+  also `queueMode.workerReplicaCount`, and chart 1.10.0 gates
+  `templates/deployment-worker.yaml` and `templates/scaledobject-worker.yaml`
+  on the same `gt (int workerReplicaCount) 0`.
+
+  So 0 did not park the pool at zero. It rendered no worker Deployment, no
+  ScaledObject and no HPA, leaving nothing that could scale a worker back up
+  when jobs arrived. The editor worked, the webhook processors answered, the
+  queue filled, and no execution ever ran. Attesting KEDA did not help, since
+  the ScaledObject the reasoning rested on is gated on the same number.
+
+  True scale-to-zero would need the Deployment to exist alongside a ScaledObject
+  floor of 0, which one value cannot express, so it is documented as out of
+  reach rather than implied.
+
 - `n8n_image_tag` now defaults to `"2.36.2"` instead of `null`. **This changes
   the n8n version an existing deployment runs on the next apply.**
 
@@ -93,6 +112,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   which remains supported.
 
 ### Fixed
+
+- `n8n_webhook_hpa_enabled = false` now removes the webhook processor's
+  autoscaler on the KEDA path as well. The input's documented purpose is to let
+  a caller attach their own policy, and off the KEDA path it worked, because
+  the value feeds the chart's `hpa.webhookProcessor.enabled` and the chart
+  honours it. With KEDA attested the chart ignores that value (its template is
+  gated on `not keda.enabled`) and the module's supplementary HPA was gated on
+  the KEDA attestation alone, so turning the input off removed nothing. A
+  caller who disabled it and attached a VPA or a custom-metrics HPA got theirs
+  fighting the module's over the same Deployment, which is the dual ownership
+  the KEDA branch is otherwise careful to avoid.
 
 - `n8n_prestop_sleep` now sets the drain delay it describes. It was rendered as
   an `N8N_PRESTOP_SLEEP` environment variable on every container, which nothing
