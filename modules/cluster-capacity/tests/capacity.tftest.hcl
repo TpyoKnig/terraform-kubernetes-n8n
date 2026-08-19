@@ -143,9 +143,9 @@ run "cordoned_and_tainted_nodes_are_not_counted" {
   expect_failures = [check.autoscaler_ceilings_fit_cluster_capacity]
 }
 
-# A NoExecute or PreferNoSchedule taint on its own does not stop an n8n pod
-# landing there, so those nodes stay in the supply.
-run "a_non_noschedule_taint_still_counts" {
+# A PreferNoSchedule taint is a preference, not a bar: pods still land there,
+# so the node stays in the supply.
+run "a_prefer_no_schedule_taint_still_counts" {
   command = plan
 
   variables {
@@ -159,6 +159,61 @@ run "a_non_noschedule_taint_still_counts" {
         {
           metadata = [{ name = "worker-1" }]
           spec     = [{ unschedulable = false, taints = [{ key = "example.com/soft", value = "yes", effect = "PreferNoSchedule" }] }]
+          status   = [{ allocatable = { cpu = "4" } }]
+        },
+      ]
+    }
+  }
+}
+
+# NoExecute blocks scheduling and evicts, so a node held by one (an
+# out-of-service node, say) is not supply. Counting it would pass the 5,000m
+# demand against 4,000m of real capacity.
+run "a_noexecute_tainted_node_is_not_supply" {
+  command = plan
+
+  variables {
+    peak_cpu_request_millis = 5000
+  }
+
+  override_data {
+    target = data.kubernetes_nodes.capacity
+    values = {
+      nodes = [
+        {
+          metadata = [{ name = "worker-1" }]
+          spec     = [{ unschedulable = false, taints = [] }]
+          status   = [{ allocatable = { cpu = "4" } }]
+        },
+        {
+          metadata = [{ name = "worker-2" }]
+          spec     = [{ unschedulable = false, taints = [{ key = "node.kubernetes.io/out-of-service", value = "nodeshutdown", effect = "NoExecute" }] }]
+          status   = [{ allocatable = { cpu = "4" } }]
+        },
+      ]
+    }
+  }
+
+  expect_failures = [check.autoscaler_ceilings_fit_cluster_capacity]
+}
+
+# The provider can hand taints back as null rather than an empty list; a for
+# over null is a hard plan error outside any check, which is exactly what this
+# module must never produce.
+run "a_null_taints_attribute_does_not_abort_the_plan" {
+  command = plan
+
+  variables {
+    peak_cpu_request_millis = 3000
+  }
+
+  override_data {
+    target = data.kubernetes_nodes.capacity
+    values = {
+      nodes = [
+        {
+          metadata = [{ name = "worker-1" }]
+          spec     = [{ unschedulable = false }]
           status   = [{ allocatable = { cpu = "4" } }]
         },
       ]

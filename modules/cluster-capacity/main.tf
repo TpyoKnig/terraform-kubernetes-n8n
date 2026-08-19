@@ -52,11 +52,11 @@
 #
 # ── Which nodes count ─────────────────────────────────────────────────────────
 # Only nodes that could actually take an n8n pod: cordoned nodes
-# (spec.unschedulable) and nodes carrying any NoSchedule taint are excluded. The
-# taint filter is what makes the number right on a cluster with dedicated
-# control planes, counting three tainted control-plane nodes would roughly
-# double the apparent supply on a six-node lab. It is deliberately blunt in the
-# other direction: a NoSchedule taint the n8n pods happen to tolerate still
+# (spec.unschedulable) and nodes carrying any NoSchedule or NoExecute taint are
+# excluded. The taint filter is what makes the number right on a cluster with
+# dedicated control planes, counting three tainted control-plane nodes would
+# roughly double the apparent supply on a six-node lab. It is deliberately
+# blunt in the other direction: a taint the n8n pods happen to tolerate still
 # excludes that node, understating supply and warning a hair early. Erring
 # toward warning is the right side to be wrong on for an advisory, and this
 # module sets no tolerations on those pods anyway.
@@ -79,9 +79,19 @@
 data "kubernetes_nodes" "capacity" {}
 
 locals {
+  # NoExecute is excluded alongside NoSchedule: it blocks new scheduling the
+  # same way and additionally evicts what is already there, so counting such a
+  # node (an out-of-service node, say) overstated supply - the one direction
+  # this model promises not to be wrong in. PreferNoSchedule stays counted:
+  # it is a preference, not a bar. The taints read is guarded twice because
+  # the provider can return the attribute as null rather than an empty list,
+  # and a for over null is a hard plan error outside any check.
   schedulable_nodes = [
     for node in try(data.kubernetes_nodes.capacity.nodes, []) : node
-    if node.spec[0].unschedulable != true && length([for taint in try(node.spec[0].taints, []) : taint if taint.effect == "NoSchedule"]) == 0
+    if try(node.spec[0].unschedulable, false) != true && length([
+      for taint in coalesce(try(node.spec[0].taints, []), []) : taint
+      if contains(["NoSchedule", "NoExecute"], taint.effect)
+    ]) == 0
   ]
 
   # sum() rejects an empty list, and concat([0], …) is what keeps a cluster that

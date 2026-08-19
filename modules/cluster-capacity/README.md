@@ -16,7 +16,7 @@ That flag exists because the node read is a plain data source, not one nested in
 
 ## What the number means
 
-Only nodes that could take an n8n pod are counted: cordoned nodes and any node with a `NoSchedule` taint are excluded, which is what keeps tainted control planes from roughly doubling apparent supply on a small cluster.
+Only nodes that could take an n8n pod are counted: cordoned nodes and any node with a `NoSchedule` or `NoExecute` taint are excluded (`PreferNoSchedule` is a preference, not a bar, so those nodes stay counted), which is what keeps tainted control planes from roughly doubling apparent supply on a small cluster.
 
 Two approximations remain, both understating supply: allocatable CPU has kubelet and system reservations removed but not what your own workloads have claimed, and DaemonSet requests are not subtracted. The check therefore sees more room than really exists and errs toward staying quiet rather than warning falsely.
 

@@ -1960,7 +1960,7 @@ variable "n8n_external_secrets_enabled" {
 # not supply. The input above is therefore a disable switch, not an enable one.
 
 variable "k8s_capacity_check_enabled" {
-  description = "Reads allocatable CPU from the cluster's schedulable nodes at plan time and warns when the autoscaler ceilings add up to more than the cluster can hold. Cordoned nodes and nodes carrying a NoSchedule taint are excluded, so a cluster with dedicated control planes is not counted at more than its usable size. Advisory only: it never fails a plan, and it stays silent when the cluster reports no schedulable nodes. Set false where the plan runs somewhere the cluster is unreachable or the credentials cannot list nodes cluster-wide (a plan-only CI job is the realistic case), since the node read is an ordinary data source and a failed read fails the plan. Setting false removes the read itself, not just the warning."
+  description = "Reads allocatable CPU from the cluster's schedulable nodes at plan time and warns when the autoscaler ceilings add up to more than the cluster can hold. Cordoned nodes and nodes carrying a NoSchedule or NoExecute taint are excluded (PreferNoSchedule still counts), so a cluster with dedicated control planes is not counted at more than its usable size. Advisory only: it never fails a plan, and it stays silent when the cluster reports no schedulable nodes. Set false where the plan runs somewhere the cluster is unreachable or the credentials cannot list nodes cluster-wide (a plan-only CI job is the realistic case), since the node read is an ordinary data source and a failed read fails the plan. Setting false removes the read itself, not just the warning."
   type        = bool
   default     = true
   nullable    = false
