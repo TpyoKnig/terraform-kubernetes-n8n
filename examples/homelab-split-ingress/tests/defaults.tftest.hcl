@@ -413,6 +413,30 @@ run "a_bare_home_directory_kubeconfig_path_is_rejected" {
   expect_failures = [var.kubeconfig_path]
 }
 
+run "a_bare_tilde_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # pathexpand("~") is the home directory for the providers, while the smoke
+  # test would treat it as a relative path - two different wrong answers.
+  variables {
+    kubeconfig_path = "~"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_dressed_up_home_directory_spelling_is_rejected_too" {
+  command = plan
+
+  # "~/./" is the same directory as "~/" to everything that expands it, and
+  # would slip past an exact string comparison.
+  variables {
+    kubeconfig_path = "~/./"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
 run "a_posix_backslash_is_a_filename_character_not_a_separator" {
   command = plan
 

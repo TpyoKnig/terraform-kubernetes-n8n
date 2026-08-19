@@ -110,16 +110,28 @@ module "n8n" {
   # shape, so secret-backed variables go through n8n_extra_env_from_secret,
   # which renders the secretKeyRef for you and keeps the value out of state:
   #
-  # n8n_extra_env_from_secret = [{
-  #   name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
-  #   secret_name = "ai-assistant-secrets"
-  #   secret_key  = "anthropic-api-key"
-  # }]
+  # n8n_extra_env_from_secret = [
+  #   {
+  #     name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+  #     secret_name = "ai-assistant-secrets"
+  #     secret_key  = "anthropic-api-key"
+  #   },
+  #   {
+  #     name        = "N8N_SANDBOX_SERVICE_API_KEY"
+  #     secret_name = "ai-assistant-secrets"
+  #     secret_key  = "sandbox-api-key"
+  #   },
+  # ]
   #
-  # Not n8n_extra_helm_values. That sets config.extraEnv wholesale, and the
-  # module renders its own entries into the same list, so a hand-written block
-  # there replaces them: shared storage, metrics and the connection settings
-  # all disappear, and nothing reports it.
+  # Both keys, not just the model one: the Secret above carries sandbox-api-key
+  # precisely because the sandbox API authenticates with it, and a sandbox
+  # enabled without N8N_SANDBOX_SERVICE_API_KEY cannot execute anything. See
+  # docs/ai-assistant.md for the full worked block.
+  #
+  # Not n8n_extra_helm_values. That sets config.extraEnv wholesale, which Helm
+  # would substitute for the module's own list; the module now rejects such an
+  # overlay at plan time rather than letting the release install misconfigured,
+  # so the input simply refuses this route.
 
   # ── Shared storage ─────────────────────────────────────────────────────────
   # Reaches main, worker and webhook-processor alike, which is exactly what the

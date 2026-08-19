@@ -135,8 +135,8 @@ run "a_zone_produces_a_proxied_tunnel_record" {
   }
 
   assert {
-    condition     = cloudflare_record.n8n[0].proxied == true && endswith(cloudflare_record.n8n[0].content, ".cfargotunnel.com")
-    error_message = "The record must be a proxied CNAME at the tunnel: unproxied, cfargotunnel.com does not resolve, and an A record at a homelab ingress is usually a private address."
+    condition     = cloudflare_record.n8n[0].proxied == true && cloudflare_record.n8n[0].type == "CNAME" && cloudflare_record.n8n[0].content == "${var.cloudflare_tunnel_id}.cfargotunnel.com"
+    error_message = "The record must be a proxied CNAME at exactly <tunnel-id>.cfargotunnel.com: unproxied, cfargotunnel.com does not resolve, and an A record at a homelab ingress is usually a private address."
   }
 }
 
@@ -309,6 +309,30 @@ run "a_bare_home_directory_kubeconfig_path_is_rejected" {
   # empty path is rejected for, arrived at through the tilde branch.
   variables {
     kubeconfig_path = "~/"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_bare_tilde_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # pathexpand("~") is the home directory for the providers, while the smoke
+  # test would treat it as a relative path - two different wrong answers.
+  variables {
+    kubeconfig_path = "~"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_dressed_up_home_directory_spelling_is_rejected_too" {
+  command = plan
+
+  # "~/./" is the same directory as "~/" to everything that expands it, and
+  # would slip past an exact string comparison.
+  variables {
+    kubeconfig_path = "~/./"
   }
 
   expect_failures = [var.kubeconfig_path]
