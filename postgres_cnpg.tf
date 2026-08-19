@@ -65,19 +65,28 @@ resource "kubectl_manifest" "cnpg_cluster" {
   # cluster, and a module that installed one would own upgrading and destroying
   # it on behalf of workloads it cannot see.
   #
-  # Unlike KEDA there is no attestation input for it either, and the two
-  # failures are worth telling apart. With nothing installed at all the CRD is
-  # missing too, so this apply fails outright with the API server naming the
-  # unknown kind, and the error already says what is wrong. With the CRD
-  # present but the operator absent or unavailable, the manifest applies
-  # cleanly and nothing reconciles it, and the apply reports success. On a
-  # Cluster being created for the first time that means no Postgres pods and no
-  # Service at all; on one the operator had already reconciled, the running
-  # pods and Service stay up and it is changes that stop being acted on. That
-  # case looks exactly like the KEDA one and this module does not detect it.
-  # The tell is a Cluster whose status does not match its spec, and no running
-  # controller pod in the operator's namespace (`kubectl get pods -n
-  # cnpg-system`; the deployment's name depends on how it was installed).
+  # Unlike KEDA there is no attestation input for it either, and the ways it
+  # can be missing are worth telling apart, because only one of them is quiet.
+  #
+  #   - Nothing installed. The CRD is gone with the operator, so this apply
+  #     fails outright with the API server naming the unknown kind. The error
+  #     already says what is wrong.
+  #   - Operator scaled down or crash-looping with its webhook configurations
+  #     still registered. CNPG's admission webhooks fail closed, so the API
+  #     server rejects this manifest with a webhook call failure rather than
+  #     applying it. Loud, if cryptic.
+  #   - CRD present and no webhook configuration to answer for it: an operator
+  #     uninstalled leaving its CRDs behind, or a partial install. Here the
+  #     manifest applies cleanly, nothing reconciles it, and the apply reports
+  #     success. This is the KEDA-shaped failure, and this module does not
+  #     detect it.
+  #
+  # In that last case a Cluster being created for the first time gets no
+  # Postgres pods and no Service; one the operator had already reconciled keeps
+  # its running pods and Service and simply stops having changes acted on. The
+  # tell is `status.readyInstances` short of `spec.instances` (or absent) with
+  # no controller pod running in whichever namespace the operator was installed
+  # into, cnpg-system by convention rather than by rule.
   #
   # (An earlier version of this comment cited
   # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this

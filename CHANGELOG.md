@@ -191,9 +191,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   rolling tag actually does: a newly created instance pulls whatever minor the
   tag points at, but a running cluster does not roll, because the tag string
   does not change and CloudNativePG has no new image reference to act on. To
-  take a minor deliberately, bump the tag or drive it from an ImageCatalog. It
-  also records that the bare spellings are deprecated upstream in favour of the
-  ones naming the image type and distribution.
+  take a minor deliberately, bump the tag or drive it from an ImageCatalog. Nor
+  is even a recreated instance guaranteed to move: a rolling tag resolves at
+  pull time and the default pull policy for a non-latest tag is IfNotPresent,
+  so an instance recreated on a node that already cached this tag keeps the
+  minor that node cached. It also records that the bare spellings are
+  deprecated upstream in favour of the ones naming the image type and
+  distribution, and that CNPG's in-place major upgrade is supported only
+  between images on the same operating system distribution.
 
 - Corrected comments and descriptions that misdescribed the code: the values
   assembly banner claimed the chart 1.11.0 schema while the pin is 1.10.0;
@@ -205,8 +210,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   5678 alongside it. `kubernetes_secret.n8n` now says why three of its four
   keys are not secret, and why that does not make the object safe to read.
 
-- Removed `random_password.task_runner_token`, which was generated on every
-  apply, stored in state, and referenced by nothing. Its comment described it
+- Removed `random_password.task_runner_token`, which was generated once when
+  the resource was first created, persisted in state from then on, and
+  referenced by nothing. Its comment described it
   as the shared secret between the task broker and the runner sidecars, which
   sent anyone debugging a runner authentication problem to a value that had
   never reached a pod. The chart mints that token itself and looks up the
