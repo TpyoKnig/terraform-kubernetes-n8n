@@ -1612,22 +1612,33 @@ run "disabling_tls_still_leaves_the_chart_key_unset" {
   }
 }
 
-# ── Binary-data mode is the caller's to set ───────────────────────────────────
-# These two names were reserved as chart-rendered. Chart 1.10.0 emits them only
-# from the n8n.s3Env helper, gated on s3.enabled, which this module pins false
-# with no input to turn it on, so the guard blocked a name nothing set. It
-# matters because n8n defaults binary data to "database" in scaling mode, which
-# is the only mode this module runs: without this setting a shared volume
-# mounts and stays empty.
+# ── Binary-data mode is the caller's to set, through the input ────────────────
+# These two names went reserved, then unreserved, then reserved again, and the
+# round trip is the point. The chart never renders them: 1.10.0 emits them only
+# from the n8n.s3Env helper, gated on s3.enabled, which this module pins false.
+# So the original guard blocked a name nothing set, and unreserving them was the
+# right call at the time, because n8n defaults binary data to "database" in the
+# scaling mode this module always runs and a caller needed some way to say
+# otherwise. n8n_binary_data_mode is that way now, and it comes with the
+# shared-mount check the raw env var could never have.
 
 run "a_caller_can_choose_filesystem_binary_data" {
   command = plan
 
   variables {
-    n8n_extra_env = [
-      { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-      { name = "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage" },
-    ]
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/n8n-shared"
+
+    n8n_extra_volumes = [{
+      name                    = "shared"
+      persistent_volume_claim = { claim_name = "n8n-shared" }
+    }]
+
+    n8n_extra_volume_mounts = [{
+      name       = "shared"
+      mount_path = "/opt/n8n-shared"
+      read_only  = false
+    }]
   }
 
   assert {
@@ -2081,4 +2092,190 @@ run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
   }
 
   expect_failures = [var.cnpg_max_connections]
+}
+
+# ── Binary data mode ──────────────────────────────────────────────────────────
+
+# The output used to be the string "filesystem" regardless of configuration,
+# which was wrong on the default path: the module always runs queue mode, and
+# n8n puts binary data in Postgres there unless told otherwise. See issue #18.
+run "binary_storage_output_reports_database_by_default" {
+  command = plan
+
+  assert {
+    condition     = output.backing_services.binary_storage == "database"
+    error_message = "With no binary data configuration the module leaves n8n at its queue-mode default, which is database; got ${output.backing_services.binary_storage}."
+  }
+}
+
+# Database mode renders nothing. Emitting N8N_DEFAULT_BINARY_DATA_MODE=database
+# would only restate n8n's own default while claiming a name a caller may be
+# setting through n8n_extra_env.
+run "binary_data_database_mode_emits_no_env" {
+  command = plan
+
+  assert {
+    condition     = length([for e in local.k8s_values_config.config.extraEnv : e if e.name == "N8N_DEFAULT_BINARY_DATA_MODE"]) == 0
+    error_message = "Database mode must not render N8N_DEFAULT_BINARY_DATA_MODE."
+  }
+}
+
+# Filesystem mode renders the mode and the path together. The path is the half
+# people miss: without it n8n writes under its own default rather than the
+# volume that was mounted, which loses data exactly as quietly as no mount.
+run "binary_data_filesystem_mode_emits_mode_and_path" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/n8n-shared"
+
+    n8n_extra_volumes = [{
+      name                    = "shared"
+      persistent_volume_claim = { claim_name = "n8n-shared" }
+    }]
+
+    n8n_extra_volume_mounts = [{
+      name       = "shared"
+      mount_path = "/opt/n8n-shared"
+      read_only  = false
+    }]
+  }
+
+  assert {
+    condition     = contains([for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_DEFAULT_BINARY_DATA_MODE"], "filesystem")
+    error_message = "Filesystem mode must render N8N_DEFAULT_BINARY_DATA_MODE=filesystem."
+  }
+
+  assert {
+    condition     = contains([for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_STORAGE_PATH"], "/opt/n8n-shared/storage")
+    error_message = "Filesystem mode must render N8N_STORAGE_PATH under n8n_binary_data_path."
+  }
+
+  assert {
+    condition     = output.backing_services.binary_storage == "filesystem"
+    error_message = "The output must follow the configured mode; got ${output.backing_services.binary_storage}."
+  }
+}
+
+# The whole point of the guard. Filesystem mode with no shared mount gives each
+# pod its own empty directory, and in queue mode the pod that writes a payload
+# is rarely the pod that reads it back. Nothing errors at runtime, which is why
+# this has to error at plan.
+run "binary_data_filesystem_mode_requires_a_mount" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+  }
+
+  expect_failures = [var.n8n_binary_data_mode]
+}
+
+# A read-only mount is not a place to write payloads to, and the pods would
+# fail at the first binary rather than at plan.
+run "binary_data_filesystem_mode_rejects_a_read_only_mount" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/n8n-shared"
+
+    n8n_extra_volumes = [{
+      name                    = "shared"
+      persistent_volume_claim = { claim_name = "n8n-shared" }
+    }]
+
+    n8n_extra_volume_mounts = [{
+      name       = "shared"
+      mount_path = "/opt/n8n-shared"
+      read_only  = true
+    }]
+  }
+
+  expect_failures = [var.n8n_binary_data_mode]
+}
+
+# The mode is reachable one way, and it is the checked one. Left open through
+# n8n_extra_env, filesystem mode skipped the shared-mount validation, skipped
+# N8N_STORAGE_PATH, and still reported "filesystem" while the pods wrote to
+# per-pod local disk: the guard two runs up, bypassed by the other door.
+run "binary_data_mode_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# Same for the path, and for the secret-backed input, which shares the reserved
+# list. A mode supplied from a Secret is invisible at plan, so the output could
+# not have followed it even if the guard did.
+run "binary_data_path_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "binary_data_mode_is_rejected_from_extra_env_from_secret" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [{
+      name        = "N8N_DEFAULT_BINARY_DATA_MODE"
+      secret_name = "whatever"
+      secret_key  = "mode"
+    }]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
+}
+
+# The third door onto the same setting. Helm coalesces maps but replaces lists,
+# so an overlay that sets config.extraEnv substitutes the module's whole
+# environment list, and backing_services.binary_storage would keep reporting
+# what the module rendered while the pods ran something else entirely.
+run "extra_helm_values_may_not_replace_the_env_list" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      config:
+        extraEnv:
+          - name: N8N_DEFAULT_BINARY_DATA_MODE
+            value: filesystem
+    YAML
+  }
+
+  expect_failures = [var.n8n_extra_helm_values]
+}
+
+# Everything else the overlay reaches is still the escape hatch it is meant to
+# be. A guard that rejected the whole input would be a different feature.
+#
+# No assert, deliberately. The guard is a variable validation, so an overlay it
+# over-reached on would fail the plan and fail this run: the run completing is
+# the assertion, and anything written in an assert block here would be
+# restating the inputs above rather than checking an outcome.
+run "extra_helm_values_still_reaches_everything_else" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      config:
+        encryptionKeySecret: my-own-secret
+      podAnnotations:
+        example.com/owner: platform
+    YAML
+  }
 }

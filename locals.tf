@@ -240,17 +240,22 @@ locals {
     # DB_*, QUEUE_* and N8N_RUNNERS_* are covered by n8n_managed_env_prefixes.
     "EXECUTIONS_MODE",
     "OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS",
-    # N8N_DEFAULT_BINARY_DATA_MODE and N8N_AVAILABLE_BINARY_DATA_MODES were
-    # listed here as chart-rendered. They are not, on any path this module can
-    # reach: chart 1.10.0 emits them only from the "n8n.s3Env" helper
-    # (_environment-helpers.tpl:7), which is gated on .Values.s3.enabled, and
-    # k8s_values_s3_off pins that false with no input to turn it on.
+    # Reserved because the module sets them from n8n_binary_data_mode and
+    # n8n_binary_data_path, not because the chart renders them: chart 1.10.0
+    # emits them only from the "n8n.s3Env" helper (_environment-helpers.tpl:7),
+    # gated on .Values.s3.enabled, which k8s_values_s3_off pins false with no
+    # input to turn it on.
     #
-    # Reserving them blocked the one setting a caller needs. n8n defaults binary
-    # data to "filesystem" in regular mode but to "database" in scaling mode,
-    # and this module always runs queue mode, so attaching a shared volume does
-    # nothing until N8N_DEFAULT_BINARY_DATA_MODE=filesystem is set, which the
-    # guard rejected. See docs/operations.md → "Shared storage across the pods".
+    # They were unreserved for a stretch, because before those inputs existed
+    # n8n_extra_env was the only way to reach the setting a caller needs. That
+    # left the mode reachable by two doors and only one of them checked:
+    # filesystem mode set here skipped the shared-mount validation, skipped
+    # N8N_STORAGE_PATH entirely, and still let the module report "filesystem",
+    # which is per-pod local disk in a queue-mode deployment and loses payloads
+    # without an error anywhere. One door now, and it is the checked one. See
+    # docs/operations.md → "Shared storage across the pods".
+    "N8N_DEFAULT_BINARY_DATA_MODE",
+    "N8N_STORAGE_PATH",
     "N8N_HOST",
     "N8N_PORT",
     "N8N_PROTOCOL",
@@ -755,6 +760,18 @@ locals {
       extraEnv = concat(
         var.create_ingress ? [
           { name = "N8N_PROXY_HOPS", value = "1" },
+        ] : [],
+
+        # Binary data. Emitted only in filesystem mode: "database" is what n8n
+        # already does in queue mode, so rendering it would add a variable that
+        # changes nothing and reserve a name a caller may be setting themselves.
+        # The path goes with it every time. Setting the mode alone leaves n8n
+        # writing under its own default rather than the volume that was
+        # mounted, which is the same silent loss the input's validation exists
+        # to prevent, arrived at from the other direction.
+        var.n8n_binary_data_mode == "filesystem" ? [
+          { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
+          { name = "N8N_STORAGE_PATH", value = "${var.n8n_binary_data_path}/storage" },
         ] : [],
 
         # Split ingress only. See k8s_split_ingress_urls above for why the

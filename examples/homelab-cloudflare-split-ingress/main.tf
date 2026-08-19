@@ -79,16 +79,23 @@ module "n8n" {
       # edge in front of it. See var.proxy_hops.
       { name = "N8N_PROXY_HOPS", value = tostring(var.proxy_hops) },
     ],
-    # Both lines are required, and the mode is the one people miss. n8n defaults
-    # binary data to filesystem in regular mode but to database in scaling mode,
-    # and this module always runs queue mode. Mount the volume without setting
-    # the mode and every payload still goes to Postgres: the mount is there,
-    # empty, and nothing reports a problem.
-    var.shared_storage_class != null ? [
-      { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-      { name = "N8N_STORAGE_PATH", value = "${var.shared_mount_path}/storage" },
-    ] : [],
   )
+
+  # The mount alone does nothing. n8n defaults binary data to filesystem in
+  # regular mode but to database in scaling mode, and this module always runs
+  # queue mode, so without the mode below every payload still goes to Postgres
+  # while the volume sits there empty and nothing reports a problem.
+  #
+  # These two used to be hand-written N8N_DEFAULT_BINARY_DATA_MODE and
+  # N8N_STORAGE_PATH entries in the concat above. The module owns them now, and
+  # it refuses filesystem mode unless a writable mount covers the path, which is
+  # the check that turns the silent version of this mistake into a plan error.
+  n8n_binary_data_mode = var.shared_storage_class != null ? "filesystem" : "database"
+  # Only meaningful in filesystem mode, but validated either way, and this
+  # example's own shared_mount_path check is laxer than the module's. Fall back
+  # to the module default when shared storage is off, so a path that is only
+  # ever unused cannot fail the plan.
+  n8n_binary_data_path = var.shared_storage_class != null ? var.shared_mount_path : "/opt/n8n-shared"
 
   # No depends_on here on purpose. n8n_extra_volumes already references the
   # claim, which is the ordering edge: Terraform cannot create the release until

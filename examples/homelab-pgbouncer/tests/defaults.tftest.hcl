@@ -80,12 +80,35 @@ run "redis_host_names_valkey_service" {
   }
 }
 
-run "binary_storage_is_filesystem_on_k8s_backend" {
+# This run used to assert "filesystem" unconditionally, which passed against an
+# output that was the constant "filesystem" and wrong on this very path: with no
+# shared_storage_class there is no volume for the three pod types to share, so
+# the module leaves n8n at its queue-mode default and payloads go to Postgres.
+# The test encoded the bug rather than catching it. See issue #18.
+run "binary_storage_is_database_without_a_shared_volume" {
   command = plan
 
   assert {
+    condition     = module.n8n.backing_services.binary_storage == "database"
+    error_message = "Without shared_storage_class there is no volume all three pod types can see, so binary data stays in Postgres and the output must say so. Got: ${module.n8n.backing_services.binary_storage}"
+  }
+}
+
+# And follows the shared volume when there is one. This covers the wiring from
+# shared_storage_class through n8n_binary_data_mode to the output, and only
+# that: the rendered environment is not assertable here, because helm_release
+# values resolve to (known after apply) under the mocked providers. The module's
+# own suite asserts what reaches config.extraEnv.
+run "binary_storage_is_filesystem_with_a_shared_volume" {
+  command = plan
+
+  variables {
+    shared_storage_class = "nfs-csi"
+  }
+
+  assert {
     condition     = module.n8n.backing_services.binary_storage == "filesystem"
-    error_message = "backing_services.binary_storage must be \"filesystem\": the module provisions no object storage. Got: ${module.n8n.backing_services.binary_storage}"
+    error_message = "With a shared RWX class the example moves binary data onto the volume. Got: ${module.n8n.backing_services.binary_storage}"
   }
 }
 

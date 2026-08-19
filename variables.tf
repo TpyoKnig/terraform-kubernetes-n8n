@@ -172,6 +172,26 @@ variable "n8n_extra_helm_values" {
   type        = string
   default     = ""
   nullable    = false
+
+  validation {
+    # The description above has warned about this since the input existed, and
+    # a warning in prose is not a check. Helm coalesces maps but replaces lists,
+    # so an overlay that sets config.extraEnv substitutes the module's own list
+    # rather than adding to it: N8N_ENCRYPTION_KEY, every connection variable,
+    # the binary data mode, all gone, with the release still installing and the
+    # pods coming up misconfigured. It also silently falsifies
+    # backing_services.binary_storage, which reports what the module rendered on
+    # the assumption that what the module rendered is what runs.
+    #
+    # Only this one key is refused. Everything else the overlay can reach is
+    # still the escape hatch it is meant to be, and n8n_extra_env and
+    # n8n_extra_env_from_secret both append to the list instead of replacing it.
+    condition = try(
+      !contains(keys(try(yamldecode(var.n8n_extra_helm_values).config, {})), "extraEnv"),
+      true
+    )
+    error_message = "n8n_extra_helm_values must not set config.extraEnv. Helm replaces lists rather than merging them, so this substitutes the module's own environment list: N8N_ENCRYPTION_KEY, the database and queue connection variables and the binary data mode all disappear, the release installs anyway, and the pods come up misconfigured with nothing reporting it. Use n8n_extra_env for plain values and n8n_extra_env_from_secret for secretKeyRef entries; both append."
+  }
 }
 
 # Cluster-wide operators (an ingress controller, cert-manager, CloudNativePG,
@@ -1406,6 +1426,55 @@ variable "n8n_custom_extensions_path" {
   }
 }
 
+variable "n8n_binary_data_mode" {
+  description = "Where n8n writes the binary payloads a workflow produces: \"database\" stores them as base64 inside the execution row, \"filesystem\" writes them to disk under n8n_binary_data_path. Defaults to \"database\", which is what n8n itself does in queue mode and therefore what this module has always produced; changing it is opt-in. The default is safe rather than good. Every binary a workflow touches is base64 in a Postgres row, so a 10MB attachment is roughly 13MB of WAL, replication traffic and backup, and execution pruning becomes the only thing reclaiming it. \"filesystem\" avoids that, and in queue mode it needs a volume all three pod types share: main, worker and webhook-processor each handle different stages of the same execution, and a payload written to one pod's local disk does not exist for the next. The module refuses filesystem without a mount covering the path, because that combination reports success and loses data."
+  type        = string
+  default     = "database"
+  nullable    = false
+
+  validation {
+    condition     = contains(["database", "filesystem"], var.n8n_binary_data_mode)
+    error_message = "n8n_binary_data_mode must be one of: database, filesystem. n8n also supports \"s3\", which this module does not configure: it pins s3.enabled false with no input to turn it on, so selecting it here would name a backend that was never set up."
+  }
+
+  validation {
+    # The failure this prevents is silent. Filesystem mode with no shared
+    # volume gives every pod its own empty directory, so a worker writes a
+    # payload the main pod cannot read and the execution reports success with
+    # a broken reference. Nothing errors, nothing logs, and the loss surfaces
+    # whenever someone opens an old execution.
+    condition = var.n8n_binary_data_mode != "filesystem" || anytrue([
+      for mount in var.n8n_extra_volume_mounts :
+      mount.read_only == false && (
+        var.n8n_binary_data_path == mount.mount_path ||
+        startswith(var.n8n_binary_data_path, "${mount.mount_path}/")
+      )
+    ])
+    error_message = "n8n_binary_data_mode = \"filesystem\" needs a writable mount in n8n_extra_volume_mounts covering n8n_binary_data_path, backed by an RWX volume in n8n_extra_volumes. This module always runs queue mode, where main, worker and webhook-processor handle different stages of one execution, so a payload on one pod's local disk is invisible to the next. Without the shared mount the execution still reports success and the data is gone. Add the volume and the mount, or leave the mode at \"database\"."
+  }
+}
+
+variable "n8n_binary_data_path" {
+  description = "Directory n8n writes binary payloads to when n8n_binary_data_mode is \"filesystem\", rendered as N8N_STORAGE_PATH with n8n appending its own storage/ subdirectory. Ignored in database mode. Keep it outside /home/node/.n8n: the chart already mounts its own data volume there on the main pod, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not receive n8n_extra_volume_mounts, so this path exists in the n8n container only."
+  type        = string
+  default     = "/opt/n8n-shared"
+  nullable    = false
+
+  validation {
+    # Written with strcontains and split rather than one regex: an HCL string
+    # is not a raw literal, so the backslashes a path regex needs are an
+    # escape-sequence trap for the next person to touch this.
+    condition = alltrue([
+      startswith(var.n8n_binary_data_path, "/"),
+      !can(regex("[[:space:]]", var.n8n_binary_data_path)),
+      !strcontains(var.n8n_binary_data_path, "//"),
+      !contains(split("/", var.n8n_binary_data_path), "."),
+      !contains(split("/", var.n8n_binary_data_path), ".."),
+    ])
+    error_message = "n8n_binary_data_path must be an absolute path with no whitespace, no empty segments and no . or .. components."
+  }
+}
+
 variable "n8n_extra_volumes" {
   description = "Volumes to add to the main, worker and webhook-processor pods, mapped to the chart's extraVolumes. Each entry needs a name and exactly one source: config_map, secret, or persistent_volume_claim. Those three are the sources that can carry files into a pod on their own, which is the point of the input: paired with n8n_extra_volume_mounts and n8n_custom_extensions_path, they load community nodes from a ConfigMap or a shared ReadWriteMany claim instead of from a custom image, which is the alternative to rebuilding an image for every package change. Other uses fit too, a CA bundle from a secret being the common one. default_mode is an octal string (\"0644\"), not a number, because Terraform reads a leading zero as decimal and would silently apply the wrong permissions. Volume sources beyond those three (csi, nfs, projected) are not exposed. Names must be unique, and \"data\" and \"task-runner-config\" are reserved by the chart."
   type = list(object({
@@ -1795,7 +1864,7 @@ variable "n8n_extra_env" {
         anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
       )
     ])
-    error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs (e.g. n8n_log_level, n8n_metrics_enabled) instead."
+    error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
   }
 }
 
@@ -1861,7 +1930,7 @@ variable "n8n_extra_env_from_secret" {
         anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
       )
     ])
-    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs (e.g. n8n_log_level, n8n_metrics_enabled) instead."
+    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
   }
 }
 
