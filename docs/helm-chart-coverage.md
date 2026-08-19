@@ -22,29 +22,36 @@ about four of them.
 | --- | --- | --- | --- |
 | Chart version | `n8n_chart_version` | `1.10.0` | Yes, and it must be an exact version. The Helm provider resolves it literally, not as a constraint. |
 | Chart repository | `n8n_chart_repository` | `oci://ghcr.io/n8n-io/n8n-helm-chart` | Yes. Repoint it at a private mirror if the cluster has no egress to ghcr.io. |
-| n8n application version | `n8n_image_tag` | `null` | **No.** Null means the chart's own default, and chart 1.10.0 ships `appVersion: stable`, a floating tag that resolves to whatever is latest when each pod starts. |
+| n8n application version | `n8n_image_tag` | `"2.36.2"` | Yes. Bumping it is a module change with a CHANGELOG entry, on the same policy as the two rows above. Set it to null to hand the choice back to the chart, which ships `appVersion: stable`. |
 
-That last row is the one to read twice. **Out of the box this module pins the
-chart but not the application.** Two pods rescheduled a month apart can come up
-on different n8n versions, and an unplanned reschedule can carry you across a
-major boundary such as the n8n 2.0 breaking changes.
-
-Set `n8n_image_tag` to a concrete version for any deployment you care about.
-The module has been validated against **n8n 2.35.0**:
+**Out of the box this module pins the chart and the application**, so the
+deployment is reproducible and an upgrade is a one-line diff your CI can raise,
+review and roll back, which is the whole point. The module is validated against
+the version it defaults to:
 
 ```hcl
 n8n_chart_version = "1.10.0"    # the chart
-n8n_image_tag     = "2.35.0"    # the application
+n8n_image_tag     = "2.36.2"    # the application, and the module's default
 ```
 
-With both set, the deployment is reproducible and an upgrade is a one-line diff
-your CI can raise, review and roll back, which is the whole point.
+Pin a different version whenever you want to move on your own schedule;
+`docs/upgrading-n8n.md` covers the order that upgrade has to follow.
+
+The one row to read twice is what `null` costs, because it is still supported
+and was the default before 0.3.0. `stable` resolves to whatever is latest at
+the moment a node *pulls* the image, and the chart hardcodes an `IfNotPresent`
+pull policy, so a node holding a cached layer keeps serving whatever it pulled
+whenever that was. Two pods rescheduled a month apart can come up on different
+n8n versions, and an unplanned reschedule onto a node with no cached layer can
+carry you across a major boundary such as the n8n 2.0 breaking changes, run the
+one-way startup migrations, and leave the rest of the deployment querying the
+new schema on the old code. None of that appears in a plan.
 
 ## Coverage by chart section
 
 | Chart key(s) | Module coverage |
 | --- | --- |
-| `image.tag` | Exposed as `n8n_image_tag`. Omitted when null, so the chart default applies. |
+| `image.tag` | Exposed as `n8n_image_tag`, which defaults to a pinned version. Omitted when explicitly set to null, so the chart default applies. |
 | `image.pullPolicy` | **Hardcoded** `IfNotPresent`. Not exposed. |
 | `image.repository` | Exposed as `n8n_image_repository`. Omitted when null, so the chart's `docker.n8n.io/n8nio/n8n` applies. `n8n_image_pull_secrets` covers a private registry. |
 | `queueMode.*` | Hardcoded `enabled = true`. Queue mode is the module's premise, not an option. Worker count and concurrency are exposed as `n8n_worker_*`. |
@@ -97,8 +104,8 @@ three inputs that work together:
 
 ```hcl
 n8n_image_repository       = "ghcr.io/you/n8n-with-nodes"
-n8n_image_tag              = "2.35.0-mynodes"
-n8n_task_runner_image_tag  = "2.35.0"            # the n8n version underneath
+n8n_image_tag              = "2.36.2-mynodes"
+n8n_task_runner_image_tag  = "2.36.2"            # the n8n version underneath
 n8n_custom_extensions_path = "/opt/n8n-nodes"    # where n8n scans, N8N_CUSTOM_EXTENSIONS
 ```
 
@@ -107,7 +114,7 @@ you find them in a CrashLoopBackOff. A custom repository with no explicit tag is
 rejected, because a custom repository almost never publishes one called
 `stable`. A custom image with task runners on and no runner tag is rejected,
 because the chart would otherwise resolve the runner tag from the application
-tag, and `n8nio/runners` has never published `2.35.0-mynodes`. A
+tag, and `n8nio/runners` has never published `2.36.2-mynodes`. A
 `n8n_custom_extensions_path` that no volume mount or custom image provides is
 rejected too.
 

@@ -1903,6 +1903,68 @@ run "image_keys_stay_unset_when_the_caller_names_nothing" {
   }
 }
 
+# The tag is the one image key the module does NOT leave to the chart. The
+# chart's default is the floating `stable`, resolved per node at pull time
+# under IfNotPresent, so leaving it unset lets a rescheduled pod cross a
+# version boundary and run n8n's one-way startup migrations with no plan, no
+# apply and no operator in the loop.
+run "the_image_tag_is_pinned_by_default" {
+  command = plan
+
+  # A bare version, for two reasons at once: the chart's own fallback is
+  # `stable`, which resolves per node at pull time; and whenever
+  # n8n_task_runner_image_tag is null (its default) the chart derives the
+  # runner sidecar's tag from this one, so a tag n8nio/runners never
+  # published fails the pull on every main and worker pod.
+  assert {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.n8n_image_tag))
+    error_message = "n8n_image_tag must default to a concrete, bare n8n version: null or a floating tag lets the chart's `stable` resolve per node at pull time, and a non-version tag makes the derived n8nio/runners sidecar tag unpullable."
+  }
+
+  assert {
+    condition     = local.k8s_values_image.image.tag == var.n8n_image_tag
+    error_message = "image.tag must carry n8n_image_tag into the chart, or the pinned default is accepted and then discarded while the pods run `stable`."
+  }
+}
+
+# Handing the tag back to the chart stays supported, and has to keep rendering
+# no tag key at all rather than an empty string.
+run "a_null_image_tag_hands_the_choice_back_to_the_chart" {
+  command = plan
+
+  variables {
+    n8n_image_tag = null
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_image.image), "tag")
+    error_message = "image.tag must be omitted when n8n_image_tag is null, so the chart's own default applies rather than an empty tag reaching the pod spec."
+  }
+}
+
+# A mirror of the stock image is a custom repository with the module's own
+# pinned tag, and the runner fallback resolves correctly for it. The check
+# block must stay silent there: a warning that fires on the module's own
+# default configuration is one operators learn to ignore.
+run "a_mirrored_repository_on_the_default_tag_needs_no_runner_tag" {
+  command = plan
+
+  variables {
+    n8n_image_repository     = "registry.internal.example.com/n8nio/n8n"
+    n8n_task_runners_enabled = true
+  }
+
+  assert {
+    condition     = local.k8s_values_image.image.repository == "registry.internal.example.com/n8nio/n8n"
+    error_message = "A mirrored repository must reach the chart alongside the module's pinned tag."
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_task_runners.taskRunners), "image")
+    error_message = "taskRunners.image must stay unset on a mirror using the module's pinned version tag; the chart's fallback to the application tag is correct there."
+  }
+}
+
 run "custom_node_loading_reaches_the_pods" {
   command = plan
 
