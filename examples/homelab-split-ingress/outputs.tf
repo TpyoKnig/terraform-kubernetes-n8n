@@ -89,16 +89,19 @@ output "kubectl_config_command" {
   # var.kubeconfig_path is validated, but abspath prepends a directory nobody
   # validated. A repository checked out under a path containing $, a backtick
   # or a double quote would put it into a string smoke-test.sh evals, which is
-  # the same escape the variable's own validation exists to prevent. Only
-  # reachable when a relative path forced abspath to run, so the check is
-  # scoped to that: absolute and ~/ paths never touch path.root.
+  # the same escape the variable's own validation exists to prevent.
+  #
+  # Checked on the resolved value rather than on path.root, because a relative
+  # path can climb out of an unsafe directory into a safe one and there is no
+  # reason to reject that. Only reachable when a relative path forced abspath
+  # to run: absolute and ~/ paths are never resolved against anything.
   #
   # Plan-time rather than silent, which is the whole point. Not covered by a
   # test, because the failure depends on where the repository lives and a test
   # cannot move it.
   precondition {
-    condition     = local.kubeconfig_is_absolute || startswith(var.kubeconfig_path, "~/") || !can(regex("[\"`$]", abspath(path.root)))
-    error_message = "kubeconfig_path is relative, so it resolves against ${abspath(path.root)}, and that path contains a double quote, a backtick or a dollar sign. tests/scripts/smoke-test.sh evals this command, so those characters would escape its quoting. Pass an absolute kubeconfig_path, or move the repository somewhere without them."
+    condition     = local.kubeconfig_is_absolute || startswith(var.kubeconfig_path, "~/") || !can(regex("[\"`$]", abspath(var.kubeconfig_path)))
+    error_message = "kubeconfig_path is relative, so it resolves to ${abspath(var.kubeconfig_path)}, which contains a double quote, a backtick or a dollar sign. tests/scripts/smoke-test.sh evals this command, so those characters would escape its quoting. Pass an absolute kubeconfig_path, or move the repository somewhere without them."
   }
 
   # Smoke test evals this in its own shell, so exporting KUBECONFIG points every
