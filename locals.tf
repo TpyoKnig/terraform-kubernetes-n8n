@@ -938,8 +938,12 @@ locals {
         # environment rather than the chart's redis.tls key: both render the
         # same QUEUE_BULL_REDIS_TLS on every pod (the chart's via its
         # ConfigMap), and staying in config.extraEnv keeps this list the one
-        # place the module's own env decisions live. The name is reserved via
-        # the QUEUE_ prefix either way, so the two routes cannot collide.
+        # place the module's own env decisions live. The QUEUE_ prefix
+        # reservation blocks the name from the two env inputs; an
+        # n8n_extra_helm_values overlay setting redis.tls alongside
+        # redis_transit_encryption_enabled is NOT blocked, and renders the
+        # name twice - the duplicate-env failure that wedges the next helm
+        # upgrade. Use the module input, not the overlay, for this key.
         local.valkey_enabled || !local.redis_tls_active ? [] : [
           { name = "QUEUE_BULL_REDIS_TLS", value = "true" },
         ],
