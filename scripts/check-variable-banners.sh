@@ -35,7 +35,7 @@ cd "$REPO_ROOT"
 FILES=(variables.tf outputs.tf)
 # Keep in lockstep with the banner table in AGENTS.md ("Clear documentation" >
 # variable/output banners).
-VARIABLE_BANNERS=("Common" "Core inputs" "Cluster" "Ingress" "Chart repositories" "Chart versions" "n8n resource requests and limits" "Execution settings" "Graceful shutdown" "Task runners" "PostgreSQL" "Redis / queue" "HPA: main pods" "HPA: webhook processor pods" "Observability" "Community packages" "Sidecars" "External Secrets" "KEDA: worker pods")
+VARIABLE_BANNERS=("Common" "Core inputs" "Cluster" "Ingress" "Chart repositories" "Chart versions" "n8n resource requests and limits" "Execution settings" "Graceful shutdown" "Task runners" "PostgreSQL" "Redis / queue" "Main pod availability" "HPA: webhook processor pods" "Observability" "Community packages" "Sidecars" "External Secrets" "KEDA: worker pods")
 OUTPUT_BANNERS=("Routing" "Secrets" "Backing services")
 # Alternation, not a bracket expression: bash [[ =~ ]] does not reliably match
 # multibyte characters inside [...], so [─: -] silently matches nothing on some

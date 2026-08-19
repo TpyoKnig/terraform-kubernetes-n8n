@@ -7,6 +7,27 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `n8n_main_pdb_enabled` governs whether the chart renders its
+  PodDisruptionBudget over the main pod, and **defaults to false, which
+  overrides the chart's own default of true.**
+
+  The chart's PDB is `minAvailable: 1` and covers the main Deployment only,
+  which this module pins to `replicaCount = 1`. That combination is allowed
+  disruptions of zero for the life of the deployment: `kubectl drain` on
+  whichever node holds the main pod never completes, and a Talos node upgrade
+  of that node stalls in drain rather than failing, so it reads as a hung
+  upgrade rather than as a policy decision anyone made. Nothing in the module
+  rendered this object; it arrived as a chart default and had never been
+  overridden.
+
+  A PDB exists to keep N replicas up while a node is taken away. With one
+  replica there is no N to keep, so it cannot protect anything and can only
+  refuse. The main restarting briefly during a drain is the accepted cost of
+  single-main Community mode. A `check` block warns at plan time for anyone
+  who sets it back to true.
+
 ### Changed
 
 - `n8n_image_tag` now defaults to `"2.36.2"` instead of `null`. **This changes

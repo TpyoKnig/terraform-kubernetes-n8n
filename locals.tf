@@ -624,6 +624,38 @@ locals {
     }
   }
 
+  # ── Disruption budget for the single main pod ──────────────────────────────
+  # The chart defaults pdb.enabled to true with minAvailable = 1, and renders
+  # the object over the main Deployment only (templates/pdb.yaml selects
+  # component: main). Against this module's replicaCount = 1 that is
+  # allowedDisruptions = 0 forever: no voluntary eviction of the main pod ever
+  # succeeds, so draining the node it landed on blocks indefinitely and a Talos
+  # node upgrade stalls behind it.
+  #
+  # A PDB is how you say "keep N of these up while I take a node away". With
+  # one replica there is no N to keep, so the object cannot protect anything
+  # and can only refuse. Off by default, and the check block in n8n.tf says so
+  # at plan time for anyone who turns it back on.
+  # Whether the escape hatch turns the PDB back on behind the typed input's
+  # back. n8n_extra_helm_values is a YAML string merged after
+  # local.k8s_values_final, and Helm gives the later values file precedence,
+  # so this is the second way to end up with the object the check warns about.
+  # try() covers the empty default, a value that is not a mapping, and a
+  # mapping with no pdb key, all of which mean "not enabled here".
+  n8n_pdb_enabled_via_extra_values = try(yamldecode(var.n8n_extra_helm_values).pdb.enabled, false) == true
+
+  # Whether a PodDisruptionBudget ends up in the release at all, by either
+  # route. Named because the check block asks exactly this question, and a
+  # check reading `!a && !b` makes the reader reconstruct what the two halves
+  # add up to.
+  n8n_main_pdb_rendered = var.n8n_main_pdb_enabled || local.n8n_pdb_enabled_via_extra_values
+
+  k8s_values_pdb = {
+    pdb = {
+      enabled = var.n8n_main_pdb_enabled
+    }
+  }
+
   # The chart's own extraVolumes/extraVolumeMounts. Translated in the locals
   # above from the module's snake_case inputs, and then, until now, never
   # rendered into the values tree at all.
@@ -1253,6 +1285,7 @@ locals {
     local.k8s_values_webhook,
     local.k8s_values_s3_off,
     local.k8s_values_hpa,
+    local.k8s_values_pdb,
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,

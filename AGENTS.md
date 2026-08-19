@@ -362,7 +362,8 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   | `Task runners` | Task runner sizing, lifecycle and the import allowlists |
   | `PostgreSQL` | `postgres_backend`, the CloudNativePG sizing inputs, and the external-database references |
   | `Redis / queue` | `redis_backend`, the Valkey sizing inputs, and the external-Redis references |
-  | `HPA: main pods` / `HPA: webhook processor pods` | CPU-based autoscaling |
+  | `Main pod availability` | Disruption budget for the single main pod |
+  | `HPA: webhook processor pods` | CPU-based autoscaling |
   | `Observability` | Metrics/telemetry toggles |
   | `Community packages` | Custom-node loading, OTEL export, the `n8n_extra_env` escape hatch |
   | `Sidecars` | `extraContainers` and `extraInitContainers` on the n8n pods |
