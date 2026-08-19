@@ -158,11 +158,15 @@ The module refuses `n8n_binary_data_mode = "filesystem"` unless a writable
 check that turns the silent version of this mistake into a plan error. Getting
 it wrong used to cost an execution's payloads and say nothing.
 
-These were two hand-written `n8n_extra_env` entries before the inputs existed,
-and that still works: `config.extraEnv` is appended last, Kubernetes takes the
-last value, and a caller's `N8N_DEFAULT_BINARY_DATA_MODE` wins over the
-module's. `backing_services.binary_storage` reports the effective mode either
-way. Prefer the inputs, because only they get the mount check.
+These were two hand-written `n8n_extra_env` entries before the inputs existed.
+Both names are reserved now, against `n8n_extra_env` and
+`n8n_extra_env_from_secret` alike, and a plan that sets either is refused with a
+message naming the input to use instead. Leaving them open meant the mode had
+two doors and only one was checked: filesystem mode set through `extraEnv`
+skipped the shared-mount validation, skipped `N8N_STORAGE_PATH`, and still had
+`backing_services.binary_storage` report `filesystem` while the pods wrote to
+per-pod local disk. Migrating is two lines, and the inputs are what the output
+now reads.
 
 The module renders `N8N_STORAGE_PATH`, not `N8N_BINARY_DATA_STORAGE_PATH`: the
 latter still works but n8n's own deprecation list says "Use N8N_STORAGE_PATH
@@ -323,15 +327,25 @@ combination is narrow.
 
 ## Binary data
 
-The module provisions no object storage, so binary and execution data stay in
-**filesystem mode**, on whatever the cluster's `StorageClass` provides. The
-reason is the same one that keeps the operators out: this will not own a
-stateful data service on a cluster it does not own, and an S3 bucket is a
-lifecycle that outlives any one n8n deployment.
+The module provisions no object storage. `n8n_binary_data_mode` decides where
+binary payloads go, and it defaults to **database**, which is what n8n does in
+the queue mode this module always runs. The reason there is no bucket is the
+same one that keeps the operators out: this will not own a stateful data
+service on a cluster it does not own, and an S3 bucket is a lifecycle that
+outlives any one n8n deployment.
 
-Filesystem mode is per-pod storage. With more than one main replica, a binary
-file written by one pod is not visible to another, so either back it with a
-`ReadWriteMany` volume or move to a bucket.
+Database mode is safe rather than good. Every binary a workflow touches is
+base64 inside an execution row, so a 10MB attachment is roughly 13MB of WAL,
+replication traffic and backup, and execution pruning becomes the only thing
+reclaiming it.
+
+`n8n_binary_data_mode = "filesystem"` moves them onto disk, and in queue mode
+that disk has to be shared: main, worker and webhook-processor each handle
+different stages of one execution, so a payload written to one pod's local
+volume does not exist for the next. The module refuses filesystem mode without
+a writable `n8n_extra_volume_mounts` entry covering `n8n_binary_data_path`,
+because that combination reports success and loses data. See "Shared storage
+across the pods" above for the worked configuration.
 
 To use a bucket, pass the chart's own `s3` tree through
 `n8n_extra_helm_values`. It is raw YAML, and Helm applies it after the

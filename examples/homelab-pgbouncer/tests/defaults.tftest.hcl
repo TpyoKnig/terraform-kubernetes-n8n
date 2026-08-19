@@ -94,9 +94,11 @@ run "binary_storage_is_database_without_a_shared_volume" {
   }
 }
 
-# And follows the shared volume when there is one. The example wires
-# n8n_binary_data_mode from shared_storage_class, so this covers the input, the
-# rendered env and the output in one run.
+# And follows the shared volume when there is one. This covers the wiring from
+# shared_storage_class through n8n_binary_data_mode to the output, and only
+# that: the rendered environment is not assertable here, because helm_release
+# values resolve to (known after apply) under the mocked providers. The module's
+# own suite asserts what reaches config.extraEnv.
 run "binary_storage_is_filesystem_with_a_shared_volume" {
   command = plan
 

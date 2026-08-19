@@ -62,9 +62,27 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   it back, so the execution reports success against a reference to a file that
   is not there. Nothing errors and nothing logs.
 
-  Setting `N8N_DEFAULT_BINARY_DATA_MODE` through `n8n_extra_env` still works and
-  still wins, because it was the only way to reach this before these inputs
-  existed. It does not get the mount check.
+### Changed
+
+- **Breaking.** `N8N_DEFAULT_BINARY_DATA_MODE` and `N8N_STORAGE_PATH` are
+  reserved names again, rejected from `n8n_extra_env` and
+  `n8n_extra_env_from_secret` with a message naming `n8n_binary_data_mode` and
+  `n8n_binary_data_path` instead.
+
+  **Upgrade note.** If you set either name through `n8n_extra_env`, replace the
+  two entries with the two inputs. `n8n_extra_env = [{name =
+  "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem"}, {name =
+  "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage"}]` becomes
+  `n8n_binary_data_mode = "filesystem"` and `n8n_binary_data_path =
+  "/opt/n8n-shared"`, with the module appending `storage/` itself. Nothing about
+  the rendered environment changes, so no pod restarts on the value.
+
+  They were briefly unreserved because before these inputs there was no other
+  way to reach the setting. That left the mode with two doors and only one of
+  them checked: filesystem mode set through `extraEnv` skipped the shared-mount
+  validation, skipped `N8N_STORAGE_PATH`, and still reported `filesystem` while
+  the pods wrote to per-pod local disk, which is the silent loss the validation
+  exists to prevent.
 
 ### Fixed
 

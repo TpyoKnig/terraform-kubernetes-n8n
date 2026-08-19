@@ -1612,22 +1612,33 @@ run "disabling_tls_still_leaves_the_chart_key_unset" {
   }
 }
 
-# ── Binary-data mode is the caller's to set ───────────────────────────────────
-# These two names were reserved as chart-rendered. Chart 1.10.0 emits them only
-# from the n8n.s3Env helper, gated on s3.enabled, which this module pins false
-# with no input to turn it on, so the guard blocked a name nothing set. It
-# matters because n8n defaults binary data to "database" in scaling mode, which
-# is the only mode this module runs: without this setting a shared volume
-# mounts and stays empty.
+# ── Binary-data mode is the caller's to set, through the input ────────────────
+# These two names went reserved, then unreserved, then reserved again, and the
+# round trip is the point. The chart never renders them: 1.10.0 emits them only
+# from the n8n.s3Env helper, gated on s3.enabled, which this module pins false.
+# So the original guard blocked a name nothing set, and unreserving them was the
+# right call at the time, because n8n defaults binary data to "database" in the
+# scaling mode this module always runs and a caller needed some way to say
+# otherwise. n8n_binary_data_mode is that way now, and it comes with the
+# shared-mount check the raw env var could never have.
 
 run "a_caller_can_choose_filesystem_binary_data" {
   command = plan
 
   variables {
-    n8n_extra_env = [
-      { name = "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem" },
-      { name = "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage" },
-    ]
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/n8n-shared"
+
+    n8n_extra_volumes = [{
+      name                    = "shared"
+      persistent_volume_claim = { claim_name = "n8n-shared" }
+    }]
+
+    n8n_extra_volume_mounts = [{
+      name       = "shared"
+      mount_path = "/opt/n8n-shared"
+      read_only  = false
+    }]
   }
 
   assert {
@@ -2185,11 +2196,11 @@ run "binary_data_filesystem_mode_rejects_a_read_only_mount" {
   expect_failures = [var.n8n_binary_data_mode]
 }
 
-# n8n_extra_env keeps working, because it was the only way to reach this before
-# the input existed. config.extraEnv is appended last and Kubernetes takes the
-# last value, so the caller's entry wins, and the output has to say so rather
-# than repeat the input back.
-run "binary_storage_output_follows_an_extra_env_override" {
+# The mode is reachable one way, and it is the checked one. Left open through
+# n8n_extra_env, filesystem mode skipped the shared-mount validation, skipped
+# N8N_STORAGE_PATH, and still reported "filesystem" while the pods wrote to
+# per-pod local disk: the guard two runs up, bypassed by the other door.
+run "binary_data_mode_is_rejected_from_extra_env" {
   command = plan
 
   variables {
@@ -2198,8 +2209,34 @@ run "binary_storage_output_follows_an_extra_env_override" {
     ]
   }
 
-  assert {
-    condition     = output.backing_services.binary_storage == "filesystem"
-    error_message = "The output must report the effective mode, including a caller override through n8n_extra_env; got ${output.backing_services.binary_storage}."
+  expect_failures = [var.n8n_extra_env]
+}
+
+# Same for the path, and for the secret-backed input, which shares the reserved
+# list. A mode supplied from a Secret is invisible at plan, so the output could
+# not have followed it even if the guard did.
+run "binary_data_path_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage" },
+    ]
   }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "binary_data_mode_is_rejected_from_extra_env_from_secret" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [{
+      name        = "N8N_DEFAULT_BINARY_DATA_MODE"
+      secret_name = "whatever"
+      secret_key  = "mode"
+    }]
+  }
+
+  expect_failures = [var.n8n_extra_env_from_secret]
 }

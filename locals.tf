@@ -170,19 +170,6 @@ locals {
     )
   ]
 
-  # ── Binary data ────────────────────────────────────────────────────────────
-  # N8N_DEFAULT_BINARY_DATA_MODE is deliberately not in the reserved list below,
-  # because setting it through n8n_extra_env was the only way to reach it before
-  # n8n_binary_data_mode existed and that path still has to work. config.extraEnv
-  # is appended last and Kubernetes takes the last value, so a caller's entry
-  # still wins over the module's. The output has to report what the pods will
-  # actually do rather than what the input asked for, so it reads the override.
-  n8n_binary_data_mode_override = try(
-    [for e in var.n8n_extra_env : e.value if e.name == "N8N_DEFAULT_BINARY_DATA_MODE"][0],
-    null
-  )
-  n8n_binary_data_mode_effective = coalesce(local.n8n_binary_data_mode_override, var.n8n_binary_data_mode)
-
   # ── n8n_extra_env collision guard ──────────────────────────────────────────
   # config.extraEnv is appended LAST in every n8n container's env list (see the
   # n8n Helm chart's deployment-*.yaml templates), and Kubernetes resolves
@@ -253,17 +240,22 @@ locals {
     # DB_*, QUEUE_* and N8N_RUNNERS_* are covered by n8n_managed_env_prefixes.
     "EXECUTIONS_MODE",
     "OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS",
-    # N8N_DEFAULT_BINARY_DATA_MODE and N8N_AVAILABLE_BINARY_DATA_MODES were
-    # listed here as chart-rendered. They are not, on any path this module can
-    # reach: chart 1.10.0 emits them only from the "n8n.s3Env" helper
-    # (_environment-helpers.tpl:7), which is gated on .Values.s3.enabled, and
-    # k8s_values_s3_off pins that false with no input to turn it on.
+    # Reserved because the module sets them from n8n_binary_data_mode and
+    # n8n_binary_data_path, not because the chart renders them: chart 1.10.0
+    # emits them only from the "n8n.s3Env" helper (_environment-helpers.tpl:7),
+    # gated on .Values.s3.enabled, which k8s_values_s3_off pins false with no
+    # input to turn it on.
     #
-    # Reserving them blocked the one setting a caller needs. n8n defaults binary
-    # data to "filesystem" in regular mode but to "database" in scaling mode,
-    # and this module always runs queue mode, so attaching a shared volume does
-    # nothing until N8N_DEFAULT_BINARY_DATA_MODE=filesystem is set, which the
-    # guard rejected. See docs/operations.md → "Shared storage across the pods".
+    # They were unreserved for a stretch, because before those inputs existed
+    # n8n_extra_env was the only way to reach the setting a caller needs. That
+    # left the mode reachable by two doors and only one of them checked:
+    # filesystem mode set here skipped the shared-mount validation, skipped
+    # N8N_STORAGE_PATH entirely, and still let the module report "filesystem",
+    # which is per-pod local disk in a queue-mode deployment and loses payloads
+    # without an error anywhere. One door now, and it is the checked one. See
+    # docs/operations.md → "Shared storage across the pods".
+    "N8N_DEFAULT_BINARY_DATA_MODE",
+    "N8N_STORAGE_PATH",
     "N8N_HOST",
     "N8N_PORT",
     "N8N_PROTOCOL",

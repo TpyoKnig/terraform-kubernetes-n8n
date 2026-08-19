@@ -130,7 +130,12 @@ module "n8n" {
   #
   #   kubectl create secret generic ai-assistant-secrets   #     --from-literal=anthropic-api-key=...   #     --from-literal=sandbox-api-key=...
   #
-  # n8n_extra_env is unset in this example, so these go in as a plain list:
+  # n8n_extra_env is unset in this example, so these go in as a whole
+  # assignment, brackets included:
+  #
+  #   n8n_extra_env = [
+  #     ...the four entries below...
+  #   ]
   #
   #   { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
   #   { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
@@ -177,7 +182,11 @@ module "n8n" {
   # refuses filesystem mode unless a writable mount covers the path, which is
   # the check that turns the silent version of this mistake into a plan error.
   n8n_binary_data_mode = var.shared_storage_class != null ? "filesystem" : "database"
-  n8n_binary_data_path = var.shared_mount_path
+  # Only meaningful in filesystem mode, but validated either way, and this
+  # example's own shared_mount_path check is laxer than the module's. Fall back
+  # to the module default when shared storage is off, so a path that is only
+  # ever unused cannot fail the plan.
+  n8n_binary_data_path = var.shared_storage_class != null ? var.shared_mount_path : "/opt/n8n-shared"
 
   # No depends_on here on purpose. n8n_extra_volumes already references the
   # claim, which is the ordering edge: Terraform cannot create the release until
