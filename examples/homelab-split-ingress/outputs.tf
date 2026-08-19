@@ -24,7 +24,15 @@ locals {
   # drive-relative on Windows: it names a path against the current directory of
   # drive C rather than against its root, so it is relative and has to be
   # resolved like any other relative path.
-  kubeconfig_is_absolute = startswith(var.kubeconfig_path, "/") || can(regex("^[A-Za-z]:[/\\\\]", var.kubeconfig_path))
+  #
+  # A UNC path is absolute too, and has to be recognised here rather than left
+  # to abspath, which would resolve it against the working directory and name a
+  # different file on either platform.
+  kubeconfig_is_absolute = anytrue([
+    startswith(var.kubeconfig_path, "/"),
+    startswith(var.kubeconfig_path, "\\\\"),
+    can(regex("^[A-Za-z]:[/\\\\]", var.kubeconfig_path)),
+  ])
 
   kubeconfig_resolved = startswith(var.kubeconfig_path, "~/") ? "$HOME/${substr(var.kubeconfig_path, 2, -1)}" : (
     local.kubeconfig_is_absolute ? var.kubeconfig_path : abspath(var.kubeconfig_path)
@@ -41,7 +49,13 @@ locals {
   # providers opened /tmp/kube\config. A drive letter is the only reliable
   # marker of a path whose separators are backslashes: a /-rooted path and a
   # ~/ path are both POSIX by construction.
-  kubeconfig_shell_path = can(regex("^[A-Za-z]:", local.kubeconfig_resolved)) ? replace(local.kubeconfig_resolved, "\\", "/") : local.kubeconfig_resolved
+  #
+  # Anything else keeps its backslashes and has them escaped instead, because
+  # smoke-test.sh evals this inside double quotes, where the shell collapses a
+  # backslash pair. That covers a POSIX filename containing backslashes and a
+  # Windows UNC path (\\server\share\config) with one rule, rather than
+  # needing to tell them apart: escaped, eval reproduces either literally.
+  kubeconfig_shell_path = can(regex("^[A-Za-z]:", local.kubeconfig_resolved)) ? replace(local.kubeconfig_resolved, "\\", "/") : replace(local.kubeconfig_resolved, "\\", "\\\\")
 }
 
 output "editor_url" {
@@ -71,6 +85,21 @@ output "namespace" {
 
 output "kubectl_config_command" {
   description = "Command that points kubectl at the cluster this example deployed to. Consumed by tests/scripts/smoke-test.sh."
+
+  # var.kubeconfig_path is validated, but abspath prepends a directory nobody
+  # validated. A repository checked out under a path containing $, a backtick
+  # or a double quote would put it into a string smoke-test.sh evals, which is
+  # the same escape the variable's own validation exists to prevent. Only
+  # reachable when a relative path forced abspath to run, so the check is
+  # scoped to that: absolute and ~/ paths never touch path.root.
+  #
+  # Plan-time rather than silent, which is the whole point. Not covered by a
+  # test, because the failure depends on where the repository lives and a test
+  # cannot move it.
+  precondition {
+    condition     = local.kubeconfig_is_absolute || startswith(var.kubeconfig_path, "~/") || !can(regex("[\"`$]", abspath(path.root)))
+    error_message = "kubeconfig_path is relative, so it resolves against ${abspath(path.root)}, and that path contains a double quote, a backtick or a dollar sign. tests/scripts/smoke-test.sh evals this command, so those characters would escape its quoting. Pass an absolute kubeconfig_path, or move the repository somewhere without them."
+  }
 
   # Smoke test evals this in its own shell, so exporting KUBECONFIG points every
   # later kubectl call in the script at the same file this example deployed

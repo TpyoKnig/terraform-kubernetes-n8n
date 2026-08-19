@@ -15,7 +15,7 @@ variable "kubeconfig_path" {
 }
 
 variable "namespace" {
-  description = "Namespace to deploy into. Created by this example on every path rather than by the module, so that turning shared storage on later cannot move it between two resource addresses. See storage.tf."
+  description = "Namespace to deploy into. Created by this example on every path rather than by the module, so that turning shared storage on later cannot move it between two resource addresses. An existing deployment upgrading to this needs one terraform state mv first, or the next apply plans to destroy the namespace; both commands are in storage.tf."
   type        = string
   default     = "n8n"
   nullable    = false

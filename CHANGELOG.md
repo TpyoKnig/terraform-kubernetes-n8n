@@ -111,12 +111,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   CloudNativePG, Valkey and every PVC with it, with nothing in the plan reading
   as "this deletes your database". The examples own the namespace
   unconditionally now. **Every existing deployment needs one
-  `terraform state mv` before the next apply**, and which one depends on where
-  the namespace sits in state: deployments with `shared_storage_class` unset
-  move it out of the module, and deployments with it set move it from
-  `kubernetes_namespace.n8n[0]` to `kubernetes_namespace.n8n`, because removing
-  the `count` dropped the index. Both commands are in `storage.tf`. Without the
-  move the next apply plans that same destroy.
+  `terraform state mv` before the next apply.** Which one depends on the
+  address that is actually in state, not on how the variable is set: run
+  `terraform state list | grep kubernetes_namespace.n8n` and move whichever of
+  `module.n8n.kubernetes_namespace.n8n[0]` or `kubernetes_namespace.n8n[0]`
+  exists to `kubernetes_namespace.n8n`. Removing the `count` dropped the index
+  on the second. Both commands are in `storage.tf`. Without the move the next
+  apply plans that same destroy.
 
   `kubeconfig_path` accepted a trailing backslash, which escapes the closing
   quote of the generated `kubectl_config_command` and leaves the export

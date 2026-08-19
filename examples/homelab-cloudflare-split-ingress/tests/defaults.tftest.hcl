@@ -389,14 +389,32 @@ run "a_posix_backslash_is_a_filename_character_not_a_separator" {
 
   # Normalising unconditionally pointed the smoke test at /tmp/kube/config
   # while the providers opened this file. Only a drive-qualified path gets its
-  # separators rewritten.
+  # separators rewritten; everything else keeps its backslashes and has them
+  # escaped, because the shell collapses a backslash pair inside the double
+  # quotes smoke-test.sh evals. Escaped, eval reproduces the literal.
   variables {
     kubeconfig_path = "/tmp/kube\\config"
   }
 
   assert {
-    condition     = output.kubectl_config_command == "export KUBECONFIG=\"/tmp/kube\\config\""
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"/tmp/kube\\\\config\""
     error_message = "A backslash in a POSIX path must survive; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_windows_unc_path_survives_the_shell_eval" {
+  command = plan
+
+  # Absolute, so abspath must not touch it, and its separators are backslashes
+  # that the eval would otherwise collapse in pairs. Escaped, the shell hands
+  # kubectl back the path that was configured.
+  variables {
+    kubeconfig_path = "\\\\server\\share\\config"
+  }
+
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"\\\\\\\\server\\\\share\\\\config\""
+    error_message = "A UNC path must survive the eval intact; got ${output.kubectl_config_command}."
   }
 }
 
