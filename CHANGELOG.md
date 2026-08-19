@@ -7,6 +7,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.2.1], The pooler and the wiring audit
+
+A PgBouncer pooler for the CNPG backend, binary data onto a shared volume, and
+a bug-fix sweep (#23-#32) for inputs that were documented, validated and then
+silently discarded before they reached the chart. Patch rather than minor,
+deliberately: this module tracks behind its AWS sibling's versioning, and the
+headline here is wiring that now does what the docs always said it did.
+
 ### Added
 
 - `cnpg_pooler_enabled` puts a PgBouncer connection pooler in front of the
@@ -645,7 +653,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.2.1...HEAD
+[0.2.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.1
 [0.2.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.0
 [0.1.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.1.0
 [0.0.1-beta.5]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.0.1-beta.5
