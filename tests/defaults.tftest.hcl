@@ -816,6 +816,60 @@ run "the_keda_trigger_matches_the_external_endpoint" {
   }
 }
 
+# One input, three consumers, all of which must move together: n8n's own key
+# prefix (N8N_REDIS_KEY_PREFIX), Bull's (redis.prefix -> QUEUE_BULL_PREFIX) and
+# the KEDA listName. An earlier version moved only the KEDA half, so setting
+# the input froze worker autoscaling against lists Bull never wrote to.
+run "the_redis_key_prefix_moves_all_three_consumers_together" {
+  command = plan
+
+  variables {
+    k8s_keda_installed = true
+    redis_key_prefix   = "tenant-a"
+  }
+
+  assert {
+    condition     = try(local.k8s_values_redis.redis.prefix, null) == "tenant-a"
+    error_message = "redis_key_prefix must reach the chart's redis.prefix (QUEUE_BULL_PREFIX)."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_REDIS_KEY_PREFIX", value = "tenant-a" }
+    )
+    error_message = "redis_key_prefix must reach n8n as N8N_REDIS_KEY_PREFIX."
+  }
+
+  assert {
+    condition     = toset([for t in local.k8s_values_keda.keda.worker.triggers : t.metadata.listName]) == toset(["tenant-a:jobs:wait", "tenant-a:jobs:active"])
+    error_message = "The KEDA listName must follow the same prefix Bull writes under."
+  }
+}
+
+run "an_unset_redis_key_prefix_leaves_every_default_in_place" {
+  command = plan
+
+  variables {
+    k8s_keda_installed = true
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_redis.redis), "prefix")
+    error_message = "With no prefix set, redis.prefix must be omitted so Bull's own default applies."
+  }
+
+  assert {
+    condition     = !contains([for e in local.k8s_values_config.config.extraEnv : e.name], "N8N_REDIS_KEY_PREFIX")
+    error_message = "With no prefix set, N8N_REDIS_KEY_PREFIX must be omitted so n8n's own default applies."
+  }
+
+  assert {
+    condition     = toset([for t in local.k8s_values_keda.keda.worker.triggers : t.metadata.listName]) == toset(["bull:jobs:wait", "bull:jobs:active"])
+    error_message = "With no prefix set, the KEDA listName must stay on Bull's default prefix."
+  }
+}
+
 run "the_keda_trigger_carries_no_auth_metadata_without_auth" {
   command = plan
 

@@ -494,6 +494,17 @@ locals {
           key  = local.k8s_redis_secret_password_key
         }
       } : {},
+      # Sets QUEUE_BULL_PREFIX (configmap.yaml's `if .Values.redis.prefix`
+      # guard omits it entirely when unset, so Bull's own "bull" default
+      # applies exactly as before on the null path). The matching
+      # N8N_REDIS_KEY_PREFIX env var lives in config.extraEnv, and the KEDA
+      # listName reads local.redis_key_prefix_value: all three have to move
+      # together, see redis_key_prefix. Until this key existed, only the KEDA
+      # half moved - setting the input repointed the scaler at
+      # "<prefix>:jobs:wait" while Bull kept writing under "bull", so worker
+      # autoscaling froze and none of the promised per-deployment isolation
+      # happened.
+      var.redis_key_prefix != null ? { prefix = var.redis_key_prefix } : {},
       # Empty unless n8n_redis_timeout_threshold is set, so the chart's own
       # 10000 continues to apply and existing releases render unchanged.
       local.redis_timeout_values,
@@ -914,6 +925,16 @@ locals {
         var.n8n_task_runners_enabled ? [
           { name = "N8N_RUNNERS_TASK_TIMEOUT", value = tostring(var.n8n_task_runner_timeout) },
         ] : [],
+
+        # n8n's own key prefix, set alongside the chart's redis.prefix
+        # (QUEUE_BULL_PREFIX) so the pub/sub command channel and Bull's job
+        # keys live under one namespace. n8n's default is "n8n" and Bull's is
+        # "bull", so the two env vars are different names carrying the same
+        # caller value, and both are omitted when the input is null so those
+        # defaults keep applying.
+        var.redis_key_prefix == null ? [] : [
+          { name = "N8N_REDIS_KEY_PREFIX", value = var.redis_key_prefix },
+        ],
 
         # Declared TLS on a caller-supplied endpoint. n8n reads this directly;
         # the chart has no redis.tls key to set instead.
