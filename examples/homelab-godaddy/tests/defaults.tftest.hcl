@@ -317,6 +317,18 @@ run "a_dressed_up_home_directory_spelling_is_rejected_too" {
   expect_failures = [var.kubeconfig_path]
 }
 
+run "a_backslash_separated_home_spelling_is_rejected" {
+  command = plan
+
+  # The Windows spelling of the same directory. The trailing-backslash rule
+  # catches "~\\", so the dot form is the one that needs the pattern.
+  variables {
+    kubeconfig_path = "~\\."
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
 run "a_posix_backslash_is_a_filename_character_not_a_separator" {
   command = plan
 
