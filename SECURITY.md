@@ -58,14 +58,18 @@ for the versioning policy.
 
 | Version      | Security fixes |
 | ------------ | -------------- |
-| 0.2.0        | ✅ (current)   |
+| 0.2.1        | ✅ (current)   |
+| 0.2.0        | ❌             |
 | 0.1.0        | ❌             |
 
-`0.1.0` and `0.0.1-beta.1` through `0.0.1-beta.5` are the earlier tags. All
-are superseded and receive nothing, including security fixes. Upgrade rather
-than asking for a backport. `0.1.0` to `0.2.0` plans clean unless you set
-`n8n_task_runner_auto_shutdown_timeout` or pass a reserved metrics variable
-through `n8n_extra_env` or `n8n_extra_env_from_secret`; see the changelog.
+`0.2.0`, `0.1.0` and `0.0.1-beta.1` through `0.0.1-beta.5` are the earlier
+tags. All are superseded and receive nothing, including security fixes.
+Upgrade rather than asking for a backport. Upgrading is not a clean plan for
+most deployments: `0.2.1` starts applying execution settings that were
+previously discarded, and `0.1.0` to `0.2.0`-or-later rolls main, worker and
+webhook-processor whenever task runners are enabled, because the
+idle-shutdown fix moved a value out of `config.extraEnv` that every n8n
+container carried. See the changelog for per-version upgrade notes.
 
 ## Out of scope for this policy
 

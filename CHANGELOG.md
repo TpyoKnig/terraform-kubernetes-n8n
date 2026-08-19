@@ -303,9 +303,15 @@ nothing, which is why this is a minor bump rather than a patch: the values you
 set start taking effect.
 
 `n8n_task_runner_auto_shutdown_timeout` reached the wrong containers, so the
-runner sidecar stayed on the chart's 15 seconds whatever you asked for. If you
-set that input, the sidecar's environment changes on the next apply and the
-main and worker pods restart. Leaving it at the default plans clean.
+runner sidecar stayed on the chart's 15 seconds whatever you asked for. Fixing
+it moved the value out of `config.extraEnv` and onto
+`taskRunners.launcher.autoShutdownTimeout`, and both halves of that move change
+the rendered chart values. So if `n8n_task_runners_enabled` is true, this
+upgrade rolls your pods whatever you set the timeout to, including leaving it
+at the default: `config.extraEnv` loses an entry every n8n container carries,
+which is main, worker **and** webhook-processor. Only callers with task runners
+disabled plan clean. If you had set the input, the sidecar's environment also
+changes and the runners start honouring the value for the first time.
 
 `n8n_metrics_enabled` sets three environment variables and only reserved one of
 them. Passing either `N8N_METRICS_INCLUDE_QUEUE_METRICS` or

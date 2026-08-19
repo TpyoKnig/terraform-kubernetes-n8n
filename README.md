@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.0"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.1"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -239,11 +239,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.2.0` is the current release. It fixes two inputs that silently did nothing — the task-runner idle-shutdown timeout reached the wrong containers, and two of the three environment variables `n8n_metrics_enabled` sets were not reserved — and adds `n8n_task_runner_max_concurrency`. Upgrading from `0.1.0` plans clean unless you set the idle-shutdown timeout, which starts taking effect, or pass a reserved metrics variable through `n8n_extra_env` or `n8n_extra_env_from_secret`, either of which is now a plan-time error. `0.1.0` and the `0.0.1-beta.*` tags stay where they are and keep working as exact pins.
+`0.2.1` is the current release: the PgBouncer pooler for the CNPG backend, binary data onto a shared volume, and the #23–#32 wiring-audit fixes for inputs that were silently discarded before reaching the chart. Upgrading rolls pods where the fixed values change the rendered chart: the executions settings start applying (see the changelog for per-input compatibility values), and — from `0.1.0` — any deployment with task runners enabled rolls main, worker and webhook-processor, because the idle-shutdown fix moved a value out of `config.extraEnv` that every n8n container carried. Older tags stay where they are and keep working as exact pins.
 
 Still pre-1.0, so a minor bump may break the input surface. `~> 0.2` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
