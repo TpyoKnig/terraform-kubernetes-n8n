@@ -109,8 +109,11 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   coincidence. The values now merge into the top-level block, so deployments
   that never set these inputs will see a plan updating the release values and
   should expect the documented defaults to start applying, most visibly
-  `EXECUTIONS_TIMEOUT=7200` and `N8N_CONCURRENCY_PRODUCTION_LIMIT=100`. Set
-  the inputs to `-1` to keep the previous effective behaviour. The contract
+  `EXECUTIONS_TIMEOUT=7200` and `N8N_CONCURRENCY_PRODUCTION_LIMIT=100`. To
+  keep the previous effective behaviour, set `n8n_execution_timeout` and
+  `n8n_execution_concurrency_limit` to `-1`, `n8n_execution_timeout_max` to
+  `3600`, and leave `n8n_pruning_max_count` at its default (10000, which is
+  also what the chart was applying). The contract
   test asserting these inputs was itself asserting the dead subtree, which is
   how this survived: it now asserts against the merged values tree and that
   `config.executions` stays unrendered.
