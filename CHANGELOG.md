@@ -96,6 +96,18 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- `redis_key_prefix` now reaches all three of its consumers. The variable
+  description has always said it moves n8n's key prefix
+  (`N8N_REDIS_KEY_PREFIX`), Bull's (`QUEUE_BULL_PREFIX` via the chart's
+  `redis.prefix`) and the KEDA `listName` together; the code only ever moved
+  the KEDA half. Setting it therefore repointed the scaler at
+  `<prefix>:jobs:wait` while Bull kept writing under `bull`, freezing worker
+  autoscaling at its floor, and delivered none of the per-deployment isolation
+  that is the input's whole purpose: two deployments sharing one Redis kept
+  crossing pub/sub channels exactly as if the input did not exist. All three
+  now derive from the one input, and leaving it null still renders neither env
+  var so n8n's `n8n` and Bull's `bull` defaults keep applying.
+
 - The KEDA worker trigger now consumes an external Redis endpoint the same way
   n8n does, which the variable descriptions have promised all along. Four
   defects in one trigger block: the address hardcoded `:6379`, so any other
