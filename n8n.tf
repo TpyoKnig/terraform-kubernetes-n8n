@@ -399,6 +399,37 @@ check "image_pull_secrets_need_a_custom_image" {
   }
 }
 
+check "network_policy_blocks_the_otel_collector" {
+  assert {
+    # The chart's egress rules permit DNS, the database port, the Redis port
+    # and 443, and nothing else. An OTLP collector answers on 4317 or 4318, so
+    # enabling both inputs together stops traces reaching it, and n8n does not
+    # treat a failed export as an error: the deployment looks healthy and the
+    # traces simply stop. Both halves are module inputs, so the module can see
+    # the collision at plan time rather than leaving it to be noticed later.
+    #
+    # A null endpoint is fine: n8n then defaults to localhost:4318, which is a
+    # sidecar in the same pod, and same-pod traffic never passes a
+    # NetworkPolicy. An https:// endpoint with no explicit port is 443 and
+    # passes too, as does an explicit :443. The port match is anchored to the
+    # authority: an unanchored ":443" also matches a path or query string that
+    # happens to contain it, which would wave through a collector on 4318.
+    #
+    # Read through local.n8n_network_policy_rendered rather than the input,
+    # because n8n_extra_helm_values is merged last and Helm gives it
+    # precedence, so it decides whether the policy exists. Both directions
+    # matter: reading the input alone would stay quiet when the overlay turns
+    # the policy on behind a default-false input, which is exactly the silent
+    # trace loss this check is for, and would warn about a collision that
+    # cannot happen when the overlay turns it off.
+    condition = local.n8n_network_policy_rendered && var.n8n_otel_enabled && var.n8n_otel_exporter_otlp_endpoint != null ? (
+      can(regex("^https://[^/:]+(/|$)", var.n8n_otel_exporter_otlp_endpoint)) ||
+      can(regex("^https?://[^/]+:443(/|$)", var.n8n_otel_exporter_otlp_endpoint))
+    ) : true
+    error_message = "${var.n8n_network_policy_enabled ? "n8n_network_policy_enabled is true" : "n8n_extra_helm_values enables the chart's NetworkPolicy even though n8n_network_policy_enabled is false, and the overlay is merged last, so it wins"} and n8n_otel_exporter_otlp_endpoint (\"${coalesce(var.n8n_otel_exporter_otlp_endpoint, "null")}\") does not resolve to port 443. The chart's NetworkPolicy permits egress on DNS, the database port, the Redis port and 443 only, so the OTLP collector on 4317 or 4318 becomes unreachable. n8n does not fail on a failed span export, so nothing crashes and no error appears: the traces just stop arriving. Put the collector behind 443, add an egress rule for its port outside this module, or leave the NetworkPolicy off."
+  }
+}
+
 check "an_ingress_in_front_means_at_least_one_proxy_hop" {
   assert {
     # n8n_proxy_hops = 0 says nothing proxies to the pods, so no

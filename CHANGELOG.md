@@ -72,6 +72,24 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   single-main Community mode. A `check` block warns at plan time for anyone
   who sets it back to true.
 
+- `n8n_network_policy_enabled` renders the chart's `NetworkPolicy` over the n8n
+  pods. Off by default, matching the chart, and exposed rather than decided
+  here because what it costs depends on what a caller's workflows call.
+
+  The module previously offered no lever at all. n8n makes arbitrary outbound
+  HTTP by design, so a workflow or an SSRF-prone node can reach whatever the
+  pod network can, which on a Talos cluster includes the Talos API on port
+  50000.
+
+  `docs/operations.md` documents what the chart's policy is and is not: every
+  egress rule targets all destinations and differs only by port, so it is a
+  port allowlist (DNS, the database port, the Redis port, 443) rather than
+  segmentation, and anything on 443 stays reachable. It also lists what turning
+  it on breaks, chiefly workflows calling plaintext `http://` endpoints. A
+  `check` block warns when it is enabled alongside an OTLP collector on a port
+  the policy denies, because n8n does not error on a failed span export: the
+  traces simply stop.
+
 - `n8n_proxy_hops` sets `N8N_PROXY_HOPS` on every pod type, replacing a
   hardcoded literal that only existed on one routing path.
 

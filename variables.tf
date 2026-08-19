@@ -124,6 +124,13 @@ variable "create_namespace" {
   nullable    = false
 }
 
+variable "n8n_network_policy_enabled" {
+  description = "Whether the chart renders its NetworkPolicy over the n8n pods. False by default, matching the chart. Worth understanding before turning on, because it is a port allowlist rather than a segmentation policy: every egress rule it writes targets all destinations (`to: []`) and differs only by port, so it permits DNS, the configured database and Redis ports, and 443 to anywhere, and denies every other port to everywhere. What that buys is real but narrow. n8n makes arbitrary outbound HTTP by design, which makes a workflow or an SSRF-prone node a scanner of whatever the pod network can reach, and this closes the non-443 half of that: the Talos API on 50000, SMTP, databases on the LAN, admin panels on 8080. What it does not close is anything reachable over 443, the Kubernetes API included. What it will break, if you use them: workflows calling plaintext http:// endpoints on port 80, and an OpenTelemetry collector on 4317/4318, which is checked at plan time. Requires a CNI that enforces NetworkPolicy; Cilium and Calico do, and a cluster whose CNI ignores it will apply this happily and enforce nothing."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 # ── Ingress ───────────────────────────────────────────────────────────────────
 
 variable "create_ingress" {

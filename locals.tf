@@ -688,6 +688,27 @@ locals {
     }
   }
 
+  # ── Pod network policy ─────────────────────────────────────────────────────
+  # Off by default, matching the chart, and exposed rather than decided here
+  # because what it costs depends entirely on what the caller's workflows call.
+  #
+  # Worth being precise about what the chart's policy is, since "NetworkPolicy"
+  # suggests more than it delivers: every egress rule it writes has `to: []`,
+  # meaning all destinations, and differs only by port. So it is a port
+  # allowlist. DNS, the configured database port, the configured Redis port and
+  # 443 reach anywhere; everything else reaches nothing.
+  #
+  # That still closes something real. n8n makes arbitrary outbound HTTP by
+  # design, so a workflow, or a node with an SSRF bug, can reach whatever the
+  # pod network can: on a Talos cluster that includes the Talos API on 50000.
+  # What it does not close is anything on 443, the Kubernetes API included, so
+  # this is not a substitute for a policy written against real destinations.
+  k8s_values_network_policy = {
+    networkPolicy = {
+      enabled = var.n8n_network_policy_enabled
+    }
+  }
+
   # ── Rollout strategy for the single main pod ───────────────────────────────
   # The chart ships `strategy: {}`, and its template wraps the key in a `with`,
   # so an empty map renders nothing at all and the Deployment takes Kubernetes'
@@ -827,6 +848,33 @@ locals {
   n8n_ingress_rendered = (
     local.n8n_extra_deletes_ingress || local.n8n_extra_deletes_ingress_enabled ? false : (
       local.n8n_ingress_enabled_via_extra_values != null ? local.n8n_ingress_enabled_via_extra_values : var.create_ingress
+    )
+  )
+
+  # And once more for networkPolicy.enabled, for the same reason and with the
+  # same shape as ingress above: the check that warns about a blocked OTLP
+  # collector has to know whether the policy is really rendered, and
+  # n8n_network_policy_enabled is only this module's half of that answer.
+  #
+  # Chart 1.10.0 defaults networkPolicy.enabled to false, so the two deletion
+  # rows mean no policy, which is the same answer as an explicit false. Both
+  # directions matter here. Reading the input alone would stay quiet when the
+  # overlay turns the policy on behind a default-false input, which is the
+  # silent trace loss the check exists to catch, and would warn about a
+  # collision that cannot happen when the overlay turns it off.
+  n8n_extra_declares_network_policy = contains(local.n8n_extra_values_keys, "networkPolicy")
+
+  n8n_extra_deletes_network_policy = local.n8n_extra_declares_network_policy && try(local.n8n_extra_values_decoded.networkPolicy, null) == null
+
+  n8n_extra_declares_network_policy_enabled = contains(try(keys(local.n8n_extra_values_decoded.networkPolicy), []), "enabled")
+
+  n8n_network_policy_enabled_via_extra_values = try(local.n8n_extra_values_decoded.networkPolicy.enabled, null)
+
+  n8n_extra_deletes_network_policy_enabled = local.n8n_extra_declares_network_policy_enabled && local.n8n_network_policy_enabled_via_extra_values == null
+
+  n8n_network_policy_rendered = (
+    local.n8n_extra_deletes_network_policy || local.n8n_extra_deletes_network_policy_enabled ? false : (
+      local.n8n_network_policy_enabled_via_extra_values != null ? local.n8n_network_policy_enabled_via_extra_values : var.n8n_network_policy_enabled
     )
   )
 
@@ -1505,6 +1553,7 @@ locals {
     local.k8s_values_pdb,
     local.k8s_values_strategy,
     local.k8s_values_lifecycle,
+    local.k8s_values_network_policy,
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,
