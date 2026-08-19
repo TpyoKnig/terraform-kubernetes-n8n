@@ -7,6 +7,50 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `cnpg_pooler_enabled` puts a PgBouncer connection pooler in front of the
+  CloudNativePG cluster and points n8n at it, with `cnpg_pooler_instances`,
+  `cnpg_pooler_mode`, `cnpg_pooler_pool_size` and
+  `cnpg_pooler_max_client_conn` to size it. Off by default, so nothing changes
+  for existing callers.
+
+  The problem it solves is that pod count, not CPU, is what a queue-mode
+  deployment runs out of first. Every n8n pod holds `db_postgresdb_pool_size`
+  persistent connections, that number is multiplied by a pod count an
+  autoscaler owns, and the CNPG cluster runs `max_connections = 200`. A worker
+  tier at 16 beside a webhook-processor tier at 8, at the default pool size of
+  10, asks for 250 against roughly 197 usable. Past the limit pods do not slow
+  down: a new worker cannot initialise its pool, exits non-zero and CrashLoops,
+  and requests already in flight stall until the client gives up. In the
+  default transaction mode the connection count is then
+  `cnpg_pooler_pool_size x cnpg_pooler_instances` regardless of how far the
+  tiers scale. Session mode is offered but does not do this: it holds a server
+  connection for the life of each client session, and n8n's TypeORM pool is
+  long-lived, so server connections still track pod count.
+
+  `cnpg_pooler_enabled = true` requires `db_postgresdb_ssl_enabled = false`,
+  and the module refuses the combination at plan time. The pooler serves its
+  clients in plaintext and encrypts its own leg to Postgres.
+
+- `cnpg_max_connections` sets the CNPG cluster's connection limit, default 200,
+  which is what the module hardcoded before. It is also the budget
+  `cnpg_pooler_pool_size x cnpg_pooler_instances` is validated against, capped
+  at three quarters of it, so the pooler cannot be sized past the database it
+  sits in front of and the two numbers cannot drift apart.
+
+- `backing_services.postgres_direct_host` names the CNPG rw Service even when
+  a pooler is in front, so session-scoped work that transaction pooling cannot
+  carry (session advisory locks, `LISTEN`/`NOTIFY`, an interactive `psql`)
+  has somewhere to go. Null on the external backend.
+
+### Changed
+
+- `backing_services.postgres_host` resolves to the pooler Service when
+  `cnpg_pooler_enabled` is true. It is what n8n connects to, so anything
+  reading it to reach the database follows n8n. Unchanged when the pooler is
+  off.
+
 ## [0.2.0], The task-runner round
 
 Two fixes, two description corrections and one new input, all in the

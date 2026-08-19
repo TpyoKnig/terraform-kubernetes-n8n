@@ -319,6 +319,18 @@ locals {
   cnpg_service_host    = "${local.cnpg_cluster_name}-rw.${local.namespace_name}.svc.cluster.local"
   cnpg_app_secret_name = "${local.cnpg_cluster_name}-app"
 
+  # ── PgBouncer pooler ───────────────────────────────────────────────────────
+  # A Pooler is scoped to one Cluster and serves one deployment, so it sits on
+  # the module side of the ownership line for the same reason the Cluster and
+  # the worker ScaledObject do: the caller owns the CNPG operator, the module
+  # owns the resources that operator reconciles for this workload.
+  #
+  # rw only. n8n writes on every execution, so there is no read-only traffic to
+  # split onto a second pooler.
+  cnpg_pooler_enabled = local.cnpg_enabled && var.cnpg_pooler_enabled
+  cnpg_pooler_name    = "${local.cnpg_cluster_name}-pooler-rw"
+  cnpg_pooler_host    = "${local.cnpg_pooler_name}.${local.namespace_name}.svc.cluster.local"
+
   # ── Valkey-derived names ───────────────────────────────────────────────────
   # Valkey chart names its Service "<release>-valkey".
   valkey_release     = "${local.cnpg_release_name}-redis"
@@ -329,7 +341,10 @@ locals {
   # ── Connection wiring for the k8s-backend helm release ─────────────────────
   # Resolved once here so postgres_cnpg.tf, redis_valkey.tf and the
   # helm_release.n8n below all read from a single source of truth.
-  k8s_pg_host                = local.cnpg_enabled ? local.cnpg_service_host : (var.db_host == null ? "" : var.db_host)
+  # With a pooler in front, n8n connects to PgBouncer rather than to Postgres.
+  # This is the single place that changes, which is the point of resolving the
+  # host once: nothing downstream needs to know a pooler exists.
+  k8s_pg_host                = local.cnpg_pooler_enabled ? local.cnpg_pooler_host : (local.cnpg_enabled ? local.cnpg_service_host : (var.db_host == null ? "" : var.db_host))
   k8s_pg_secret_name         = local.cnpg_enabled ? local.cnpg_app_secret_name : (var.db_password_secret_ref == null ? "n8n-db-secret" : var.db_password_secret_ref.name)
   k8s_pg_secret_password_key = local.cnpg_enabled ? "password" : local.db_password_secret_ref_key != null ? local.db_password_secret_ref_key : "password"
 

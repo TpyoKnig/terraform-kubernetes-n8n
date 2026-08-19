@@ -1852,3 +1852,233 @@ run "the_container_keys_stay_absent_by_default" {
     error_message = "extraContainers and extraInitContainers must be omitted entirely when no sidecar is declared, so the chart's own defaults apply and `helm get values` stays readable."
   }
 }
+
+# ── PgBouncer pooler ──────────────────────────────────────────────────────────
+
+run "the_pooler_is_off_by_default" {
+  command = plan
+
+  # A pooler is a second thing to run. A deployment whose worker tier never
+  # leaves single digits does not need one, and defaulting it on would create
+  # two PgBouncer pods for every caller who never reads this input.
+  assert {
+    condition     = var.cnpg_pooler_enabled == false
+    error_message = "cnpg_pooler_enabled must default to false."
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_pooler) == 0
+    error_message = "No Pooler should be planned while cnpg_pooler_enabled is false."
+  }
+}
+
+run "postgres_host_is_the_cluster_when_no_pooler" {
+  command = plan
+
+  assert {
+    condition     = can(regex("-pg-rw", local.k8s_pg_host))
+    error_message = "Without a pooler, n8n must connect to the CNPG rw Service; got: ${local.k8s_pg_host}"
+  }
+}
+
+run "enabling_the_pooler_plans_one_and_moves_the_host" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_pooler) == 1
+    error_message = "Expected exactly one Pooler when cnpg_pooler_enabled = true."
+  }
+
+  # The host moving is the whole contract. Everything downstream (the helm
+  # values tree, the backing_services output, the smoke test) reads
+  # local.k8s_pg_host, so this one assertion covers all of them.
+  # Asserted against the Service name rather than local.cnpg_pooler_host, which
+  # is what k8s_pg_host is defined as on this branch: comparing them confirms
+  # the branch was taken and nothing about the host it produces.
+  assert {
+    condition     = startswith(local.k8s_pg_host, "n8n-pg-pooler-rw.")
+    error_message = "n8n must connect to the Pooler Service when one is enabled; got: ${local.k8s_pg_host}"
+  }
+}
+
+run "the_pooler_needs_the_cnpg_backend" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    postgres_backend          = "external"
+    db_host                   = "postgres.example.com"
+    db_password               = "s3cret-not-real"
+  }
+
+  # A Pooler attaches to a CNPG Cluster. On the external path there is none, so
+  # the input would silently do nothing rather than fail, and the caller would
+  # be left believing they had pooling.
+  expect_failures = [var.cnpg_pooler_enabled]
+}
+
+run "the_pooler_refuses_to_run_with_tls_on" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = true
+  }
+
+  # PgBouncer serves clients in plaintext and encrypts its own leg upstream.
+  # Left true, n8n negotiates TLS against a listener that does not speak it and
+  # the error names a connection failure with nothing pointing at the pooler.
+  # Cheaper to refuse at plan time.
+  expect_failures = [var.cnpg_pooler_enabled]
+}
+
+run "pooler_sizing_inputs_reject_nonsense" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_pooler_instances     = 0
+  }
+
+  # Zero instances is a Pooler that exists in the API and answers nothing,
+  # while n8n's DB host now points at its Service.
+  expect_failures = [var.cnpg_pooler_instances]
+}
+
+run "the_pool_mode_is_constrained" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_pooler_mode          = "transactional"
+  }
+
+  # PgBouncer takes transaction, session or statement. A near-miss like this
+  # one is rejected by PgBouncer at startup, several minutes and one CrashLoop
+  # after apply.
+  expect_failures = [var.cnpg_pooler_mode]
+}
+
+run "transaction_mode_is_the_default_because_session_solves_nothing" {
+  command = plan
+
+  # Session mode holds a server connection for the life of the client session.
+  # n8n's TypeORM pool is long-lived, so session mode reproduces the original
+  # connection count exactly and the pooler buys nothing.
+  assert {
+    condition     = var.cnpg_pooler_mode == "transaction"
+    error_message = "cnpg_pooler_mode must default to \"transaction\"; session mode does not decouple client count from server connections."
+  }
+}
+
+# PgBouncer's "statement" mode forbids multi-statement transactions. n8n runs
+# its TypeORM migrations inside one at every boot, so the mode is not a
+# trade-off here, it is a release that cannot start. Refused at plan time
+# rather than discovered in a migration crash loop.
+run "cnpg_pooler_mode_rejects_statement" {
+  command = plan
+
+  variables {
+    cnpg_pooler_mode = "statement"
+  }
+
+  expect_failures = [var.cnpg_pooler_mode]
+}
+
+# The pooler's whole job is to make pod count stop driving the connection
+# budget, which it does by making pool_size x instances the entirety of what
+# Postgres sees. Sizing that product past the Cluster's own max_connections
+# recreates the exhaustion one hop upstream, where it reads as a PgBouncer
+# problem rather than a Postgres one.
+run "cnpg_pooler_pool_budget_rejects_oversubscription" {
+  command = plan
+
+  variables {
+    postgres_backend          = "cnpg"
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_pooler_instances     = 4
+    cnpg_pooler_pool_size     = 50
+  }
+
+  expect_failures = [var.cnpg_pooler_pool_size]
+}
+
+# The same product at the default instance count is inside the budget, so the
+# validation has to let it through: a guard that rejects the documented default
+# is worse than no guard.
+run "cnpg_pooler_pool_budget_allows_the_defaults" {
+  command = plan
+
+  variables {
+    postgres_backend          = "cnpg"
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+  }
+
+  assert {
+    condition     = var.cnpg_pooler_pool_size * var.cnpg_pooler_instances == 50
+    error_message = "The documented default is 25 x 2 = 50 real connections; got ${var.cnpg_pooler_pool_size * var.cnpg_pooler_instances}."
+  }
+}
+
+# The pooler budget is derived from cnpg_max_connections rather than from a
+# literal copied out of postgres_cnpg.tf, so the two cannot drift and a caller
+# who needs a larger pool has a way to get one. Same product the run above
+# rejects at the default limit, accepted once the limit moves.
+run "cnpg_pooler_pool_budget_follows_max_connections" {
+  command = plan
+
+  variables {
+    postgres_backend          = "cnpg"
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_max_connections      = 400
+    cnpg_pooler_instances     = 4
+    cnpg_pooler_pool_size     = 50
+  }
+
+  assert {
+    condition     = var.cnpg_pooler_pool_size * var.cnpg_pooler_instances <= floor(var.cnpg_max_connections * 0.75)
+    error_message = "200 real connections must fit inside three quarters of a 400 limit."
+  }
+}
+
+# And the limit the validation is measured against is the one the Cluster
+# actually runs. Without this the input could be validated against a number the
+# manifest never receives, which is the drift the derivation exists to prevent,
+# reintroduced one layer down.
+run "cnpg_cluster_renders_the_configured_max_connections" {
+  command = plan
+
+  variables {
+    postgres_backend     = "cnpg"
+    cnpg_max_connections = 321
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.postgresql.parameters.max_connections == "321"
+    error_message = "The CNPG Cluster must run the cnpg_max_connections it was given; got ${yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.postgresql.parameters.max_connections}."
+  }
+}
+
+# Postgres will not start with max_connections above its own ceiling, and the
+# value goes straight into the Cluster spec, so without this the plan succeeds
+# and the database is what refuses.
+run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
+  command = plan
+
+  variables {
+    cnpg_max_connections = 262144
+  }
+
+  expect_failures = [var.cnpg_max_connections]
+}
