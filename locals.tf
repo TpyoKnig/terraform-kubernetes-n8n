@@ -878,6 +878,68 @@ locals {
     )
   )
 
+  # What that policy actually permits on the way out, so the OTLP check can ask
+  # whether the collector is reachable rather than whether it is on 443.
+  #
+  # templates/networkpolicy.yaml writes one egress rule per port, each with
+  # `to: []`, for 53, database.port when database.useExternal, redis.port when
+  # queueMode.enabled, and 443. This module renders both of those flags true
+  # unconditionally, so both ports are always in the list.
+  #
+  # The two ports are recomputed from their own inputs rather than read back
+  # out of k8s_values_final, which carries the database and Redis passwords and
+  # is sensitive as a whole: an error_message built from it would be suppressed
+  # in full, printing nothing where the port belongs. These expressions are the
+  # same ones k8s_values_database and k8s_values_redis use.
+  #
+  # n8n_extra_helm_values can move database.port or redis.port the same way it
+  # can move networkPolicy.enabled. That is not tracked here: the effect is a
+  # warning that names a port the caller has already overridden, and following
+  # it costs the five-case treatment twice over for a case nobody has hit.
+  n8n_network_policy_allowed_ports = [
+    53,
+    443,
+    local.cnpg_enabled ? 5432 : var.db_port,
+    local.k8s_redis_port,
+  ]
+
+  # Everything between "://" and the first "/", "?" or "#". Null when the
+  # endpoint is null or not a URL, which the check treats as passing: a
+  # malformed endpoint is n8n's problem to report, not this check's.
+  n8n_otel_endpoint_authority = try(
+    regex("^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*)", var.n8n_otel_exporter_otlp_endpoint)[0],
+    null
+  )
+
+  # A bracketed IPv6 literal carries colons of its own, so the port is only a
+  # ":digits" that follows the closing bracket. Hosts that are names or IPv4
+  # addresses have no colon but the port separator. With no explicit port the
+  # scheme decides, which is the whole reason an https:// URL passes.
+  n8n_otel_endpoint_host = try(
+    lower(regex("^(\\[[^\\]]*\\]|[^:]*)", local.n8n_otel_endpoint_authority)[0]),
+    null
+  )
+
+  n8n_otel_endpoint_port = try(
+    tonumber(regex("^(?:\\[[^\\]]*\\]|[^:]*):([0-9]+)$", local.n8n_otel_endpoint_authority)[0]),
+    can(regex("^(?i:https)://", var.n8n_otel_exporter_otlp_endpoint)) ? 443 : 80
+  )
+
+  # Loopback never leaves the pod, so no NetworkPolicy applies to it and a
+  # sidecar collector is reachable whatever the allowlist says. This is the
+  # same reason a null endpoint is fine: n8n's own default is localhost:4318.
+  n8n_otel_endpoint_is_loopback = local.n8n_otel_endpoint_host == null ? false : (
+    local.n8n_otel_endpoint_host == "localhost" ||
+    local.n8n_otel_endpoint_host == "[::1]" ||
+    can(regex("^127\\.", local.n8n_otel_endpoint_host))
+  )
+
+  n8n_otel_collector_reachable_under_network_policy = (
+    local.n8n_otel_endpoint_authority == null ||
+    local.n8n_otel_endpoint_is_loopback ||
+    contains(local.n8n_network_policy_allowed_ports, local.n8n_otel_endpoint_port)
+  )
+
   # Whether a PodDisruptionBudget ends up in the release at all, by either
   # route. Named because the check block asks exactly this question, and a
   # check reading `!a && !b` makes the reader reconstruct what the two halves

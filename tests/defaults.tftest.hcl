@@ -1498,6 +1498,105 @@ run "a_collector_on_443_draws_no_warning" {
   }
 }
 
+# The four cases below all reach their collector and must stay quiet. Each one
+# is a port the policy permits, or traffic the policy never sees, and a warning
+# that fires on a working configuration is one operators learn to ignore.
+
+# Loopback never leaves the pod, so no NetworkPolicy applies to it. Writing the
+# sidecar's address out explicitly has to behave the same as leaving the
+# endpoint null and inheriting n8n's own localhost:4318.
+run "an_explicit_loopback_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://localhost:4318"
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A collector on localhost is in the same pod, so the policy cannot block it."
+  }
+}
+
+run "a_dotted_loopback_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://127.0.0.1:4318"
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "127.0.0.0/8 is loopback for the same reason localhost is."
+  }
+}
+
+# The allowlist is not just 443. The chart writes an egress rule for the
+# configured database port and another for the Redis port, both to any
+# destination, so a collector sharing one of those ports is reachable. 5432 is
+# an absurd port for a collector; it is here because the question under test is
+# allowlist membership, not plausibility.
+run "a_collector_on_the_database_port_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local:5432"
+  }
+
+  assert {
+    condition     = contains(local.n8n_network_policy_allowed_ports, 5432)
+    error_message = "The database port must be in the allowlist the check compares against."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A port the policy opens to every destination cannot make the collector unreachable."
+  }
+}
+
+# A bracketed IPv6 literal carries colons of its own, so the port is only the
+# ":digits" after the closing bracket. With none, the scheme decides: this is
+# https, so 443, which the policy allows.
+run "a_bracketed_ipv6_collector_on_https_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "https://[2001:db8::1]"
+  }
+
+  assert {
+    condition     = local.n8n_otel_endpoint_port == 443
+    error_message = "An https:// URL with no explicit port is 443 whatever shape the host is."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "The host's own colons must not be mistaken for a port separator."
+  }
+}
+
+# The other half of the same widening: plain http with no port is 80, which the
+# policy denies, and that must still warn.
+run "a_plaintext_collector_on_the_default_port_is_warned_about" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local"
+  }
+
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
 # A null endpoint means n8n's own default of localhost:4318, which is a sidecar
 # in the same pod, and same-pod traffic never passes a NetworkPolicy.
 run "an_in_pod_collector_draws_no_warning" {

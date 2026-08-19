@@ -84,11 +84,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `docs/operations.md` documents what the chart's policy is and is not: every
   egress rule targets all destinations and differs only by port, so it is a
   port allowlist (DNS, the database port, the Redis port, 443) rather than
-  segmentation, and anything on 443 stays reachable. It also lists what turning
-  it on breaks, chiefly workflows calling plaintext `http://` endpoints. A
-  `check` block warns when it is enabled alongside an OTLP collector on a port
-  the policy denies, because n8n does not error on a failed span export: the
-  traces simply stop.
+  segmentation. Every port in that list stays open to every destination, which
+  includes anything on 443 and any host answering on the configured database or
+  Redis port. It is also not something to layer under a destination-scoped
+  policy of your own: Kubernetes unions the policies selecting a pod and none
+  of them can subtract, so a tighter rule cannot take back a port this one has
+  opened. The docs list what turning it on breaks, chiefly workflows calling
+  plaintext `http://` endpoints.
+
+  A `check` block warns when the policy is rendered alongside an OTLP collector
+  the policy would cut off, because n8n does not error on a failed span export:
+  the traces simply stop. It compares the endpoint's effective port against the
+  allowlist as configured rather than against 443 alone, so a collector on the
+  database or Redis port, an explicit loopback sidecar address, and an
+  `https://` URL with a bracketed IPv6 host all pass without a warning.
 
 - `n8n_proxy_hops` sets `N8N_PROXY_HOPS` on every pod type, replacing a
   hardcoded literal that only existed on one routing path.

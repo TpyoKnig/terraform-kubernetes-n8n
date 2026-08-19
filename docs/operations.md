@@ -410,23 +410,31 @@ Everything else is denied.
 What that buys is genuine. n8n makes arbitrary outbound HTTP by design, so any
 workflow, or any node with an SSRF bug, can reach whatever the pod network can
 reach. On a Talos cluster that includes the Talos API on 50000. Closing every
-port but 443 removes most of the reachable surface.
+port outside that allowlist removes most of the reachable surface.
 
-What it does not buy is segmentation. Anything answering on 443 is still
-reachable, the Kubernetes API included. If you need policy written against real
-destinations, write a `CiliumNetworkPolicy` (or equivalent) yourself against the
-`app.kubernetes.io/name: n8n` selector; this toggle and a policy of your own can
-coexist, because Kubernetes unions policies that select the same pods.
+What it does not buy is segmentation. Every port in the allowlist stays open to
+every destination: anything answering on 443 is reachable, the Kubernetes API
+included, and so is any host answering on the port you configured for the
+database or for Redis — a LAN Postgres on 5432, for instance.
+
+If you need policy written against real destinations, write a
+`CiliumNetworkPolicy` (or equivalent) against the `app.kubernetes.io/name: n8n`
+selector and **leave this toggle off**. The two do not compose the way it might
+look. Kubernetes unions every policy that selects a pod and no policy can
+subtract, so a destination-scoped rule of yours cannot take back a port this one
+has already opened to `to: []`. Turning both on gives you this policy's
+allowlist, not the intersection.
 
 Before enabling it, check whether you rely on any of:
 
 - **Workflows calling plaintext `http://` endpoints.** Port 80 is denied. This
   is the one that breaks real workflows most often.
 - **An OpenTelemetry collector on 4317 or 4318.** Denied. The module warns at
-  plan time when `n8n_otel_exporter_otlp_endpoint` names a port other than 443,
-  because n8n does not treat a failed span export as an error: nothing crashes,
-  the traces just stop. A collector reached over 443, or a sidecar on
-  `localhost`, is unaffected.
+  plan time when `n8n_otel_exporter_otlp_endpoint` resolves to a port outside
+  the allowlist above, because n8n does not treat a failed span export as an
+  error: nothing crashes, the traces just stop. A collector reached over 443,
+  one sharing the database or Redis port, and a sidecar on loopback are all
+  unaffected and draw no warning.
 - **SMTP for n8n's own mail** (587, 465, 25). Denied.
 - **A CNI that enforces NetworkPolicy.** Cilium and Calico do. A cluster whose
   CNI ignores policy will apply this object happily and enforce nothing, which
