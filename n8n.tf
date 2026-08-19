@@ -395,13 +395,25 @@ check "rolling_update_still_overlaps_two_mains" {
     # maxSurge = 0 is the strongest thing RollingUpdate offers, and it is not
     # enough. It bounds how many pods may exist, and a Terminating pod stops
     # counting the moment its ReplicaSet is scaled to zero, while the process
-    # inside it runs until its preStop hook and graceful shutdown finish. So
-    # the controller creates the incoming main and the outgoing one keeps
-    # serving beside it for up to n8n_prestop_sleep + n8n_termination_grace_
-    # period. Recreate is the only strategy that waits for the old pod to be
-    # gone, which is why it is the default.
-    condition     = var.n8n_main_strategy == "RollingUpdate" ? false : true
-    error_message = "n8n_main_strategy is RollingUpdate, which does not give the main pod an overlap-free rollout. It renders maxSurge = 0 so a second main is never scheduled, but the outgoing pod goes on running for its preStop sleep and graceful shutdown budget after the incoming one is created, currently up to ${var.n8n_prestop_sleep + var.n8n_termination_grace_period}s. For that window two n8n mains share one Redis and one Postgres with no leader election between them, because multi-main is licensed and this module deploys Community edition: both hold the schedule triggers, cron workflows fire twice, and on a version bump the new main runs its one-way startup migrations while the old one is still reading the old schema. Set n8n_main_strategy = \"Recreate\" unless your tooling requires the RollingUpdate strategy type and you accept that window."
+    # inside it runs on. So the controller creates the incoming main and the
+    # outgoing one keeps serving beside it until it finishes terminating.
+    # Recreate is the only strategy that waits for that, which is why it is
+    # the default.
+    #
+    # The window is bounded by the pod's terminationGracePeriodSeconds and
+    # nothing else: the kubelet starts that clock when the pod is marked for
+    # deletion and runs the preStop hook inside it, so the hook is not added
+    # to the budget. Deliberately not quoted as a number here. This module
+    # does not set the pod's grace period at all yet, so the value in force is
+    # the chart's own default, and neither n8n_termination_grace_period (which
+    # only sets n8n's N8N_GRACEFUL_SHUTDOWN_TIMEOUT) nor n8n_prestop_sleep
+    # currently reaches it.
+    #
+    # Read through local.n8n_main_strategy_effective rather than the input,
+    # because n8n_extra_helm_values is merged last and can select the strategy
+    # behind the input's back.
+    condition     = local.n8n_main_strategy_effective == "RollingUpdate" ? false : true
+    error_message = "The main Deployment is set to roll with RollingUpdate, which does not give it an overlap-free rollout. It renders maxSurge = 0 so a second main is never scheduled, but the outgoing pod goes on running after the incoming one is created, for as long as it takes to terminate: the kubelet starts the pod's terminationGracePeriodSeconds clock when the pod is marked for deletion, runs the preStop hook inside that budget, and only then sends SIGTERM, so the whole window is bounded by that one number rather than by any sum. For that window two n8n mains share one Redis and one Postgres with no leader election between them, because multi-main is licensed and this module deploys Community edition: both hold the schedule triggers, cron workflows fire twice, and on a version bump the new main runs its one-way startup migrations while the old one is still reading the old schema. Set n8n_main_strategy = \"Recreate\" unless your tooling requires the RollingUpdate strategy type and you accept that window. If this fired on the default, check whether n8n_extra_helm_values sets strategy.type: the overlay is merged last and wins."
   }
 }
 

@@ -686,6 +686,14 @@ locals {
   # mapping with no pdb key, all of which mean "not enabled here".
   n8n_pdb_enabled_via_extra_values = try(yamldecode(var.n8n_extra_helm_values).pdb.enabled, false) == true
 
+  # The strategy the Deployment actually ends up with. Same two-routes problem
+  # as the PDB below: n8n_extra_helm_values is merged after the module's own
+  # values and Helm gives the later file precedence, so the overlay can select
+  # RollingUpdate regardless of what the typed input says.
+  n8n_main_strategy_via_extra_values = try(yamldecode(var.n8n_extra_helm_values).strategy.type, null)
+
+  n8n_main_strategy_effective = coalesce(local.n8n_main_strategy_via_extra_values, var.n8n_main_strategy)
+
   # Whether a PodDisruptionBudget ends up in the release at all, by either
   # route. Named because the check block asks exactly this question, and a
   # check reading `!a && !b` makes the reader reconstruct what the two halves

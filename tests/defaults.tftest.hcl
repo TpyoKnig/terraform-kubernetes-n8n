@@ -1955,6 +1955,44 @@ run "rolling_update_is_rendered_with_no_surge" {
   expect_failures = [check.rolling_update_still_overlaps_two_mains]
 }
 
+# The typed input is not the only way to select a strategy. n8n_extra_helm_values
+# is merged after the module's values and Helm gives the later file precedence,
+# so an overlay setting strategy.type must reach the same warning.
+run "an_extra_values_overlay_cannot_select_rolling_update_silently" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        type: RollingUpdate
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "RollingUpdate"
+    error_message = "An overlay setting strategy.type must decide the effective strategy, since Helm lets it win over the module's own values."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# An overlay that says nothing about the strategy must leave the input in force.
+run "an_unrelated_overlay_leaves_the_strategy_alone" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      podLabels:
+        team: platform
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "Recreate"
+    error_message = "An overlay that never mentions strategy must leave n8n_main_strategy deciding."
+  }
+}
+
 # The default must not trip that warning, or it fires on every deployment and
 # becomes noise.
 run "the_default_strategy_warns_about_nothing" {
