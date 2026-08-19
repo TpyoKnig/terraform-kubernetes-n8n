@@ -814,6 +814,13 @@ run "an_external_redis_with_auth_renders_the_password_secret" {
     condition     = try(local.k8s_values_redis.redis.passwordSecret.name, null) == "n8n-redis-secret" && try(local.k8s_values_redis.redis.passwordSecret.key, null) == "password"
     error_message = "With an AUTH token, passwordSecret must point at the module-managed n8n-redis-secret."
   }
+
+  # The reference alone is not enough - this PR exists because a reference to
+  # a Secret nothing creates is a broken deployment. Assert the Secret too.
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 1
+    error_message = "The module must create the Secret the passwordSecret reference names."
+  }
 }
 
 run "the_in_cluster_queue_still_renders_its_password_secret" {

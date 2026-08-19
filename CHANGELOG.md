@@ -99,7 +99,8 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - An external Redis without an AUTH token no longer breaks every pod.
   `redis.passwordSecret` was rendered unconditionally, and on the no-auth
   external path it named `n8n-redis-secret`, a Secret the module only creates
-  when `redis_auth_token` or `redis_auth_token_secret_ref` is set. The chart
+  when `redis_auth_token` is set (with `redis_auth_token_secret_ref` the
+  reference points at the caller's own Secret instead). The chart
   then gave every main, worker and webhook-processor container a secretKeyRef
   to a Secret that does not exist, and the whole deployment sat in
   `CreateContainerConfigError`. The key is now rendered only when there is a
