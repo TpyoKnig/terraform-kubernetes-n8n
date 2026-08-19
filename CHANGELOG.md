@@ -96,6 +96,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- The `tls-letsencrypt` submodule validates its `name` input as a Kubernetes
+  object name at plan time. An invalid name previously failed only mid-apply,
+  and the derived `"<name>-account-key"` Secret name bypassed the shape check
+  the explicit `private_key_secret_name` input already carried; the new
+  validation covers both, capped so the derived name stays inside the
+  253-character limit.
+
 - A sweep of documentation and comments that contradicted the code. The most
   load-bearing: `n8n_templates_enabled` / `n8n_personalization_enabled`
   claimed that setting `true` emits no env var (both are rendered explicitly
