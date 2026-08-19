@@ -354,6 +354,7 @@ locals {
   k8s_pg_secret_password_key = local.cnpg_enabled ? "password" : local.db_password_secret_ref_key != null ? local.db_password_secret_ref_key : "password"
 
   k8s_redis_host                = local.valkey_enabled ? local.valkey_host : (var.redis_host == null ? "" : var.redis_host)
+  k8s_redis_port                = local.valkey_enabled ? 6379 : var.redis_port
   k8s_redis_secret_name         = local.valkey_enabled ? local.valkey_secret_name : (var.redis_auth_token_secret_ref == null ? "n8n-redis-secret" : var.redis_auth_token_secret_ref.name)
   k8s_redis_secret_password_key = local.valkey_enabled ? "redis-password" : (local.redis_auth_token_secret_ref_key != null ? local.redis_auth_token_secret_ref_key : "password")
 
@@ -466,7 +467,7 @@ locals {
         enabled     = true
         useExternal = true
         host        = local.k8s_redis_host
-        port        = local.valkey_enabled ? 6379 : var.redis_port
+        port        = local.k8s_redis_port
         username    = local.valkey_enabled || local.redis_username_value == null ? "" : local.redis_username_value
         database    = 0
 
@@ -1169,13 +1170,44 @@ locals {
         triggers = [
           for list_name in ["jobs:wait", "jobs:active"] : {
             type = "redis"
-            metadata = merge({
-              address    = "${local.k8s_redis_host}:6379"
-              listName   = "${local.redis_key_prefix_value}:${list_name}"
-              listLength = tostring(var.n8n_worker_keda_jobs_per_replica)
-              }, local.k8s_redis_secret_name != null ? {
-              passwordFromEnv = "QUEUE_BULL_REDIS_PASSWORD"
-            } : {})
+            metadata = merge(
+              {
+                # The same resolved host and port n8n itself connects on. The
+                # port was once hardcoded to 6379, which is only ever right for
+                # the in-cluster Valkey Service: an external endpoint on any
+                # other port had n8n consuming one address and KEDA scaling on
+                # another that answers nothing.
+                address    = "${local.k8s_redis_host}:${local.k8s_redis_port}"
+                listName   = "${local.redis_key_prefix_value}:${list_name}"
+                listLength = tostring(var.n8n_worker_keda_jobs_per_replica)
+              },
+              # Mirror of the QUEUE_BULL_REDIS_TLS gate in config.extraEnv: the
+              # scaler and the workload have to agree about the endpoint or the
+              # scaler dials a TLS listener in plaintext and reads nothing.
+              local.valkey_enabled || !local.redis_tls_active ? {} : {
+                enableTLS = "true"
+              },
+              # Only when a token exists. passwordFromEnv names an env var KEDA
+              # resolves against the scale target's first container, which is
+              # the worker n8n container carrying QUEUE_BULL_REDIS_PASSWORD via
+              # secretKeyRef - but only when redis.passwordSecret is rendered.
+              # Unconditional (the old gate compared a never-null local against
+              # null), it named a variable that does not exist on the no-auth
+              # path, and the scaler then authenticated with an empty password
+              # against a server expecting none.
+              local.valkey_enabled || local.redis_auth_active ? {
+                passwordFromEnv = "QUEUE_BULL_REDIS_PASSWORD"
+              } : {},
+              # A literal, matching how the chart carries it to n8n: the
+              # username is not a credential, and the scaler accepts it in
+              # triggerMetadata directly. Without it, an ACL-authenticated
+              # endpoint had n8n connecting as the named user and KEDA as
+              # `default`, which usually cannot LLEN the bull lists, so the
+              # scaler reported unknown and the worker count froze.
+              local.valkey_enabled || local.redis_username_value == null ? {} : {
+                username = local.redis_username_value
+              },
+            )
             authenticationRef = { name = "" }
           }
         ]
