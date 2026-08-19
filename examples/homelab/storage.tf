@@ -39,14 +39,29 @@
 #
 # One owner, always, and the flip has nothing left to move.
 #
-# Existing deployments migrate once, and only those that never set
-# shared_storage_class, because the others already have the namespace here:
+# Every existing deployment migrates once, and which move it needs depends on
+# where the namespace is in state today rather than on how the variable is set
+# now. Look first:
 #
-#   terraform state mv #     'module.n8n.kubernetes_namespace.n8n[0]' #     'kubernetes_namespace.n8n'
+#   terraform state list | grep kubernetes_namespace.n8n
 #
-# Without it the first apply after upgrading plans exactly the destroy-and-
-# recreate described above. Check for it: a plan that proposes to destroy a
+# Module-owned, which is every deployment with shared_storage_class unset,
+# including one that set it once and unset it again:
+#
+#   terraform state mv 'module.n8n.kubernetes_namespace.n8n[0]' 'kubernetes_namespace.n8n'
+#
+# Example-owned and indexed, which is every deployment with the class set:
+# removing the count above dropped the [0], so these move too.
+#
+#   terraform state mv 'kubernetes_namespace.n8n[0]' 'kubernetes_namespace.n8n'
+#
+# Without the move the first apply after upgrading plans exactly the destroy-
+# and-recreate described above. Check for it: a plan that proposes to destroy a
 # namespace is never routine.
+#
+# The module-owned move leaves one further diff, which is expected and safe: an
+# in-place update dropping the app.kubernetes.io/managed-by label the module
+# set and this resource does not.
 resource "kubernetes_namespace" "n8n" {
   metadata {
     name = var.namespace
