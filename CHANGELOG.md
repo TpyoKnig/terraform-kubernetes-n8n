@@ -96,6 +96,50 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Five bugs in the examples, all present since they were written and all in the
+  copies every example shares.
+
+  The shared-storage claim waited to bind, which deadlocks against a
+  `WaitForFirstConsumer` `StorageClass`: nothing can consume the claim until the
+  Helm release exists, and the release is downstream of the claim. It ended as a
+  five minute timeout blaming the claim. `wait_until_bound = false` now.
+
+  The namespace changed owner when `shared_storage_class` went from unset to
+  set, moving between the module's resource address and the example's in one
+  apply. Terraform had no reason to sequence that safely, so it either failed
+  `AlreadyExists` or destroyed the module-owned namespace first, taking n8n,
+  CloudNativePG, Valkey and every PVC with it, with nothing in the plan reading
+  as "this deletes your database". The examples own the namespace
+  unconditionally now. **Every existing deployment needs one
+  `terraform state mv` before the next apply.** Which one depends on the
+  address that is actually in state, not on how the variable is set: run
+  `terraform state list | grep kubernetes_namespace.n8n` and move whichever of
+  `module.n8n.kubernetes_namespace.n8n[0]` or `kubernetes_namespace.n8n[0]`
+  exists to `kubernetes_namespace.n8n`. Removing the `count` dropped the index
+  on the second. Both commands are in `storage.tf`. Without the move the next
+  apply plans that same destroy.
+
+  `kubeconfig_path` accepted a trailing backslash, which escapes the closing
+  quote of the generated `kubectl_config_command` and leaves the export
+  unterminated. It also accepted the empty string, which resolved to the
+  example directory and made the smoke test export a directory as
+  `KUBECONFIG`. Both rejected now.
+
+  A relative `kubeconfig_path` resolved against the root module for Terraform
+  and against the invoking shell for `smoke-test.sh`, which the documented
+  `TERRAFORM_DIR=examples/...` form runs from the repository root, so the two
+  named different files. Resolved to absolute, and only when genuinely
+  relative: `abspath` prepends a drive to an absolute POSIX path on Windows,
+  which would make the output depend on where Terraform ran.
+
+  Windows separators are normalised to forward slashes on the way into that
+  double-quoted shell string, and only there: on POSIX a backslash is an
+  ordinary filename character, so `/tmp/kube\config` used to reach the
+  providers intact and the smoke test as `/tmp/kube/config`. A drive letter is
+  the marker. Which also means a drive-relative path like `C:config` is
+  resolved rather than passed through, having named a path against the current
+  directory of drive C rather than against its root all along.
+
 - `backing_services.binary_storage` reported the constant `"filesystem"` on
   every path, including the default one where binary data goes to Postgres. It
   now reports the effective mode, following an `n8n_extra_env` override where

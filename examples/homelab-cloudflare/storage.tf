@@ -25,12 +25,44 @@
 # Terraform cannot reorder. No depends_on on the module block, deliberately, for
 # the reason spelled out there.
 #
-# With shared_storage_class unset, neither resource is created and the module
-# creates the namespace itself as before.
+# With shared_storage_class unset the claim is not created, but the namespace
+# still is: this example owns it on every path, for the reason below.
 
+# Owned here unconditionally, and that is the fix for a trap rather than a
+# preference. It used to be created only when shared_storage_class was set, with
+# the module creating it otherwise. Turning shared storage on for an existing
+# deployment therefore moved the namespace between two resource addresses in one
+# apply: Terraform has no reason to sequence that safely, so it either created
+# the new one first and failed AlreadyExists, or destroyed the module-owned one
+# first and took n8n, CloudNativePG, Valkey and every PVC in the namespace with
+# it. Nothing in the plan output reads as "this deletes your database".
+#
+# One owner, always, and the flip has nothing left to move.
+#
+# Every existing deployment migrates once, and which move it needs depends on
+# where the namespace is in state today rather than on how the variable is set
+# now. Look first:
+#
+#   terraform state list | grep kubernetes_namespace.n8n
+#
+# Module-owned, which is every deployment with shared_storage_class unset,
+# including one that set it once and unset it again:
+#
+#   terraform state mv 'module.n8n.kubernetes_namespace.n8n[0]' 'kubernetes_namespace.n8n'
+#
+# Example-owned and indexed, which is every deployment with the class set:
+# removing the count above dropped the [0], so these move too.
+#
+#   terraform state mv 'kubernetes_namespace.n8n[0]' 'kubernetes_namespace.n8n'
+#
+# Without the move the first apply after upgrading plans exactly the destroy-
+# and-recreate described above. Check for it: a plan that proposes to destroy a
+# namespace is never routine.
+#
+# The module-owned move leaves one further diff, which is expected and safe: an
+# in-place update dropping the app.kubernetes.io/managed-by label the module
+# set and this resource does not.
 resource "kubernetes_namespace" "n8n" {
-  count = var.shared_storage_class != null ? 1 : 0
-
   metadata {
     name = var.namespace
   }
@@ -41,7 +73,7 @@ resource "kubernetes_persistent_volume_claim_v1" "shared" {
 
   metadata {
     name      = "n8n-shared"
-    namespace = kubernetes_namespace.n8n[0].metadata[0].name
+    namespace = kubernetes_namespace.n8n.metadata[0].name
   }
 
   spec {
@@ -55,9 +87,21 @@ resource "kubernetes_persistent_volume_claim_v1" "shared" {
     }
   }
 
-  # A claim that binds immediately is the normal case. One that stays Pending
-  # usually means the class is not actually RWX-capable, which wants a human
-  # rather than a longer wait.
+  # A WaitForFirstConsumer class does not bind a claim until a pod consumes it,
+  # and the pod cannot exist yet: the Helm release is downstream of this claim,
+  # by way of the n8n_extra_volumes reference in main.tf. Waiting here is
+  # therefore a deadlock against exactly the classes people reach for, and it
+  # ends as a five minute timeout blaming the claim.
+  #
+  # Not waiting costs the diagnosis the old comment wanted. A class that never
+  # binds now surfaces one step later, as pods stuck Pending and a release wait
+  # that expires, which is a worse message than this resource could have given
+  # but is at least reached on every class rather than on half of them. Check
+  # VOLUMEBINDINGMODE before blaming the storage:
+  #
+  #   kubectl get storageclass <name> -o jsonpath='{.volumeBindingMode}'
+  wait_until_bound = false
+
   timeouts {
     create = "5m"
   }

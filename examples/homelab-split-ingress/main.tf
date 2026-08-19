@@ -9,9 +9,10 @@ module "n8n" {
   # Redis, the cluster's default StorageClass for the PVCs.
   postgres_backend = "cnpg"
   redis_backend    = "valkey"
-  # false when a shared claim exists, because the claim has to be created
-  # before the release and it needs the namespace. See storage.tf.
-  create_namespace = var.shared_storage_class == null
+  # Always false: this example owns the namespace, so that turning shared
+  # storage on later cannot move it between two resource addresses mid-apply.
+  # See storage.tf for what that used to cost.
+  create_namespace = false
 
   # ── The split ──────────────────────────────────────────────────────────────
   # create_ingress = false hands routing to ingress.tf. The module still builds
@@ -39,20 +40,20 @@ module "n8n" {
   k8s_keda_installed = var.keda_installed
 
 
-  # Reference the namespace resource rather than var.namespace on the shared
-  # storage path, so every namespaced resource inside the module inherits an
-  # edge to it. Without this the module only waits for the claim, and only for
-  # the Helm release that mounts it: the Secrets, the CNPG Cluster and the
-  # Valkey release have no path to the namespace at all and a first apply can
-  # fail with `namespaces "n8n" not found`. Deploying in two steps hides it,
-  # which is why it survived a live apply.
+  # Reference the namespace resource rather than var.namespace, so every
+  # namespaced resource inside the module inherits an edge to it. Without this
+  # the module waits only for the claim, and only for the Helm release that
+  # mounts it: the Secrets, the CNPG Cluster and the Valkey release have no path
+  # to the namespace at all and a first apply can fail with `namespaces "n8n"
+  # not found`. Deploying in two steps hides it, which is why it survived a live
+  # apply.
   #
   # A module-level depends_on would also fix it and costs more: it defers
   # everything inside, including the node lookup the capacity check reads, so a
   # plan-time diagnostic becomes an apply-time one. The name here stays known
   # at plan because it is a configured attribute, so this buys the edge without
   # making the namespace unknown.
-  k8s_namespace = var.shared_storage_class != null ? kubernetes_namespace.n8n[0].metadata[0].name : var.namespace
+  k8s_namespace = kubernetes_namespace.n8n.metadata[0].name
 
   # ── k8s-backend Postgres / Redis ───────────────────────────────────────────
   cnpg_instances     = 1

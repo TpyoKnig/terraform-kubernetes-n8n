@@ -8,14 +8,14 @@ variable "kubeconfig_path" {
   nullable    = false
 
   validation {
-    condition     = !can(regex("[\"`$]", var.kubeconfig_path))
-    error_message = "kubeconfig_path must not contain a double quote, a backtick or a dollar sign. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command, and those three characters are the ones that escape the quoting around it."
+    condition     = var.kubeconfig_path != "" && !can(regex("[\"`$]", var.kubeconfig_path)) && !endswith(var.kubeconfig_path, "\\")
+    error_message = "kubeconfig_path must not be empty, must not contain a double quote, a backtick or a dollar sign, and must not end in a backslash. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command: the first three characters escape the quoting around it, and a trailing backslash escapes the closing quote itself, which leaves the command unterminated and the export silently skipped. An empty path is rejected because it resolves to the example directory rather than to a file, and the smoke test would export a directory as KUBECONFIG."
   }
 
 }
 
 variable "namespace" {
-  description = "Namespace to deploy into. Created by the module by default, or by this example when shared_storage_class is set, because the shared claim has to exist before the Helm release."
+  description = "Namespace to deploy into. Created by this example on every path rather than by the module, so that turning shared storage on later cannot move it between two resource addresses. An existing deployment upgrading to this needs one terraform state mv first, or the next apply plans to destroy the namespace; both commands are in storage.tf."
   type        = string
   default     = "n8n"
   nullable    = false

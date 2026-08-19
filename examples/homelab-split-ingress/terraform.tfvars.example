@@ -16,7 +16,9 @@ webhook_host = "hooks.example.com"
 # Path to the kubeconfig the kubernetes, helm and kubectl providers use.
 # kubeconfig_path = "~/.kube/config"
 
-# Namespace to deploy into. Created by the module.
+# Namespace to deploy into. Created by this example rather than by the module.
+# Upgrading an existing deployment needs one terraform state mv - see
+# storage.tf.
 # namespace = "n8n"
 
 # cert-manager ClusterIssuer signing both certificates. Must already exist.

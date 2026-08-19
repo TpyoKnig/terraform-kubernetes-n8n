@@ -359,3 +359,78 @@ run "a_shell_metacharacter_in_the_kubeconfig_path_is_rejected" {
 
   expect_failures = [var.kubeconfig_path]
 }
+
+run "a_trailing_backslash_in_the_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # Escapes the closing quote of the generated export, so smoke-test.sh evals
+  # an unterminated command and silently skips it.
+  variables {
+    kubeconfig_path = "/home/me/kube/\\"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "an_empty_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # abspath("") is the example directory, so the smoke test would export a
+  # directory as KUBECONFIG. nullable = false stops null, not empty.
+  variables {
+    kubeconfig_path = ""
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_posix_backslash_is_a_filename_character_not_a_separator" {
+  command = plan
+
+  # Normalising unconditionally pointed the smoke test at /tmp/kube/config
+  # while the providers opened this file. Only a drive-qualified path gets its
+  # separators rewritten; everything else keeps its backslashes and has them
+  # escaped, because the shell collapses a backslash pair inside the double
+  # quotes smoke-test.sh evals. Escaped, eval reproduces the literal.
+  variables {
+    kubeconfig_path = "/tmp/kube\\config"
+  }
+
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"/tmp/kube\\\\config\""
+    error_message = "A backslash in a POSIX path must survive; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_windows_unc_path_survives_the_shell_eval" {
+  command = plan
+
+  # Absolute, so abspath must not touch it, and its separators are backslashes
+  # that the eval would otherwise collapse in pairs. Escaped, the shell hands
+  # kubectl back the path that was configured.
+  variables {
+    kubeconfig_path = "\\\\server\\share\\config"
+  }
+
+  assert {
+    condition     = output.kubectl_config_command == "export KUBECONFIG=\"\\\\\\\\server\\\\share\\\\config\""
+    error_message = "A UNC path must survive the eval intact; got ${output.kubectl_config_command}."
+  }
+}
+
+run "a_drive_relative_windows_path_is_resolved_not_passed_through" {
+  command = plan
+
+  # "C:config" names a path against the current directory of drive C, not its
+  # root, so it is relative. Asserted as "not passed through unchanged" rather
+  # than against a literal, because what abspath resolves it to depends on
+  # where the test runs.
+  variables {
+    kubeconfig_path = "C:config"
+  }
+
+  assert {
+    condition     = output.kubectl_config_command != "export KUBECONFIG=\"C:config\""
+    error_message = "A drive-relative path must be resolved, not treated as absolute; got ${output.kubectl_config_command}."
+  }
+}
