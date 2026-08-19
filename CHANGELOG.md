@@ -9,6 +9,33 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `n8n_main_strategy` sets the main Deployment's rollout strategy, and
+  **defaults to `Recreate`, which changes how every deployment rolls.**
+
+  The chart ships `strategy: {}` behind a `with`, so it rendered nothing and
+  the Deployment took Kubernetes' own default: RollingUpdate at maxSurge 25%.
+  Twenty-five percent of one replica rounds up to one, so on every single
+  rollout the new main went Ready while the old one was still serving, and the
+  old one then had its preStop sleep plus its graceful shutdown budget to exit.
+
+  For that window, two n8n mains shared one Redis and one Postgres. Leader
+  election among mains is the licensed multi-main feature this module
+  deliberately does not carry, so both pods held the schedule triggers and both
+  registered on the pub/sub command channel: cron workflows fired twice, and
+  nothing recorded that a second main had ever existed. On a version bump the
+  incoming main also ran its one-way startup migrations while the outgoing one
+  was still querying the old schema.
+
+  Everything else the module does to guarantee a single main
+  (`replicaCount = 1`, `hpa.main.enabled = false`) held except during the
+  rollout that changed it. `RollingUpdate` is also accepted and is rendered
+  with `maxSurge = 0`, because RollingUpdate without that key is the surging
+  default under a different name.
+
+  The visible cost: the editor and the schedulers are down for the length of a
+  main restart on every apply that changes the main pod, where previously they
+  appeared not to be. They were not really up, they were doubled.
+
 - `n8n_main_pdb_enabled` governs whether the chart renders its
   PodDisruptionBudget over the main pod, and **defaults to false, which
   overrides the chart's own default of true.**

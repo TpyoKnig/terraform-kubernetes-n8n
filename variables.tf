@@ -1285,6 +1285,18 @@ variable "redis_key_prefix" {
 # off (see local.k8s_values_hpa). What is left to decide is how that one pod is
 # allowed to go away, which is what the inputs here govern.
 
+variable "n8n_main_strategy" {
+  description = "How the main Deployment replaces its pod on a rollout. \"Recreate\" (the default) terminates the running main before starting the new one. \"RollingUpdate\" is rendered with maxSurge = 0 and maxUnavailable = 1, which is the same zero-overlap behaviour expressed through the RollingUpdate controller, and exists for callers whose tooling expects that strategy type; at one replica the two are near-indistinguishable in effect. What neither will do is run two mains at once. The chart leaves strategy unset, which gets Kubernetes' own default of RollingUpdate at maxSurge 25%, and 25% of one replica rounds up to one: the new main becomes Ready while the old one is still serving, so every rollout runs two mains for as long as the old pod takes to drain and shut down. n8n elects a leader among mains only under multi-main, a licensed feature this module does not carry, so during that window both pods believe they own the schedule triggers and the pub/sub registrations. Cron workflows fire twice and nothing logs that two mains existed. On a version bump the new main also runs its startup migrations while the old one is still querying the old schema. Overlapping mains are reachable through n8n_extra_helm_values if you have a reason; there is not usually one."
+  type        = string
+  default     = "Recreate"
+  nullable    = false
+
+  validation {
+    condition     = contains(["Recreate", "RollingUpdate"], var.n8n_main_strategy)
+    error_message = "n8n_main_strategy must be one of: Recreate, RollingUpdate. Both render a zero-overlap rollout; the difference is which controller semantics the Deployment reports. Kubernetes' own surging default is deliberately not offered here, because it runs two n8n mains at once and Community edition has no leader election to arbitrate them."
+  }
+}
+
 variable "n8n_main_pdb_enabled" {
   description = "Whether the chart renders its PodDisruptionBudget over the single main pod. False by default, which is a change from the chart's own default of true. The chart's PDB is minAvailable = 1 and the module runs replicaCount = 1, so enabling it sets allowed disruptions to zero permanently: `kubectl drain` on whichever node holds the main pod never completes, and a Talos node upgrade of that node stalls in drain until it gives up and proceeds by force. A PDB protects a pod by refusing voluntary evictions, and with one replica every eviction is the last one, so there is nothing for it to protect and a node lifecycle to block. The main going down briefly during a drain is the accepted cost of single-main Community mode; the fix is to make that restart fast and visible, not to forbid it. Set true only if you are deliberately trading node maintenance against main availability and you know how you intend to drain nodes anyway (`--disable-eviction` bypasses the PDB and skips the graceful path with it)."
   type        = bool

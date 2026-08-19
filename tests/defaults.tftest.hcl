@@ -1903,6 +1903,62 @@ run "image_keys_stay_unset_when_the_caller_names_nothing" {
   }
 }
 
+# ── The single main pod's rollout strategy ────────────────────────────────────
+# The chart ships `strategy: {}` behind a `with`, so it renders nothing and the
+# Deployment takes Kubernetes' default: RollingUpdate at maxSurge 25%, which
+# rounds up to one on a one-replica Deployment. That runs two n8n mains for the
+# length of every rollout, and Community edition has no leader election to
+# arbitrate them.
+run "the_main_rolls_without_overlap_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.strategy.type == "Recreate"
+    error_message = "The main Deployment must default to Recreate. Left unset, the chart renders no strategy and Kubernetes surges a second main on every rollout, which duplicates schedule triggers with nothing logging that it happened."
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_final.strategy), "rollingUpdate")
+    error_message = "Recreate must not carry a rollingUpdate block; the API server rejects the combination."
+  }
+}
+
+# The alternative has to be zero-overlap too. RollingUpdate without an explicit
+# maxSurge = 0 is the surging default under another name, so rendering the type
+# alone would reintroduce exactly the bug this input exists to remove.
+run "rolling_update_is_rendered_with_no_surge" {
+  command = plan
+
+  variables {
+    n8n_main_strategy = "RollingUpdate"
+  }
+
+  assert {
+    condition     = local.k8s_values_final.strategy.type == "RollingUpdate"
+    error_message = "n8n_main_strategy = RollingUpdate must reach the chart."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.strategy.rollingUpdate.maxSurge == 0
+    error_message = "RollingUpdate must render maxSurge = 0. Without it Kubernetes defaults to 25%, which is one extra pod on a one-replica Deployment, which is two mains."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.strategy.rollingUpdate.maxUnavailable == 1
+    error_message = "RollingUpdate with maxSurge = 0 needs maxUnavailable >= 1, or the Deployment can never make progress: it may neither add a pod nor remove one."
+  }
+}
+
+run "the_main_strategy_rejects_a_surging_value" {
+  command = plan
+
+  variables {
+    n8n_main_strategy = "OnDelete"
+  }
+
+  expect_failures = [var.n8n_main_strategy]
+}
+
 # ── The single main pod's disruption budget ───────────────────────────────────
 # The chart defaults pdb.enabled to true at minAvailable = 1 and renders it over
 # the main Deployment, which this module pins to one replica. That is

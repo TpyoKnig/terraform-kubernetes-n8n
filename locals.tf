@@ -624,6 +624,48 @@ locals {
     }
   }
 
+  # ── Rollout strategy for the single main pod ───────────────────────────────
+  # The chart ships `strategy: {}`, and its template wraps the key in a `with`,
+  # so an empty map renders nothing at all and the Deployment takes Kubernetes'
+  # default: RollingUpdate at maxSurge 25%. Twenty-five percent of one replica
+  # rounds up to one, so the new main goes Ready while the old one is still
+  # serving, and the old one then gets its preStop sleep plus its graceful
+  # shutdown budget to exit.
+  #
+  # That window is two n8n mains sharing one Redis and one Postgres. Leader
+  # election among mains is the licensed multi-main feature this module does
+  # not carry, so both pods hold schedule triggers and both register on the
+  # pub/sub command channel: cron workflows fire twice, and nothing anywhere
+  # records that a second main existed. On a version bump the new main also
+  # runs its one-way startup migrations while the old one is still reading the
+  # old schema. Everything the module does to guarantee one main
+  # (replicaCount = 1, hpa.main.enabled = false) was true except during the
+  # rollout that changes it.
+  #
+  # Both accepted values render zero overlap. RollingUpdate carries the
+  # explicit maxSurge = 0 that makes it so; without that key it is the default
+  # above wearing a different name.
+  #
+  # merge() rather than a ternary returning two whole objects: Terraform
+  # unifies a conditional's branches to one type, and an object carrying
+  # rollingUpdate against one that does not is "Inconsistent conditional result
+  # types". The same unification rule that stringifies a number elsewhere in
+  # this file (see launcher.autoShutdownTimeout below) rejects the mismatch
+  # outright here.
+  k8s_values_strategy = {
+    strategy = merge(
+      { type = var.n8n_main_strategy },
+      var.n8n_main_strategy == "RollingUpdate" ? {
+        # maxUnavailable must be at least 1 alongside maxSurge = 0, or the
+        # Deployment may neither add a pod nor remove one and never progresses.
+        rollingUpdate = {
+          maxSurge       = 0
+          maxUnavailable = 1
+        }
+      } : {},
+    )
+  }
+
   # ── Disruption budget for the single main pod ──────────────────────────────
   # The chart defaults pdb.enabled to true with minAvailable = 1, and renders
   # the object over the main Deployment only (templates/pdb.yaml selects
@@ -1286,6 +1328,7 @@ locals {
     local.k8s_values_s3_off,
     local.k8s_values_hpa,
     local.k8s_values_pdb,
+    local.k8s_values_strategy,
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,
