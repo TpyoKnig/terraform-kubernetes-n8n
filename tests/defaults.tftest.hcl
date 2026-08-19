@@ -2016,6 +2016,31 @@ run "a_longer_drain_moves_the_pod_grace_period_too" {
   }
 }
 
+# Both inputs are added together to size an integer PodSpec field, so a
+# fraction in either one renders a grace period Kubernetes will not take. The
+# plan is the only place that can say so: `sleep 10.5` is a perfectly good
+# hook, the helm release renders without complaint, and it is the API server
+# that rejects the Deployment on apply.
+run "a_fractional_drain_is_rejected_before_the_api_server_sees_it" {
+  command = plan
+
+  variables {
+    n8n_prestop_sleep = 10.5
+  }
+
+  expect_failures = [var.n8n_prestop_sleep]
+}
+
+run "a_fractional_shutdown_budget_is_rejected_too" {
+  command = plan
+
+  variables {
+    n8n_termination_grace_period = 90.5
+  }
+
+  expect_failures = [var.n8n_termination_grace_period]
+}
+
 
 # ── The single main pod's rollout strategy ────────────────────────────────────
 # The chart ships `strategy: {}` behind a `with`, so it renders nothing and the

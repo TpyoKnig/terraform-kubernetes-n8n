@@ -121,12 +121,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   60 second budget: n8n was killed at 50 of the 60 seconds it had been told it
   had, mid-execution.
 
-  Raising the input made it worse in proportion and said nothing. Asking for
-  300 seconds of drain bought a pod still killed at 60, so every worker
-  scale-down and every node drain destroyed in-flight executions that had been
-  explicitly budgeted for. The pod period is now the drain sleep plus the
-  budget, on main, worker and webhook processor alike, which is what makes the
-  variable's description true.
+  Raising the input bought nothing and said nothing. Asking for 300 seconds of
+  drain still got a pod killed at 60, so the ceiling stayed at roughly 50
+  seconds of usable shutdown no matter what the input said. Executions that
+  finished inside that window were fine either way; the long-running ones the
+  raised budget was meant to protect were exactly the ones it did not, and a
+  worker scale-down or a node drain killed them with nothing reporting why.
+  The pod period is now the drain sleep plus the budget, on main, worker and
+  webhook processor alike, which is what makes the variable's description true.
 
 
 - `check.custom_image_tag_needs_a_task_runner_tag` no longer warns on a

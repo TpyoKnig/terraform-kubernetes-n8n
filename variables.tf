@@ -648,8 +648,8 @@ variable "n8n_termination_grace_period" {
   default     = 60
 
   validation {
-    condition     = var.n8n_termination_grace_period >= 60
-    error_message = "Termination grace period must be at least 60 seconds to allow in-flight executions to complete."
+    condition     = var.n8n_termination_grace_period == floor(var.n8n_termination_grace_period) && var.n8n_termination_grace_period >= 60
+    error_message = "n8n_termination_grace_period must be a whole number of at least 60 seconds. Sixty is the floor because in-flight executions need it. Whole numbers because this input is added to n8n_prestop_sleep to size the pod's terminationGracePeriodSeconds, which Kubernetes types as an integer: a fraction anywhere in the sum makes the API server reject the Deployment at apply, after the plan has said yes."
   }
 }
 
@@ -660,8 +660,8 @@ variable "n8n_prestop_sleep" {
   nullable    = false
 
   validation {
-    condition     = var.n8n_prestop_sleep >= 10
-    error_message = "Pre-stop sleep must be at least 10 seconds for load balancer drain."
+    condition     = var.n8n_prestop_sleep == floor(var.n8n_prestop_sleep) && var.n8n_prestop_sleep >= 10
+    error_message = "n8n_prestop_sleep must be a whole number of at least 10 seconds. Ten is the floor because that is what an ingress controller and kube-proxy need to drop the pod from their endpoint lists. Whole numbers because this input is added to n8n_termination_grace_period to size the pod's terminationGracePeriodSeconds, which Kubernetes types as an integer: `sleep 10.5` is valid in the hook, but a 70.5 second grace period makes the API server reject the Deployment at apply, after the plan has said yes."
   }
 }
 

@@ -642,10 +642,12 @@ locals {
   # a 60 second grace period against a 60 second shutdown budget: n8n is killed
   # at 50 of the 60 seconds it was told it had, mid-execution.
   #
-  # Raising the input made it worse in proportion, silently. Asking for 300
-  # seconds of drain bought a pod that was still killed at 60, so every worker
-  # scale-down and every node drain destroyed in-flight executions the operator
-  # had explicitly budgeted for.
+  # Raising the input bought nothing, silently. Asking for 300 seconds of
+  # drain still got a pod killed at 60, so the usable window stayed at roughly
+  # 50 seconds whatever the input said. Executions finishing inside that were
+  # never at risk; the long-running ones the raised budget existed to protect
+  # were the ones it failed, and a worker scale-down or a node drain took them
+  # with nothing recording why.
   #
   # So the pod-level period is the sum: the drain sleep plus the budget n8n is
   # given after it. That makes the input mean what its description always said,
