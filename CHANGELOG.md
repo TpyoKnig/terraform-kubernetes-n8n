@@ -96,6 +96,38 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Five bugs in the examples, all present since they were written and all in the
+  copies every example shares.
+
+  The shared-storage claim waited to bind, which deadlocks against a
+  `WaitForFirstConsumer` `StorageClass`: nothing can consume the claim until the
+  Helm release exists, and the release is downstream of the claim. It ended as a
+  five minute timeout blaming the claim. `wait_until_bound = false` now.
+
+  The namespace changed owner when `shared_storage_class` went from unset to
+  set, moving between the module's resource address and the example's in one
+  apply. Terraform had no reason to sequence that safely, so it either failed
+  `AlreadyExists` or destroyed the module-owned namespace first, taking n8n,
+  CloudNativePG, Valkey and every PVC with it, with nothing in the plan reading
+  as "this deletes your database". The examples own the namespace
+  unconditionally now. **Existing deployments that never set
+  `shared_storage_class` need one `terraform state mv`**, written out in
+  `storage.tf`; without it the next apply plans that same destroy.
+
+  `kubeconfig_path` accepted a trailing backslash, which escapes the closing
+  quote of the generated `kubectl_config_command` and leaves the export
+  unterminated. Rejected now.
+
+  A relative `kubeconfig_path` resolved against the root module for Terraform
+  and against the invoking shell for `smoke-test.sh`, which the documented
+  `TERRAFORM_DIR=examples/...` form runs from the repository root, so the two
+  named different files. Resolved to absolute, and only when genuinely
+  relative: `abspath` prepends a drive to an absolute POSIX path on Windows,
+  which would make the output depend on where Terraform ran.
+
+  Windows separators are normalised to forward slashes on the way into that
+  double-quoted shell string.
+
 - `backing_services.binary_storage` reported the constant `"filesystem"` on
   every path, including the default one where binary data goes to Postgres. It
   now reports the effective mode, following an `n8n_extra_env` override where

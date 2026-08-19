@@ -8,8 +8,8 @@ variable "kubeconfig_path" {
   nullable    = false
 
   validation {
-    condition     = !can(regex("[\"`$]", var.kubeconfig_path))
-    error_message = "kubeconfig_path must not contain a double quote, a backtick or a dollar sign. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command, and those three characters are the ones that escape the quoting around it."
+    condition     = !can(regex("[\"`$]", var.kubeconfig_path)) && !endswith(var.kubeconfig_path, "\\")
+    error_message = "kubeconfig_path must not contain a double quote, a backtick or a dollar sign, and must not end in a backslash. It is interpolated into kubectl_config_command, which tests/scripts/smoke-test.sh evaluates as a shell command: the first three characters escape the quoting around it, and a trailing backslash escapes the closing quote itself, which leaves the command unterminated and the export silently skipped."
   }
 
 }

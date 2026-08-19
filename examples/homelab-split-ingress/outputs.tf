@@ -8,7 +8,27 @@ locals {
   # tilde expansion does not happen inside quotes, so a leading ~/ becomes
   # $HOME/ before quoting. The variable's own validation rejects the characters
   # that would let the rest of the string out of the quotes.
-  kubeconfig_shell_path = startswith(var.kubeconfig_path, "~/") ? "$HOME/${substr(var.kubeconfig_path, 2, -1)}" : var.kubeconfig_path
+  # Absolute, because the two consumers resolve a relative path against
+  # different directories. Terraform resolves it against the root module; the
+  # smoke test evals this export in whatever shell invoked it, which the
+  # documented TERRAFORM_DIR=examples/... form runs from the repository root.
+  # A relative kubeconfig therefore names one file at apply and a different,
+  # usually absent, one at test.
+  #
+  # Separators normalised with it. abspath uses the platform's, so on Windows
+  # this arrives with backslashes, which then sit inside a double-quoted shell
+  # string where they are at best noise and at worst an escape. Forward slashes
+  # are correct on POSIX and accepted by kubectl on Windows.
+  # Only a genuinely relative path is resolved. abspath on Windows prepends a
+  # drive to an already-absolute POSIX path, so running this from Windows
+  # would rewrite a perfectly good /home/... into C:/home/..., and the output
+  # would depend on where terraform ran rather than on what was configured.
+  kubeconfig_is_absolute = startswith(var.kubeconfig_path, "/") || can(regex("^[A-Za-z]:", var.kubeconfig_path))
+
+  kubeconfig_shell_path = startswith(var.kubeconfig_path, "~/") ? "$HOME/${substr(var.kubeconfig_path, 2, -1)}" : replace(
+    local.kubeconfig_is_absolute ? var.kubeconfig_path : abspath(var.kubeconfig_path),
+    "\\", "/"
+  )
 }
 
 output "editor_url" {

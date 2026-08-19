@@ -238,9 +238,11 @@ run "no_shared_claim_without_a_class" {
     error_message = "No claim should be planned when shared_storage_class is null."
   }
 
-  # And the module keeps creating the namespace on that path.
+  # The namespace is this example's on every path, shared storage or not, so
+  # that turning shared storage on later cannot move it between two resource
+  # addresses. See storage.tf for what that used to cost.
   assert {
-    condition     = length(kubernetes_namespace.n8n) == 0
+    condition     = kubernetes_namespace.n8n.metadata[0].name == "n8n"
     error_message = "The example should not create the namespace when there is no shared claim; the module does it."
   }
 }
@@ -270,10 +272,10 @@ run "a_class_produces_one_rwx_claim" {
     error_message = "The shared claim must be exactly ReadWriteMany; three pod types mount it."
   }
 
-  # Namespace ownership moves to the example, or the claim would have nothing to
-  # be created in before the release.
+  # Same namespace resource as the run above, unconditional now, which is what
+  # the claim needs to be created into before the release.
   assert {
-    condition     = length(kubernetes_namespace.n8n) == 1
+    condition     = kubernetes_namespace.n8n.metadata[0].name == "n8n"
     error_message = "The example must own the namespace when it owns the claim."
   }
 }
