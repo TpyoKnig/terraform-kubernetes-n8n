@@ -777,6 +777,61 @@ run "an_external_redis_uses_the_caller_port_and_username" {
   }
 }
 
+# The chart's deployments guard the QUEUE_BULL_REDIS_PASSWORD secretKeyRef on
+# `if and .name .key`, so an omitted passwordSecret renders no reference at
+# all. Rendered unconditionally, it named "n8n-redis-secret" on the no-auth
+# external path - a Secret the module only creates when auth is active - and
+# every pod sat in CreateContainerConfigError over a Secret that never existed.
+run "an_external_redis_without_auth_renders_no_password_secret" {
+  command = plan
+
+  variables {
+    redis_backend = "external"
+    redis_host    = "redis.internal.example.com"
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_redis.redis), "passwordSecret")
+    error_message = "With no AUTH token, no passwordSecret may be rendered: it would point the pods at a Secret the module does not create."
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 0
+    error_message = "No module-managed Redis Secret should exist on the no-auth path."
+  }
+}
+
+run "an_external_redis_with_auth_renders_the_password_secret" {
+  command = plan
+
+  variables {
+    redis_backend    = "external"
+    redis_host       = "redis.internal.example.com"
+    redis_auth_token = "not-a-real-token"
+  }
+
+  assert {
+    condition     = try(local.k8s_values_redis.redis.passwordSecret.name, null) == "n8n-redis-secret" && try(local.k8s_values_redis.redis.passwordSecret.key, null) == "password"
+    error_message = "With an AUTH token, passwordSecret must point at the module-managed n8n-redis-secret."
+  }
+
+  # The reference alone is not enough - this PR exists because a reference to
+  # a Secret nothing creates is a broken deployment. Assert the Secret too.
+  assert {
+    condition     = length(kubernetes_secret.n8n_redis) == 1
+    error_message = "The module must create the Secret the passwordSecret reference names."
+  }
+}
+
+run "the_in_cluster_queue_still_renders_its_password_secret" {
+  command = plan
+
+  assert {
+    condition     = try(local.k8s_values_redis.redis.passwordSecret.name, null) == "n8n-redis-auth" && try(local.k8s_values_redis.redis.passwordSecret.key, null) == "redis-password"
+    error_message = "The valkey path always has a module-generated credential, so passwordSecret must keep pointing at it."
+  }
+}
+
 run "the_in_cluster_queue_ignores_external_connection_inputs" {
   command = plan
 
