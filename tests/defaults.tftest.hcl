@@ -1903,6 +1903,120 @@ run "image_keys_stay_unset_when_the_caller_names_nothing" {
   }
 }
 
+# ── Pod shutdown budget ───────────────────────────────────────────────────────
+# n8n_termination_grace_period reached N8N_GRACEFUL_SHUTDOWN_TIMEOUT (through
+# the chart's redis.worker.timeout) and nothing else. The pod's own
+# terminationGracePeriodSeconds stayed on the chart's 60, so n8n was killed
+# before the budget it had been handed ran out, and raising the input widened
+# the gap instead of closing it.
+run "the_pod_outlives_the_shutdown_budget_it_was_given" {
+  command = plan
+
+  # Kubernetes starts the grace period at deletion, runs preStop, and sends
+  # SIGTERM only once preStop returns. The pod therefore needs the drain sleep
+  # plus n8n's budget, not the budget alone.
+  assert {
+    condition = local.k8s_values_final.lifecycle.main.terminationGracePeriodSeconds == (
+      var.n8n_termination_grace_period + var.n8n_prestop_sleep
+    )
+    error_message = "The main pod's terminationGracePeriodSeconds must cover the preStop sleep plus n8n's shutdown budget, or the kubelet sends SIGKILL while n8n still believes it has time to finish."
+  }
+
+  assert {
+    condition = local.k8s_values_final.lifecycle.worker.terminationGracePeriodSeconds == (
+      var.n8n_termination_grace_period + var.n8n_prestop_sleep
+    )
+    error_message = "Workers are the family this matters most for: a SIGKILL here kills an execution mid-run."
+  }
+
+  # N8N_GRACEFUL_SHUTDOWN_TIMEOUT comes from the chart's shared ConfigMap, so
+  # it reaches webhook processors too despite living under a redis.worker key.
+  # The grace period has to follow it there.
+  assert {
+    condition = local.k8s_values_final.lifecycle.webhookProcessor.terminationGracePeriodSeconds == (
+      var.n8n_termination_grace_period + var.n8n_prestop_sleep
+    )
+    error_message = "Webhook processors read the same N8N_GRACEFUL_SHUTDOWN_TIMEOUT, so they need the same pod grace period."
+  }
+
+  # The other half of the pair, which was already correct and must stay so:
+  # the value n8n itself is told.
+  assert {
+    condition     = local.k8s_values_final.redis.worker.timeout == var.n8n_termination_grace_period
+    error_message = "redis.worker.timeout must keep carrying n8n_termination_grace_period into N8N_GRACEFUL_SHUTDOWN_TIMEOUT; setting it a second way in config.extraEnv would render a duplicate env name and wedge the next helm upgrade."
+  }
+}
+
+# The drain delay is a pod lifecycle hook, not application configuration. It
+# was rendered as an N8N_PRESTOP_SLEEP environment variable that no chart
+# template references and n8n does not declare, so raising the input changed
+# nothing and the real window stayed on the chart's hardcoded `sleep 10`.
+run "the_prestop_sleep_reaches_the_lifecycle_hook" {
+  command = plan
+
+  variables {
+    n8n_prestop_sleep = 25
+  }
+
+  assert {
+    condition     = local.k8s_values_final.lifecycle.main.preStop.command == ["/bin/sh", "-c", "sleep 25"]
+    error_message = "n8n_prestop_sleep must render the preStop command, or the drain window stays on the chart's hardcoded sleep 10 whatever the caller sets."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.lifecycle.worker.preStop.command == ["/bin/sh", "-c", "sleep 25"]
+    error_message = "Workers need the same drain delay: they hold the queue connection the main hands work to."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.lifecycle.webhookProcessor.preStop.command == ["/bin/sh", "-c", "sleep 25"]
+    error_message = "Webhook processors take inbound production traffic, so they are the family where a missed endpoint removal is most visible."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.lifecycle.main.preStop.enabled == true
+    error_message = "The preStop hook must stay enabled; the command is ignored when the chart's enabled flag is false."
+  }
+}
+
+# The name is gone, not merely unused. An env var nobody reads is worse than
+# absent: it reads as configuration, and the next person to debug a drain
+# problem finds it set to the value they asked for and looks elsewhere.
+run "the_dead_prestop_env_var_is_not_rendered" {
+  command = plan
+
+  assert {
+    condition = !contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "N8N_PRESTOP_SLEEP",
+    )
+    error_message = "N8N_PRESTOP_SLEEP must not be rendered: chart 1.10.0 references it in no template and n8n declares no such variable, so it is configuration-shaped noise in every container's environment."
+  }
+}
+
+# Raising the input has to move the pod's period with it. This is the case that
+# failed before: asking for a long drain bought a longer n8n budget inside an
+# unchanged 60 second pod lifetime.
+run "a_longer_drain_moves_the_pod_grace_period_too" {
+  command = plan
+
+  variables {
+    n8n_termination_grace_period = 300
+    n8n_prestop_sleep            = 15
+  }
+
+  assert {
+    condition     = local.k8s_values_final.lifecycle.worker.terminationGracePeriodSeconds == 315
+    error_message = "A 300 second shutdown budget behind a 15 second drain needs a 315 second pod grace period; anything less kills executions the operator explicitly budgeted for."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.redis.worker.timeout == 300
+    error_message = "n8n's own budget must still be the raw input, not the sum: it starts counting after preStop, not before."
+  }
+}
+
+
 # ── The single main pod's rollout strategy ────────────────────────────────────
 # The chart ships `strategy: {}` behind a `with`, so it renders nothing and the
 # Deployment takes Kubernetes' default: RollingUpdate at maxSurge 25%, which
