@@ -96,6 +96,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Three classes of shell bug in `tests/scripts/smoke-test.sh`, each hiding the
+  exact failure its check exists to report. Under `set -euo pipefail`, an
+  unrouted webhook prefix made the ingress check's `grep` pipeline abort the
+  whole script instead of printing the `fail` line, and a missing catch-all
+  `/` rule did the same to its `warn`. The ScaledObject lookup read `$?` on
+  the line after a plain assignment, which `set -e` never reaches, so the
+  "kubectl failed" branch was unreachable. And four `curl ... || echo "000"`
+  fallbacks doubled the `000` curl itself writes on a connection failure,
+  producing `000000` and skipping the "connection failed" branch - the same
+  bug the healthz check already documents and fixes for itself.
+
 - The capacity diagnostic no longer counts a `NoExecute`-tainted node as
   schedulable supply. `NoExecute` blocks new scheduling the same way
   `NoSchedule` does and additionally evicts what is already running, so a node

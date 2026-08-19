@@ -701,7 +701,10 @@ if [[ -z "$ingress_paths" ]]; then
   info "Verify your own route all of: ${WEBHOOK_PREFIXES[*]} → $WEBHOOK_SVC"
 else
   for prefix in "${WEBHOOK_PREFIXES[@]}"; do
-    backend=$(echo "$ingress_paths" | grep -E "^${prefix}/?=" | head -1 | cut -d= -f2)
+    # || true: under set -euo pipefail an unrouted prefix makes grep exit 1 and
+    # the assignment abort the whole script - the exact case the fail branch
+    # below exists to report.
+    backend=$(echo "$ingress_paths" | grep -E "^${prefix}/?=" | head -1 | cut -d= -f2 || true)
 
     if [[ -z "$backend" ]]; then
       fail "$prefix is not routed, so requests fall through to the main pods and 404"
@@ -712,7 +715,8 @@ else
     fi
   done
 
-  root_backend=$(echo "$ingress_paths" | grep -E '^/=' | head -1 | cut -d= -f2)
+  # || true, same reason: a missing catch-all is the warn branch's whole case.
+  root_backend=$(echo "$ingress_paths" | grep -E '^/=' | head -1 | cut -d= -f2 || true)
   if [[ "$root_backend" == "n8n-main" ]]; then
     pass "/ → $root_backend"
   elif [[ -n "$root_backend" ]]; then
@@ -799,7 +803,9 @@ else
   api_status=$(curl -sk -o /dev/null -w "%{http_code}" \
     --max-time 10 \
     -H "X-N8N-API-KEY: $N8N_API_KEY" \
-    "${N8N_URL%/}/api/v1/workflows?limit=1" || echo "000")
+    "${N8N_URL%/}/api/v1/workflows?limit=1") || true
+  # curl writes 000 itself on a connection failure; see the healthz note above.
+  [[ -z "$api_status" ]] && api_status="000"
 
   if [[ "$api_status" == "200" ]]; then
     pass "API /api/v1/workflows responded HTTP $api_status"
@@ -954,7 +960,8 @@ else
       --max-time 10 \
       -X POST \
       -H "X-N8N-API-KEY: $N8N_API_KEY" \
-      "${N8N_URL%/}/api/v1/workflows/${workflow_id}/activate" 2>/dev/null || echo "000")
+      "${N8N_URL%/}/api/v1/workflows/${workflow_id}/activate" 2>/dev/null) || true
+    [[ -z "$activate_status" ]] && activate_status="000"
 
     if [[ "$activate_status" != "200" ]]; then
       fail "Failed to activate test workflow (HTTP $activate_status)"
@@ -971,7 +978,8 @@ else
           -X POST \
           -H "Content-Type: application/json" \
           -d '{"smoke_test": true}' \
-          "${N8N_URL%/}/webhook/${webhook_path}" 2>/dev/null || echo "000")
+          "${N8N_URL%/}/webhook/${webhook_path}" 2>/dev/null) || true
+        [[ -z "$trigger_status" ]] && trigger_status="000"
         trigger_body=""
       else
         info "Triggering execution via webhook → Code node (exercises task runner)"
@@ -1152,7 +1160,8 @@ EOF
         --max-time 10 \
         -X POST \
         -H "X-N8N-API-KEY: $N8N_API_KEY" \
-        "${N8N_URL%/}/api/v1/workflows/${load_workflow_id}/activate" 2>/dev/null || echo "000")
+        "${N8N_URL%/}/api/v1/workflows/${load_workflow_id}/activate" 2>/dev/null) || true
+      [[ -z "$load_activate_status" ]] && load_activate_status="000"
 
       if [[ "$load_activate_status" != "200" ]]; then
         warn "Could not activate load test workflow (HTTP $load_activate_status) - skipping scaling test"
