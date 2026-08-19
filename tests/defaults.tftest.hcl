@@ -1811,6 +1811,71 @@ run "an_overlay_declaring_the_key_without_enabled_keeps_the_module_value" {
   expect_failures = [check.network_policy_blocks_the_otel_collector]
 }
 
+# ── Both Helm releases clean up after a failed release ────────────────────────
+# A release that exceeds its timeout without atomic stays in the cluster while
+# Terraform records no state for it, so every later apply fails with "cannot
+# re-use a name that is still in use" until someone runs helm uninstall by
+# hand. The n8n release was given the pair after exactly that happened; the
+# Valkey release was left behind, and it is the worse half to diagnose, since
+# the n8n release then waits on a queue that never arrives and reports its own
+# timeout instead.
+#
+# The two flags are asserted separately because they cover different
+# operations: atomic is what purges a failed install, and cleanup_on_fail is
+# upgrade-only. Getting that backwards is how the install-side guard gets
+# dropped while the suite stays green.
+run "both_helm_releases_clean_up_after_a_failed_release" {
+  command = plan
+
+  # helm_release.valkey is count-gated on this, and an empty list makes
+  # alltrue() below return true. Pinning the backend is what keeps the two
+  # Valkey assertions from passing on a release that was never planned - it
+  # is the default today, but a default is not a guarantee, and the failure
+  # mode of getting this wrong is a green suite asserting nothing.
+  variables {
+    redis_backend = "valkey"
+  }
+
+  assert {
+    condition     = helm_release.n8n.atomic && helm_release.n8n.cleanup_on_fail
+    error_message = "helm_release.n8n must stay atomic with cleanup_on_fail, or a timed-out install strands a release Terraform does not know about."
+  }
+
+  assert {
+    condition     = alltrue([for r in helm_release.valkey : r.atomic])
+    error_message = "helm_release.valkey must be atomic for the same reason helm_release.n8n is: without it a timed-out install strands a release Terraform has no state for, and every later apply fails on the name still being in use."
+  }
+
+  assert {
+    condition     = alltrue([for r in helm_release.valkey : r.cleanup_on_fail])
+    error_message = "helm_release.valkey must set cleanup_on_fail, or a failed upgrade leaves behind the resources it created for a revision that was then rolled back."
+  }
+}
+
+# ── The namespace gets long enough to finish deleting ─────────────────────────
+# Deleting this namespace waits on a CNPG Cluster tearing down and PVCs whose
+# provisioner has to detach real volumes, which ran past the 2m this used to
+# allow. The destroy then reported "context deadline exceeded" for a deletion
+# that completed on its own minutes later, leaving a namespace in state that
+# no longer existed. Pinned because the failure only shows up on a real
+# destroy, which no test performs.
+run "the_namespace_delete_timeout_outlasts_a_real_teardown" {
+  command = plan
+
+  # kubernetes_namespace.n8n is count-gated on this, and alltrue() over an
+  # empty list returns true. Pinned for the same reason the Valkey run above
+  # pins redis_backend: it is the default today, but a default is not a
+  # guarantee.
+  variables {
+    create_namespace = true
+  }
+
+  assert {
+    condition     = alltrue([for n in kubernetes_namespace.n8n : n.timeouts.delete == "10m"])
+    error_message = "kubernetes_namespace.n8n must allow 10m to delete. Shorter, and a destroy that is merely waiting on storage reclaim fails while the namespace goes on to delete successfully, which reads as a broken destroy against a cluster that is already clean."
+  }
+}
+
 # ── Proxy hops ────────────────────────────────────────────────────────────────
 # The count was a literal 1 gated on create_ingress, so a caller running their
 # own routing got no N8N_PROXY_HOPS at all and n8n attributed every request to
