@@ -2240,3 +2240,42 @@ run "binary_data_mode_is_rejected_from_extra_env_from_secret" {
 
   expect_failures = [var.n8n_extra_env_from_secret]
 }
+
+# The third door onto the same setting. Helm coalesces maps but replaces lists,
+# so an overlay that sets config.extraEnv substitutes the module's whole
+# environment list, and backing_services.binary_storage would keep reporting
+# what the module rendered while the pods ran something else entirely.
+run "extra_helm_values_may_not_replace_the_env_list" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      config:
+        extraEnv:
+          - name: N8N_DEFAULT_BINARY_DATA_MODE
+            value: filesystem
+    YAML
+  }
+
+  expect_failures = [var.n8n_extra_helm_values]
+}
+
+# Everything else the overlay reaches is still the escape hatch it is meant to
+# be. A guard that rejected the whole input would be a different feature.
+run "extra_helm_values_still_reaches_everything_else" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      config:
+        encryptionKeySecret: my-own-secret
+      podAnnotations:
+        example.com/owner: platform
+    YAML
+  }
+
+  assert {
+    condition     = var.n8n_extra_helm_values != ""
+    error_message = "An overlay that does not touch config.extraEnv must plan cleanly."
+  }
+}

@@ -91,7 +91,9 @@ module "n8n" {
   # this example does not create. Left commented so the example applies into an
   # empty namespace unchanged; create the Secret first, then add these.
   #
-  #   kubectl create secret generic ai-assistant-secrets   #     --from-literal=anthropic-api-key=...   #     --from-literal=sandbox-api-key=...
+  #   kubectl create secret generic ai-assistant-secrets \
+  #     --from-literal=anthropic-api-key=... \
+  #     --from-literal=sandbox-api-key=...
   #
   # n8n_extra_env is assigned below for shared storage, so these are entries to
   # add to that list rather than a second assignment: a second one is a

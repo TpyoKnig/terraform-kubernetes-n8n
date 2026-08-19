@@ -172,6 +172,26 @@ variable "n8n_extra_helm_values" {
   type        = string
   default     = ""
   nullable    = false
+
+  validation {
+    # The description above has warned about this since the input existed, and
+    # a warning in prose is not a check. Helm coalesces maps but replaces lists,
+    # so an overlay that sets config.extraEnv substitutes the module's own list
+    # rather than adding to it: N8N_ENCRYPTION_KEY, every connection variable,
+    # the binary data mode, all gone, with the release still installing and the
+    # pods coming up misconfigured. It also silently falsifies
+    # backing_services.binary_storage, which reports what the module rendered on
+    # the assumption that what the module rendered is what runs.
+    #
+    # Only this one key is refused. Everything else the overlay can reach is
+    # still the escape hatch it is meant to be, and n8n_extra_env and
+    # n8n_extra_env_from_secret both append to the list instead of replacing it.
+    condition = try(
+      !contains(keys(try(yamldecode(var.n8n_extra_helm_values).config, {})), "extraEnv"),
+      true
+    )
+    error_message = "n8n_extra_helm_values must not set config.extraEnv. Helm replaces lists rather than merging them, so this substitutes the module's own environment list: N8N_ENCRYPTION_KEY, the database and queue connection variables and the binary data mode all disappear, the release installs anyway, and the pods come up misconfigured with nothing reporting it. Use n8n_extra_env for plain values and n8n_extra_env_from_secret for secretKeyRef entries; both append."
+  }
 }
 
 # Cluster-wide operators (an ingress controller, cert-manager, CloudNativePG,
@@ -1844,7 +1864,7 @@ variable "n8n_extra_env" {
         anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
       )
     ])
-    error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs (e.g. n8n_log_level, n8n_metrics_enabled) instead."
+    error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
   }
 }
 
@@ -1910,7 +1930,7 @@ variable "n8n_extra_env_from_secret" {
         anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
       )
     ])
-    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs (e.g. n8n_log_level, n8n_metrics_enabled) instead."
+    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
   }
 }
 

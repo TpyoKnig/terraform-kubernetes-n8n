@@ -91,19 +91,19 @@ module "n8n" {
   # this example does not create. Left commented so the example applies into an
   # empty namespace unchanged; create the Secret first, then add these.
   #
-  #   kubectl create secret generic ai-assistant-secrets   #     --from-literal=anthropic-api-key=...   #     --from-literal=sandbox-api-key=...
+  #   kubectl create secret generic ai-assistant-secrets \
+  #     --from-literal=anthropic-api-key=... \
+  #     --from-literal=sandbox-api-key=...
   #
-  # n8n_extra_env is unset in this example, so these go in as a whole
-  # assignment, brackets included:
+  # n8n_extra_env is unset in this example, so this goes in whole, brackets
+  # included, rather than as loose entries to paste somewhere:
   #
   #   n8n_extra_env = [
-  #     ...the four entries below...
+  #     { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
+  #     { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
+  #     { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
+  #     { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
   #   ]
-  #
-  #   { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
-  #   { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
-  #   { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
-  #   { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
   #
   # n8n_extra_env is typed list(object({ name, value })) with no valueFrom
   # shape, so secret-backed variables go through n8n_extra_env_from_secret,

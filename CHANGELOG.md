@@ -69,13 +69,23 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `n8n_extra_env_from_secret` with a message naming `n8n_binary_data_mode` and
   `n8n_binary_data_path` instead.
 
-  **Upgrade note.** If you set either name through `n8n_extra_env`, replace the
-  two entries with the two inputs. `n8n_extra_env = [{name =
+  **Upgrade note.** If you set either name through `n8n_extra_env` or
+  `n8n_extra_env_from_secret`, replace the entries with the two inputs. `n8n_extra_env = [{name =
   "N8N_DEFAULT_BINARY_DATA_MODE", value = "filesystem"}, {name =
   "N8N_STORAGE_PATH", value = "/opt/n8n-shared/storage"}]` becomes
   `n8n_binary_data_mode = "filesystem"` and `n8n_binary_data_path =
   "/opt/n8n-shared"`, with the module appending `storage/` itself. Nothing about
   the rendered environment changes, so no pod restarts on the value.
+
+- **Breaking.** `n8n_extra_helm_values` no longer accepts an overlay that sets
+  `config.extraEnv`. Helm replaces lists rather than merging them, so such an
+  overlay substituted the module's whole environment list: `N8N_ENCRYPTION_KEY`,
+  every database and queue connection variable and the binary data mode
+  disappeared, the release installed anyway, and the pods came up misconfigured
+  with nothing reporting it. The input's description has warned about this since
+  it existed; a warning in prose is not a check. Everything else the overlay
+  reaches is unchanged. Use `n8n_extra_env` and `n8n_extra_env_from_secret`,
+  which append to the list rather than replacing it.
 
   They were briefly unreserved because before these inputs there was no other
   way to reach the setting. That left the mode with two doors and only one of
