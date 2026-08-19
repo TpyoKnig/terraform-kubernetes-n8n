@@ -2069,3 +2069,16 @@ run "cnpg_cluster_renders_the_configured_max_connections" {
     error_message = "The CNPG Cluster must run the cnpg_max_connections it was given; got ${yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.postgresql.parameters.max_connections}."
   }
 }
+
+# Postgres will not start with max_connections above its own ceiling, and the
+# value goes straight into the Cluster spec, so without this the plan succeeds
+# and the database is what refuses.
+run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
+  command = plan
+
+  variables {
+    cnpg_max_connections = 262144
+  }
+
+  expect_failures = [var.cnpg_max_connections]
+}

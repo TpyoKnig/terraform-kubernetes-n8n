@@ -857,8 +857,8 @@ variable "cnpg_max_connections" {
   nullable    = false
 
   validation {
-    condition     = var.cnpg_max_connections == floor(var.cnpg_max_connections) && var.cnpg_max_connections >= 25
-    error_message = "cnpg_max_connections must be a whole number of at least 25. Below that, Postgres's own superuser_reserved_connections and CNPG's instance manager leave too little for n8n to start reliably."
+    condition     = var.cnpg_max_connections == floor(var.cnpg_max_connections) && var.cnpg_max_connections >= 25 && var.cnpg_max_connections <= 262143
+    error_message = "cnpg_max_connections must be a whole number between 25 and 262143. Below 25, Postgres's own superuser_reserved_connections and CNPG's instance manager leave too little for n8n to start reliably. Above 262143 is past what Postgres accepts for max_connections at all, and the value goes straight into the Cluster spec, so the instance refuses to start rather than the plan refusing the number. Long before either bound the limit stops being the useful lever: every backend costs memory whether it is busy or not, which is what cnpg_pooler_enabled exists to avoid needing."
   }
 }
 
@@ -933,9 +933,14 @@ variable "cnpg_pooler_pool_size" {
     # Postgres reserves 3 for superusers: enough for CNPG's instance manager on
     # each pod, streaming replication when cnpg_instances > 1, a metrics
     # scraper, and whatever maintenance connects through postgres_direct_host.
-    # Measured overhead on a single-instance cluster was 11-13, so the quarter
-    # is deliberate rather than tight, and a caller who genuinely needs a
-    # larger pool raises cnpg_max_connections and gets the headroom with it.
+    #
+    # Two numbers, and the one that matters is the worse one. Sized to the cap,
+    # 200 - 150 leaves 50, or 47 once Postgres reserves 3 for superusers; at
+    # the default pool of 25 x 2 it is 200 - 50 - 3 = 147. The validation has
+    # to hold at the cap, so 47 is the figure it is chosen against. Measured
+    # overhead on a single-instance cluster was 11-13, so even the worse number
+    # is deliberately generous, and a caller who genuinely needs a larger pool
+    # raises cnpg_max_connections and gets the headroom with it.
     condition     = !var.cnpg_pooler_enabled || var.cnpg_pooler_pool_size * var.cnpg_pooler_instances <= floor(var.cnpg_max_connections * 0.75)
     error_message = "cnpg_pooler_pool_size x cnpg_pooler_instances is what Postgres actually sees, and it must stay at or below three quarters of cnpg_max_connections. CNPG's own instance manager, replication and metrics connections come out of the rest, along with the 3 Postgres reserves for superusers. Lower the pool size or the instance count, or raise cnpg_max_connections."
   }
