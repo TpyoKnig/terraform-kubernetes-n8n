@@ -2262,6 +2262,11 @@ run "extra_helm_values_may_not_replace_the_env_list" {
 
 # Everything else the overlay reaches is still the escape hatch it is meant to
 # be. A guard that rejected the whole input would be a different feature.
+#
+# No assert, deliberately. The guard is a variable validation, so an overlay it
+# over-reached on would fail the plan and fail this run: the run completing is
+# the assertion, and anything written in an assert block here would be
+# restating the inputs above rather than checking an outcome.
 run "extra_helm_values_still_reaches_everything_else" {
   command = plan
 
@@ -2272,10 +2277,5 @@ run "extra_helm_values_still_reaches_everything_else" {
       podAnnotations:
         example.com/owner: platform
     YAML
-  }
-
-  assert {
-    condition     = var.n8n_extra_helm_values != ""
-    error_message = "An overlay that does not touch config.extraEnv must plan cleanly."
   }
 }

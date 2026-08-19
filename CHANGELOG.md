@@ -77,6 +77,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   "/opt/n8n-shared"`, with the module appending `storage/` itself. Nothing about
   the rendered environment changes, so no pod restarts on the value.
 
+  They were briefly unreserved because before these inputs there was no other
+  way to reach the setting. That left the mode with two doors and only one of
+  them checked: filesystem mode set through `extraEnv` skipped the shared-mount
+  validation, skipped `N8N_STORAGE_PATH`, and still reported `filesystem` while
+  the pods wrote to per-pod local disk, which is the silent loss the validation
+  exists to prevent.
+
 - **Breaking.** `n8n_extra_helm_values` no longer accepts an overlay that sets
   `config.extraEnv`. Helm replaces lists rather than merging them, so such an
   overlay substituted the module's whole environment list: `N8N_ENCRYPTION_KEY`,
@@ -86,13 +93,6 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   it existed; a warning in prose is not a check. Everything else the overlay
   reaches is unchanged. Use `n8n_extra_env` and `n8n_extra_env_from_secret`,
   which append to the list rather than replacing it.
-
-  They were briefly unreserved because before these inputs there was no other
-  way to reach the setting. That left the mode with two doors and only one of
-  them checked: filesystem mode set through `extraEnv` skipped the shared-mount
-  validation, skipped `N8N_STORAGE_PATH`, and still reported `filesystem` while
-  the pods wrote to per-pod local disk, which is the silent loss the validation
-  exists to prevent.
 
 ### Fixed
 
