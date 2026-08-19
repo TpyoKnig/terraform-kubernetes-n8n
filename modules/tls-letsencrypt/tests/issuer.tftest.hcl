@@ -115,3 +115,16 @@ run "an_invalid_email_is_rejected" {
   # failure surfaces at apply against the ACME API rather than at plan.
   expect_failures = [var.email]
 }
+
+run "an_uppercase_issuer_name_is_rejected" {
+  command = plan
+
+  # The API server would reject it at apply; the derived "<name>-account-key"
+  # Secret name inherits the same rule through this validation.
+  variables {
+    email = "ops@example.com"
+    name  = "LetsEncrypt-Prod"
+  }
+
+  expect_failures = [var.name]
+}

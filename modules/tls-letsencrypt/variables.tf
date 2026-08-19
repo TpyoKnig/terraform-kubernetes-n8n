@@ -8,6 +8,16 @@ variable "name" {
   type        = string
   default     = "letsencrypt-prod"
   nullable    = false
+
+  validation {
+    # DNS-1123 subdomain, what the API server requires of a ClusterIssuer
+    # name. Checked here for the same reason private_key_secret_name checks
+    # its shape: an invalid name otherwise fails mid-apply, and the derived
+    # "<name>-account-key" Secret name inherits this rule without carrying
+    # its own validation.
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.name)) && length(var.name) <= 241
+    error_message = "name must be a valid Kubernetes object name (a DNS-1123 subdomain: lowercase alphanumerics, hyphens and dots, starting and ending alphanumeric), at most 241 characters so the derived \"<name>-account-key\" Secret name stays inside the 253-character limit. The API server rejects anything else, and only at apply time."
+  }
 }
 
 variable "email" {
