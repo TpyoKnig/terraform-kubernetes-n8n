@@ -96,6 +96,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- The module's `n8n-secrets` Secret no longer carries a `WEBHOOK_URL` key. The
+  chart reads exactly four keys from it (`N8N_ENCRYPTION_KEY`, `N8N_HOST`,
+  `N8N_PORT`, `N8N_PROTOCOL`); the fifth was never referenced by anything, and
+  it computed the URL from `n8n_domain` alone, so whenever `k8s_ingress_host`
+  named a different host the Secret showed a different WEBHOOK_URL than the
+  one the pods actually run. Dead and wrong is the worst combination for a
+  value people read while debugging webhook delivery. Removing it is an
+  in-place Secret update; the pods' environment is untouched.
+
 - `redis_key_prefix` now reaches all three of its consumers. The variable
   description has always said it moves n8n's key prefix
   (`N8N_REDIS_KEY_PREFIX`), Bull's (`QUEUE_BULL_PREFIX` via the chart's
