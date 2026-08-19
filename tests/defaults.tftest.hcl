@@ -2018,6 +2018,37 @@ run "an_overlay_nulling_the_strategy_type_still_warns" {
   expect_failures = [check.rolling_update_still_overlaps_two_mains]
 }
 
+# The two deletions are not interchangeable. Nulling the whole key removes the
+# rollingUpdate settings with it, so Kubernetes has nothing left to read and
+# applies its own maxSurge of 25%. Nulling only the type leaves the siblings in
+# the merged values, so the surge is whatever those siblings ask for. The check
+# fires either way, but it must not tell the reader 25% when the overlay has
+# named a different number.
+run "nulling_the_strategy_type_is_distinguished_from_nulling_the_key" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        type: null
+        rollingUpdate:
+          maxSurge: 2
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_strategy_type && !local.n8n_extra_deletes_strategy
+    error_message = "Nulling strategy.type deletes only the type; the whole-key deletion must stay false so the diagnostic does not claim rollingUpdate was removed too."
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_left_to_kubernetes
+    error_message = "Either deletion still hands the strategy type to Kubernetes, so the check must fire for both."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
 # A strategy mapping that carries no type key is a merge rather than a
 # deletion: Helm keeps the module's own type and only adds whatever else the
 # overlay brought. Reading that as a deletion warns about a Deployment that is
