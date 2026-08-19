@@ -217,6 +217,7 @@ would need leader election, which n8n gates behind a licence.
 | Example | What it shows |
 | --- | --- |
 | [`homelab`](./examples/homelab/) | The base deployment. Every substitutable layer named with its default, the reason for it, and the input that swaps it. Start here. |
+| [`homelab-pgbouncer`](./examples/homelab-pgbouncer/) | The base deployment with a PgBouncer connection pooler in front of PostgreSQL, plus measured throughput and sizing guidance. Reach for it when the worker tier autoscales: pod count times pool size hits `max_connections` before anything hits a CPU limit, and pods CrashLoop rather than slowing down. |
 | [`homelab-cloudflare`](./examples/homelab-cloudflare/) | The base example plus one worked DNS strategy: a proxied CNAME to a Cloudflare Tunnel. Differs from `homelab` only in its DNS resources. |
 | [`homelab-godaddy`](./examples/homelab-godaddy/) | The same, for a GoDaddy zone: a plain A record to a routable ingress address. Use when your ingress is publicly reachable; use the Cloudflare one when it is not. |
 | [`homelab-split-ingress`](./examples/homelab-split-ingress/) | Editor and production webhooks on separate hostnames, with caller-owned `Ingress` objects, so an identity-aware proxy can front the editor without breaking webhook delivery. |

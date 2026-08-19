@@ -49,6 +49,43 @@ module "n8n" {
   valkey_storage_size  = "8Gi"
   valkey_storage_class = var.storage_class
 
+  # ── PgBouncer, which is the point of this example ──────────────────────────
+  # Everything above is the base homelab example unchanged. The four inputs
+  # below are the entire difference, and they exist because pod count, not CPU,
+  # is what bounds a queue-mode n8n first.
+  #
+  # Each n8n pod holds db_postgresdb_pool_size persistent Postgres connections.
+  # That number is multiplied by a pod count an autoscaler owns, and the CNPG
+  # Cluster this module creates runs max_connections = 200. A worker tier
+  # scaling to 16 beside a webhook-processor tier scaling to 8, at the default
+  # pool size of 10, asks for 250 against roughly 197 usable. Past the limit new
+  # pods do not slow down, they fail to initialise their pool, exit non-zero and
+  # CrashLoop, and requests already in flight stall until something gives.
+  #
+  # The pooler makes pod count stop mattering: pods connect to PgBouncer, and
+  # Postgres only ever sees cnpg_pooler_pool_size x cnpg_pooler_instances.
+  cnpg_pooler_enabled = true
+
+  # 25 x 2 instances = 50 real connections, whatever the tiers do above them.
+  cnpg_pooler_instances = 2
+  cnpg_pooler_pool_size = 25
+
+  # Client slots are cheap; server connections are not. Keep this far above
+  # pods x db_postgresdb_pool_size, because exhausting it recreates the queue
+  # this example exists to remove, one hop closer to the caller.
+  cnpg_pooler_max_client_conn = 500
+
+  # 5, not the module default of 10. These are connections to PgBouncer rather
+  # than to Postgres, so they are cheap, and the real backend count is set by
+  # cnpg_pooler_pool_size instead.
+  db_postgresdb_pool_size = 5
+
+  # Required with a pooler, and the module refuses the combination otherwise.
+  # PgBouncer serves its clients in plaintext and encrypts its own leg to
+  # Postgres, so leaving this true has n8n negotiate TLS against a listener
+  # that does not speak it.
+  db_postgresdb_ssl_enabled = false
+
   k8s_ingress_class_name     = "nginx"
   k8s_ingress_host           = var.ui_host
   k8s_ingress_cluster_issuer = var.cluster_issuer

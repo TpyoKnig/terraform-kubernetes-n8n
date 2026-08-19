@@ -12,7 +12,7 @@ vars:
   # per-example terraform-docs steps all enumerate the same set). When the two
   # drift, `task ci` passes locally on a change that breaks an example nobody
   # validated before pushing.
-  EXAMPLES: homelab homelab-cloudflare homelab-godaddy homelab-split-ingress homelab-cloudflare-split-ingress
+  EXAMPLES: homelab homelab-pgbouncer homelab-cloudflare homelab-godaddy homelab-split-ingress homelab-cloudflare-split-ingress
 
   # The two submodules are root modules of their own for verification purposes:
   # each has its own tests, its own README, and its own input contract. CI's
