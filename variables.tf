@@ -1279,7 +1279,18 @@ variable "redis_key_prefix" {
   }
 }
 
-# ── HPA: main pods ────────────────────────────────────────────────────────────
+# ── Main pod availability ─────────────────────────────────────────────────────
+# The main pod is a deliberate single point of failure: leader election among
+# mains is the licensed piece, so this module runs exactly one and keeps its HPA
+# off (see local.k8s_values_hpa). What is left to decide is how that one pod is
+# allowed to go away, which is what the inputs here govern.
+
+variable "n8n_main_pdb_enabled" {
+  description = "Whether the chart renders its PodDisruptionBudget over the single main pod. False by default, which is a change from the chart's own default of true. The chart's PDB is minAvailable = 1 and the module runs replicaCount = 1, so enabling it sets allowed disruptions to zero permanently: `kubectl drain` on whichever node holds the main pod never completes, and a Talos node upgrade of that node stalls in drain until it gives up and proceeds by force. A PDB protects a pod by refusing voluntary evictions, and with one replica every eviction is the last one, so there is nothing for it to protect and a node lifecycle to block. The main going down briefly during a drain is the accepted cost of single-main Community mode; the fix is to make that restart fast and visible, not to forbid it. Set true only if you are deliberately trading node maintenance against main availability and you know how you intend to drain nodes anyway (`--disable-eviction` bypasses the PDB and skips the graceful path with it)."
+  type        = bool
+  default     = false
+  nullable    = false
+}
 
 # ── HPA: webhook processor pods ───────────────────────────────────────────────
 

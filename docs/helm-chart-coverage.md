@@ -8,7 +8,7 @@ through the escape hatch.
 Measured against chart **1.10.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
 source at [n8n-io/n8n-hosting](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n)),
 which is the version `n8n_chart_version` pins by default. The chart offers 43
-top-level keys. This module writes 21 of them.
+top-level keys. This module writes 22 of them.
 
 Everything below was measured, not recalled: the values tree was rendered with
 `terraform console` and diffed against the chart's own `values.yaml` at tag
@@ -56,6 +56,7 @@ new schema on the old code. None of that appears in a plan.
 | `image.repository` | Exposed as `n8n_image_repository`. Omitted when null, so the chart's `docker.n8n.io/n8nio/n8n` applies. `n8n_image_pull_secrets` covers a private registry. |
 | `queueMode.*` | Hardcoded `enabled = true`. Queue mode is the module's premise, not an option. Worker count and concurrency are exposed as `n8n_worker_*`. |
 | `replicaCount` | Pinned to 1 for the main pool with no input: a second main needs leader election, which n8n gates behind a licence. |
+| `pdb.*` | Exposed as `n8n_main_pdb_enabled`, defaulting to **false**. The chart's default renders `minAvailable: 1` over a main pool this module pins to one replica, which leaves allowed disruptions at zero and blocks draining the node that happens to be hosting the main pod. |
 | `webhookProcessor.*` | Exposed. Separate pool, replica count, and `disableProductionWebhooksOnMainProcess` hardcoded true. |
 | `webhook.url` | Exposed as `n8n_webhook_url`. |
 | `hpa.main`, `hpa.worker`, `hpa.webhookProcessor` | Exposed through the `n8n_*_hpa_*` inputs. |
@@ -85,12 +86,12 @@ new schema on the old code. None of that appears in a plan.
 
 ## Not currently configurable
 
-These 22 chart keys get no typed input and are left at chart defaults:
+These 21 chart keys get no typed input and are left at chart defaults:
 
 `affinity`, `commonAnnotations`, `commonLabels`, `dnsConfig`, `dnsPolicy`,
 `fullnameOverride`, `license`,
 `lifecycle`, `multiMain`, `nameOverride`, `networkPolicy`, `nodePlacement`,
-`nodeSelector`, `pdb`, `persistence`, `podLabels`, `probes`, `rbac`,
+`nodeSelector`, `persistence`, `podLabels`, `probes`, `rbac`,
 `securityContext`, `service`, `strategy`, `tolerations`.
 
 Two of those, `license` and `multiMain`, are deliberate and permanent. The rest

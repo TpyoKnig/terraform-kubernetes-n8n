@@ -390,6 +390,20 @@ check "image_pull_secrets_need_a_custom_image" {
   }
 }
 
+check "main_pdb_blocks_the_main_pod_node_drain" {
+  assert {
+    # Two ways in, because the typed input is not the only one. Helm gives the
+    # last values file precedence and n8n_extra_helm_values is merged after
+    # local.k8s_values_final, so `pdb: {enabled: true}` through the escape
+    # hatch re-creates exactly what this check exists to warn about, and
+    # would do it without tripping a check that only read the input.
+    # Precedent for reading the overlay at plan time is the config.extraEnv
+    # validation on n8n_extra_helm_values itself.
+    condition     = !local.n8n_main_pdb_rendered
+    error_message = "n8n_main_pdb_enabled is true, which renders the chart's PodDisruptionBudget (minAvailable = 1) over a main Deployment this module pins to a single replica. Allowed disruptions is then zero permanently: `kubectl drain` on the node holding the main pod never completes, and a Talos node upgrade stalls in drain rather than failing, so it reads as a hung upgrade rather than a policy decision. A PDB keeps N replicas up while a node goes away, and with one replica there is no N to keep. Set n8n_main_pdb_enabled = false unless you are deliberately trading node maintenance against the main pod's availability."
+  }
+}
+
 check "task_runner_image_tag_requires_task_runners" {
   assert {
     condition     = var.n8n_task_runner_image_tag != null ? var.n8n_task_runners_enabled : true

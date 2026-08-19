@@ -1903,6 +1903,95 @@ run "image_keys_stay_unset_when_the_caller_names_nothing" {
   }
 }
 
+# ── The single main pod's disruption budget ───────────────────────────────────
+# The chart defaults pdb.enabled to true at minAvailable = 1 and renders it over
+# the main Deployment, which this module pins to one replica. That is
+# allowedDisruptions = 0 for the life of the deployment: the node holding the
+# main pod can never be drained, so a Talos node upgrade stalls behind it.
+run "the_main_pdb_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_pdb.pdb.enabled == false
+    error_message = "pdb.enabled must render false by default. The chart's own default is true at minAvailable = 1, which against replicaCount = 1 blocks every voluntary eviction and wedges node drains."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.pdb.enabled == false
+    error_message = "pdb must reach the final values tree. A fragment that is assembled and never merged is the defect class this suite exists to catch."
+  }
+
+  # The main pod is the only one the chart puts a PDB over, so this input has
+  # to leave the worker and webhook tiers alone.
+  assert {
+    condition     = local.k8s_values_final.replicaCount == 1
+    error_message = "The main Deployment must stay at one replica, which is what makes minAvailable = 1 unsatisfiable and this input necessary."
+  }
+}
+
+run "the_main_pdb_can_be_turned_back_on" {
+  command = plan
+
+  variables {
+    n8n_main_pdb_enabled = true
+  }
+
+  assert {
+    condition     = local.k8s_values_final.pdb.enabled == true
+    error_message = "n8n_main_pdb_enabled = true must reach the chart, or the escape hatch is accepted and discarded."
+  }
+
+  # Reaching the chart is only half of it. Turning this on is exactly the
+  # configuration that wedges a node drain, so the plan has to say so: a
+  # warning nobody sees is the same as no warning. This asserts the diagnostic
+  # fires, not that the plan fails, since a check block warns rather than
+  # errors.
+  expect_failures = [check.main_pdb_blocks_the_main_pod_node_drain]
+}
+
+# The typed input is not the only way in. n8n_extra_helm_values is merged after
+# the module's own values and Helm gives the later file precedence, so the
+# overlay can render the same object with the same consequence. A check that
+# only read the input would stay silent on exactly the configuration it exists
+# to catch.
+run "the_extra_values_overlay_cannot_re_enable_the_pdb_silently" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      pdb:
+        enabled: true
+        minAvailable: 1
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_pdb_enabled_via_extra_values
+    error_message = "The overlay setting pdb.enabled = true must be visible at plan time, or the check cannot warn about it."
+  }
+
+  expect_failures = [check.main_pdb_blocks_the_main_pod_node_drain]
+}
+
+# The detection must not fire on overlays that say nothing about the PDB, or
+# the warning becomes noise on every deployment that uses the escape hatch at
+# all, and a warning people learn to ignore is worse than none.
+run "an_unrelated_extra_values_overlay_leaves_the_pdb_check_quiet" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      podLabels:
+        team: platform
+    YAML
+  }
+
+  assert {
+    condition     = !local.n8n_pdb_enabled_via_extra_values
+    error_message = "An overlay that never mentions pdb must not read as enabling it."
+  }
+}
+
 # The tag is the one image key the module does NOT leave to the chart. The
 # chart's default is the floating `stable`, resolved per node at pull time
 # under IfNotPresent, so leaving it unset lets a rescheduled pod cross a
