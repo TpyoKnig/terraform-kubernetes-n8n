@@ -401,6 +401,18 @@ run "an_empty_kubeconfig_path_is_rejected" {
   expect_failures = [var.kubeconfig_path]
 }
 
+run "a_bare_home_directory_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # "~/" resolves to $HOME/ - the same directory-as-KUBECONFIG failure the
+  # empty path is rejected for, arrived at through the tilde branch.
+  variables {
+    kubeconfig_path = "~/"
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
 run "a_posix_backslash_is_a_filename_character_not_a_separator" {
   command = plan
 

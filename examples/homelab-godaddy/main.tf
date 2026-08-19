@@ -96,28 +96,30 @@ module "n8n" {
   #     --from-literal=anthropic-api-key=... \
   #     --from-literal=sandbox-api-key=...
   #
-  # n8n_extra_env is assigned below for shared storage, so these are entries to
-  # add to that list rather than a second assignment: a second one is a
-  # duplicate argument and Terraform rejects it before plan. Wrap the existing
-  # value in concat() and put them in the second element.
+  # n8n_extra_env is unset in this example, so this goes in whole, brackets
+  # included, rather than as loose entries to paste somewhere:
   #
-  #   { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
-  #   { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
-  #   { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
-  #   { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
+  #   n8n_extra_env = [
+  #     { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
+  #     { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
+  #     { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
+  #     { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
+  #   ]
   #
   # n8n_extra_env is typed list(object({ name, value })) with no valueFrom
-  # shape, so secret-backed variables go through n8n_extra_helm_values:
+  # shape, so secret-backed variables go through n8n_extra_env_from_secret,
+  # which renders the secretKeyRef for you and keeps the value out of state:
   #
-  # n8n_extra_helm_values = <<-YAML
-  #   config:
-  #     extraEnv:
-  #       - name: N8N_INSTANCE_AI_MODEL_API_KEY
-  #         valueFrom:
-  #           secretKeyRef:
-  #             name: ai-assistant-secrets
-  #             key: anthropic-api-key
-  # YAML
+  # n8n_extra_env_from_secret = [{
+  #   name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
+  #   secret_name = "ai-assistant-secrets"
+  #   secret_key  = "anthropic-api-key"
+  # }]
+  #
+  # Not n8n_extra_helm_values. That sets config.extraEnv wholesale, and the
+  # module renders its own entries into the same list, so a hand-written block
+  # there replaces them: shared storage, metrics and the connection settings
+  # all disappear, and nothing reports it.
 
   # ── Shared storage ─────────────────────────────────────────────────────────
   # Reaches main, worker and webhook-processor alike, which is exactly what the

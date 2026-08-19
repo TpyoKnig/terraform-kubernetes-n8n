@@ -89,6 +89,69 @@ run "binary_storage_is_database_without_a_shared_volume" {
 # expression over a resource this configuration declares, which is what the
 # shared-storage runs below use.
 
+# With the class set, the example flips the module to filesystem binary data on
+# the shared claim. This asserts the wiring from shared_storage_class through
+# n8n_binary_data_mode to the output, and only that: the rendered environment
+# is not assertable here, because helm_release values resolve to (known after
+# apply) under the mocked providers. The module's own suite asserts what
+# reaches config.extraEnv.
+run "binary_storage_is_filesystem_with_a_shared_volume" {
+  command = plan
+
+  variables {
+    shared_storage_class = "nfs-csi"
+  }
+
+  assert {
+    condition     = module.n8n.backing_services.binary_storage == "filesystem"
+    error_message = "With a shared RWX class the example moves binary data onto the volume. Got: ${module.n8n.backing_services.binary_storage}"
+  }
+}
+
+run "no_dns_records_without_a_zone" {
+  command = plan
+
+  # cloudflare_zone_id is null by default. The example has to stay applicable
+  # against a cluster whose DNS lives somewhere else, so the record is opt-in
+  # rather than required.
+  assert {
+    condition     = length(cloudflare_record.n8n) == 0
+    error_message = "No DNS record should be planned when cloudflare_zone_id is null; got ${length(cloudflare_record.n8n)}."
+  }
+}
+
+run "a_zone_produces_a_proxied_tunnel_record" {
+  command = plan
+
+  variables {
+    cloudflare_zone_id   = "0123456789abcdef0123456789abcdef"
+    cloudflare_tunnel_id = "beb9653a-ec18-4811-a689-3a4e05fcf106"
+    cloudflare_api_token = "test-token"
+  }
+
+  assert {
+    condition     = length(cloudflare_record.n8n) == 1
+    error_message = "Expected exactly one record for ui_host; got ${length(cloudflare_record.n8n)}."
+  }
+
+  assert {
+    condition     = cloudflare_record.n8n[0].proxied == true && endswith(cloudflare_record.n8n[0].content, ".cfargotunnel.com")
+    error_message = "The record must be a proxied CNAME at the tunnel: unproxied, cfargotunnel.com does not resolve, and an A record at a homelab ingress is usually a private address."
+  }
+}
+
+run "a_zone_without_a_tunnel_is_rejected" {
+  command = plan
+
+  variables {
+    cloudflare_zone_id = "0123456789abcdef0123456789abcdef"
+  }
+
+  # There is nothing to point a CNAME at without the tunnel UUID, and the
+  # failure would otherwise be a record whose content is ".cfargotunnel.com".
+  expect_failures = [var.cloudflare_zone_id]
+}
+
 run "no_shared_claim_without_a_class" {
   command = plan
 
@@ -234,6 +297,18 @@ run "an_empty_kubeconfig_path_is_rejected" {
   # directory as KUBECONFIG. nullable = false stops null, not empty.
   variables {
     kubeconfig_path = ""
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_bare_home_directory_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # "~/" resolves to $HOME/ - the same directory-as-KUBECONFIG failure the
+  # empty path is rejected for, arrived at through the tilde branch.
+  variables {
+    kubeconfig_path = "~/"
   }
 
   expect_failures = [var.kubeconfig_path]

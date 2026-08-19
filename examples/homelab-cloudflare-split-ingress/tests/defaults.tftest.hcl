@@ -236,6 +236,14 @@ run "no_shared_claim_without_a_class" {
     condition     = length(kubernetes_persistent_volume_claim_v1.shared) == 0
     error_message = "No claim should be planned when shared_storage_class is null."
   }
+
+  # The namespace is this example's on every path, shared storage or not, so
+  # that turning shared storage on later cannot move it between two resource
+  # addresses. See storage.tf for what that used to cost.
+  assert {
+    condition     = kubernetes_namespace.n8n.metadata[0].name == var.namespace
+    error_message = "The example must own the namespace on every path, shared claim or not; its name should equal var.namespace."
+  }
 }
 
 run "a_class_produces_one_rwx_claim" {
@@ -379,6 +387,18 @@ run "an_empty_kubeconfig_path_is_rejected" {
   # directory as KUBECONFIG. nullable = false stops null, not empty.
   variables {
     kubeconfig_path = ""
+  }
+
+  expect_failures = [var.kubeconfig_path]
+}
+
+run "a_bare_home_directory_kubeconfig_path_is_rejected" {
+  command = plan
+
+  # "~/" resolves to $HOME/ - the same directory-as-KUBECONFIG failure the
+  # empty path is rejected for, arrived at through the tilde branch.
+  variables {
+    kubeconfig_path = "~/"
   }
 
   expect_failures = [var.kubeconfig_path]

@@ -33,5 +33,5 @@ resource "cloudflare_record" "n8n" {
   content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
   proxied = true
 
-  comment = "n8n editor + webhooks, managed by terraform-kubernetes-n8n examples/homelab"
+  comment = "n8n editor + webhooks, managed by terraform-kubernetes-n8n examples/homelab-cloudflare"
 }
