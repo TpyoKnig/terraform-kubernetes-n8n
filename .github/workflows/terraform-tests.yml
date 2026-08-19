@@ -82,9 +82,9 @@ jobs:
     name: terraform fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -95,7 +95,7 @@ jobs:
     name: variable naming families
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: every root input is in a known naming family
         run: ./scripts/check-variable-prefixes.sh
@@ -115,7 +115,7 @@ jobs:
       # repo's tables identically, but that was luck rather than design.
       TERRAFORM_DOCS_VERSION: v0.24.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: install terraform-docs
         run: |
@@ -182,14 +182,14 @@ jobs:
       matrix:
         target: [".", "examples/homelab", "examples/homelab-pgbouncer", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: cache terraform providers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.TF_PLUGIN_CACHE_DIR }}
           key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
@@ -222,14 +222,14 @@ jobs:
       matrix:
         target: [".", "examples/homelab", "examples/homelab-pgbouncer", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: cache terraform providers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.TF_PLUGIN_CACHE_DIR }}
           key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
@@ -251,18 +251,18 @@ jobs:
       matrix:
         target: [".", "examples/homelab", "examples/homelab-pgbouncer", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "modules/cluster-capacity", "modules/tls-letsencrypt"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v6
         with:
           tflint_version: ${{ env.TFLINT_VERSION }}
 
       - name: cache terraform providers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.TF_PLUGIN_CACHE_DIR }}
           key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
@@ -291,11 +291,11 @@ jobs:
     name: checkov
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 3.11 is the interpreter the pinned checkov was verified against, and the
       # one bridgecrewio's own checkov:3.3.9 image ships.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
