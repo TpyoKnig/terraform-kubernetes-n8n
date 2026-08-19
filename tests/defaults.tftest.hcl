@@ -1623,6 +1623,38 @@ run "an_overlay_moved_database_port_moves_the_allowlist" {
   }
 }
 
+# redis.port takes the same route through the overlay, and the chart writes its
+# own egress rule from it.
+run "an_overlay_moved_redis_port_moves_the_allowlist" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local:6380"
+
+    n8n_extra_helm_values = <<-YAML
+      redis:
+        port: 6380
+    YAML
+  }
+
+  assert {
+    condition     = contains(local.n8n_network_policy_allowed_ports, 6380)
+    error_message = "The overlay's Redis port is the one the rendered policy allows."
+  }
+
+  assert {
+    condition     = !contains(local.n8n_network_policy_allowed_ports, 6379)
+    error_message = "The port the overlay replaced is no longer in the rendered policy."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A collector on the overlay's Redis port is reachable."
+  }
+}
+
 # A bracketed IPv6 literal carries colons of its own, so the port is only the
 # ":digits" after the closing bracket. With none, the scheme decides: this is
 # https, so 443, which the policy allows.
