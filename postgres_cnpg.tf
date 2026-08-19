@@ -70,10 +70,14 @@ resource "kubectl_manifest" "cnpg_cluster" {
   # missing too, so this apply fails outright with the API server naming the
   # unknown kind, and the error already says what is wrong. With the CRD
   # present but the operator absent or unavailable, the manifest applies
-  # cleanly and nothing reconciles it: no Postgres pods, no Service, and an
-  # apply that reports success. That case looks exactly like the KEDA one and
-  # this module does not detect it. `kubectl get cluster -n <ns>` showing no
-  # instances, or no `cnpg-controller-manager` in `cnpg-system`, is the tell.
+  # cleanly and nothing reconciles it, and the apply reports success. On a
+  # Cluster being created for the first time that means no Postgres pods and no
+  # Service at all; on one the operator had already reconciled, the running
+  # pods and Service stay up and it is changes that stop being acted on. That
+  # case looks exactly like the KEDA one and this module does not detect it.
+  # The tell is a Cluster whose status does not match its spec, and no running
+  # controller pod in the operator's namespace (`kubectl get pods -n
+  # cnpg-system`; the deployment's name depends on how it was installed).
   #
   # (An earlier version of this comment cited
   # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this
