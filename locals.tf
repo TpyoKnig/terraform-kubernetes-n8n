@@ -804,6 +804,32 @@ locals {
     )
   )
 
+  # Same five-way split as the strategy above, for ingress.enabled. Needed
+  # because n8n_proxy_hops is checked against whether an Ingress is actually in
+  # front of the pods, and create_ingress is only the module's half of that
+  # answer: the overlay is merged last and decides.
+  #
+  # The two deletion rows land differently here than they do for strategy.
+  # Deleting the key does not hand the decision to Kubernetes, it hands it back
+  # to chart 1.10.0's own values.yaml, where `ingress.enabled` is false. So a
+  # deletion means no Ingress, which is the same answer as an explicit false
+  # and the reason both collapse to one branch below.
+  n8n_extra_declares_ingress = contains(local.n8n_extra_values_keys, "ingress")
+
+  n8n_extra_deletes_ingress = local.n8n_extra_declares_ingress && try(local.n8n_extra_values_decoded.ingress, null) == null
+
+  n8n_extra_declares_ingress_enabled = contains(try(keys(local.n8n_extra_values_decoded.ingress), []), "enabled")
+
+  n8n_ingress_enabled_via_extra_values = try(local.n8n_extra_values_decoded.ingress.enabled, null)
+
+  n8n_extra_deletes_ingress_enabled = local.n8n_extra_declares_ingress_enabled && local.n8n_ingress_enabled_via_extra_values == null
+
+  n8n_ingress_rendered = (
+    local.n8n_extra_deletes_ingress || local.n8n_extra_deletes_ingress_enabled ? false : (
+      local.n8n_ingress_enabled_via_extra_values != null ? local.n8n_ingress_enabled_via_extra_values : var.create_ingress
+    )
+  )
+
   # Whether a PodDisruptionBudget ends up in the release at all, by either
   # route. Named because the check block asks exactly this question, and a
   # check reading `!a && !b` makes the reader reconstruct what the two halves

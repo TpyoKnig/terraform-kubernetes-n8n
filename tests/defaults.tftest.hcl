@@ -1499,6 +1499,133 @@ run "proxy_hops_reject_a_count_that_is_not_a_hop" {
   expect_failures = [var.n8n_proxy_hops]
 }
 
+# Zero hops is legitimate, but only with nothing in front of the pods. Behind
+# an Ingress the connecting address is always the controller's, so trusting no
+# forwarded header makes every request look like it came from one host.
+# create_ingress is only half the answer: n8n_extra_helm_values is merged last
+# and decides whether an Ingress is really rendered, so the check reads the
+# effective value and the five merge outcomes are each covered below.
+run "zero_hops_behind_the_modules_own_ingress_is_caught" {
+  command = plan
+
+  variables {
+    create_ingress = true
+    n8n_proxy_hops = 0
+  }
+
+  expect_failures = [check.an_ingress_in_front_means_at_least_one_proxy_hop]
+}
+
+run "zero_hops_with_nothing_in_front_is_allowed" {
+  command = plan
+
+  variables {
+    create_ingress = false
+    n8n_proxy_hops = 0
+  }
+
+  assert {
+    condition     = !local.n8n_ingress_rendered
+    error_message = "With create_ingress = false and no overlay, no Ingress is rendered, so zero hops is the honest answer and the check must stay quiet."
+  }
+}
+
+# The overlay can add the Ingress the module did not create. create_ingress is
+# false here, so a check reading the input alone would say nothing.
+run "an_overlay_that_adds_an_ingress_is_caught_too" {
+  command = plan
+
+  variables {
+    create_ingress        = false
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        enabled: true
+    YAML
+  }
+
+  expect_failures = [check.an_ingress_in_front_means_at_least_one_proxy_hop]
+}
+
+# And it can remove the one the module did create, which is the false-positive
+# direction: create_ingress is true, so a check reading the input alone would
+# fire on a deployment that has no Ingress at all.
+run "an_overlay_that_removes_the_ingress_silences_the_check" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        enabled: false
+    YAML
+  }
+
+  assert {
+    condition     = !local.n8n_ingress_rendered
+    error_message = "An overlay setting ingress.enabled false wins over create_ingress, so nothing is in front of the pods and zero hops is correct."
+  }
+}
+
+# Both deletion shapes. Helm treats an explicit null as a deletion rather than
+# an absence, and what is left is chart 1.10.0's own ingress.enabled, which is
+# false. So a deleted key means no Ingress, the same as an explicit false.
+run "nulling_the_ingress_key_falls_back_to_the_charts_own_false" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = "ingress: null"
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_ingress && !local.n8n_ingress_rendered
+    error_message = "ingress: null deletes the module's whole block, leaving the chart's own default of false."
+  }
+}
+
+run "nulling_only_ingress_enabled_is_told_apart_from_the_whole_key" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        enabled: null
+        className: nginx
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_ingress_enabled && !local.n8n_extra_deletes_ingress
+    error_message = "Nulling ingress.enabled deletes only that key; the sibling className survives the merge, so the whole-key deletion must stay false."
+  }
+
+  assert {
+    condition     = !local.n8n_ingress_rendered
+    error_message = "Either deletion leaves ingress.enabled unset, and the chart defaults it to false."
+  }
+}
+
+# The two merge rows, where the module's value has to survive untouched.
+run "an_overlay_declaring_ingress_without_enabled_keeps_the_module_value" {
+  command = plan
+
+  variables {
+    create_ingress        = true
+    n8n_proxy_hops        = 0
+    n8n_extra_helm_values = <<-YAML
+      ingress:
+        className: nginx
+    YAML
+  }
+
+  expect_failures = [check.an_ingress_in_front_means_at_least_one_proxy_hop]
+}
+
 # ── A worker floor of zero deletes the pool ───────────────────────────────────
 # The input was documented as accepting 0 because "KEDA scales a ScaledObject
 # to zero natively". KEDA does, but this value is also

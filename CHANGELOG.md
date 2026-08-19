@@ -9,6 +9,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `check.an_ingress_in_front_means_at_least_one_proxy_hop` warns when
+  `n8n_proxy_hops = 0` while an Ingress is being rendered. Zero is a valid
+  answer only when nothing proxies to the pods; behind an Ingress the
+  connecting address is always the controller's, so trusting no
+  `X-Forwarded-For` entry makes every request look like it came from one host
+  and quietly defeats IP allowlists, rate limits and audit logging.
+
+  The check reads whether an Ingress is really rendered rather than
+  `create_ingress` alone, because `n8n_extra_helm_values` is merged last and
+  can add the Ingress the module did not create or remove the one it did. An
+  explicit null there is a deletion, which leaves chart 1.10.0's own
+  `ingress.enabled` of false, so a deleted key means no Ingress just as an
+  explicit false does.
+
 - `n8n_main_strategy` sets the main Deployment's rollout strategy, and
   **defaults to `Recreate`, which changes how the main Deployment rolls.** The
   worker and webhook-processor Deployments are untouched and keep rolling as
