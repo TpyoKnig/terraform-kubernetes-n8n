@@ -15,20 +15,33 @@ locals {
   # A relative kubeconfig therefore names one file at apply and a different,
   # usually absent, one at test.
   #
-  # Separators normalised with it. abspath uses the platform's, so on Windows
-  # this arrives with backslashes, which then sit inside a double-quoted shell
-  # string where they are at best noise and at worst an escape. Forward slashes
-  # are correct on POSIX and accepted by kubectl on Windows.
   # Only a genuinely relative path is resolved. abspath on Windows prepends a
   # drive to an already-absolute POSIX path, so running this from Windows
   # would rewrite a perfectly good /home/... into C:/home/..., and the output
   # would depend on where terraform ran rather than on what was configured.
-  kubeconfig_is_absolute = startswith(var.kubeconfig_path, "/") || can(regex("^[A-Za-z]:", var.kubeconfig_path))
+  #
+  # Drive-qualified means a separator after the colon. "C:config" is
+  # drive-relative on Windows: it names a path against the current directory of
+  # drive C rather than against its root, so it is relative and has to be
+  # resolved like any other relative path.
+  kubeconfig_is_absolute = startswith(var.kubeconfig_path, "/") || can(regex("^[A-Za-z]:[/\\\\]", var.kubeconfig_path))
 
-  kubeconfig_shell_path = startswith(var.kubeconfig_path, "~/") ? "$HOME/${substr(var.kubeconfig_path, 2, -1)}" : replace(
-    local.kubeconfig_is_absolute ? var.kubeconfig_path : abspath(var.kubeconfig_path),
-    "\\", "/"
+  kubeconfig_resolved = startswith(var.kubeconfig_path, "~/") ? "$HOME/${substr(var.kubeconfig_path, 2, -1)}" : (
+    local.kubeconfig_is_absolute ? var.kubeconfig_path : abspath(var.kubeconfig_path)
   )
+
+  # Separators normalised, but only where a backslash is one. abspath uses the
+  # platform's, so on Windows the resolved path arrives with backslashes, which
+  # then sit inside a double-quoted shell string where they are at best noise
+  # and at worst an escape. Forward slashes are correct on POSIX and accepted
+  # by kubectl on Windows.
+  #
+  # On POSIX a backslash is an ordinary filename character, so normalising
+  # unconditionally would point the smoke test at /tmp/kube/config while the
+  # providers opened /tmp/kube\config. A drive letter is the only reliable
+  # marker of a path whose separators are backslashes: a /-rooted path and a
+  # ~/ path are both POSIX by construction.
+  kubeconfig_shell_path = can(regex("^[A-Za-z]:", local.kubeconfig_resolved)) ? replace(local.kubeconfig_resolved, "\\", "/") : local.kubeconfig_resolved
 }
 
 output "n8n_url" {

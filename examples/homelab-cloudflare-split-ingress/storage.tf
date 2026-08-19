@@ -25,8 +25,8 @@
 # Terraform cannot reorder. No depends_on on the module block, deliberately, for
 # the reason spelled out there.
 #
-# With shared_storage_class unset, neither resource is created and the module
-# creates the namespace itself as before.
+# With shared_storage_class unset the claim is not created, but the namespace
+# still is: this example owns it on every path, for the reason below.
 
 # Owned here unconditionally, and that is the fix for a trap rather than a
 # preference. It used to be created only when shared_storage_class was set, with

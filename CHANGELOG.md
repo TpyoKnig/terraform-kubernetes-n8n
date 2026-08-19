@@ -120,7 +120,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
   `kubeconfig_path` accepted a trailing backslash, which escapes the closing
   quote of the generated `kubectl_config_command` and leaves the export
-  unterminated. Rejected now.
+  unterminated. It also accepted the empty string, which resolved to the
+  example directory and made the smoke test export a directory as
+  `KUBECONFIG`. Both rejected now.
 
   A relative `kubeconfig_path` resolved against the root module for Terraform
   and against the invoking shell for `smoke-test.sh`, which the documented
@@ -130,7 +132,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   which would make the output depend on where Terraform ran.
 
   Windows separators are normalised to forward slashes on the way into that
-  double-quoted shell string.
+  double-quoted shell string, and only there: on POSIX a backslash is an
+  ordinary filename character, so `/tmp/kube\config` used to reach the
+  providers intact and the smoke test as `/tmp/kube/config`. A drive letter is
+  the marker. Which also means a drive-relative path like `C:config` is
+  resolved rather than passed through, having named a path against the current
+  directory of drive C rather than against its root all along.
 
 - `backing_services.binary_storage` reported the constant `"filesystem"` on
   every path, including the default one where binary data goes to Postgres. It
