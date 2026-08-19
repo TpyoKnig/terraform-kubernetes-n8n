@@ -624,13 +624,76 @@ locals {
     }
   }
 
+  # ── Pod shutdown budget ────────────────────────────────────────────────────
+  # n8n_termination_grace_period reached only one of the two things that have
+  # to agree. It sets the chart's redis.worker.timeout, which renders
+  # N8N_GRACEFUL_SHUTDOWN_TIMEOUT into the shared ConfigMap and so applies to
+  # main, worker and webhook processor alike: that is how long n8n believes it
+  # has to finish in-flight work after SIGTERM. The pod's own
+  # terminationGracePeriodSeconds, which is what decides when the kubelet stops
+  # asking and sends SIGKILL, stayed on the chart's 60 no matter what the input
+  # said.
+  #
+  # The two clocks do not start together, which is what makes the default wrong
+  # rather than merely equal. Kubernetes starts the grace period when the pod
+  # is marked for deletion, then runs the preStop hook, and only sends SIGTERM
+  # once the hook returns. n8n's budget therefore begins one preStop sleep
+  # after the kubelet's. At the chart defaults that is a 10 second sleep inside
+  # a 60 second grace period against a 60 second shutdown budget: n8n is killed
+  # at 50 of the 60 seconds it was told it had, mid-execution.
+  #
+  # Raising the input bought nothing, silently. Asking for 300 seconds of
+  # drain still got a pod killed at 60, so the usable window stayed at roughly
+  # 50 seconds whatever the input said. Executions finishing inside that were
+  # never at risk; the long-running ones the raised budget existed to protect
+  # were the ones it failed, and a worker scale-down or a node drain took them
+  # with nothing recording why.
+  #
+  # So the pod-level period is the sum: the drain sleep plus the budget n8n is
+  # given after it. That makes the input mean what its description always said,
+  # "seconds Kubernetes waits after SIGTERM", and the sum is what the pod needs
+  # for that to be true.
+  n8n_pod_termination_grace_period = var.n8n_termination_grace_period + var.n8n_prestop_sleep
+
+  k8s_values_lifecycle = {
+    lifecycle = {
+      # All three pod families, because N8N_GRACEFUL_SHUTDOWN_TIMEOUT reaches
+      # all three: it comes from the chart's shared ConfigMap, not a
+      # worker-only one, despite living under a redis.worker key.
+      for family in ["main", "worker", "webhookProcessor"] : family => {
+        terminationGracePeriodSeconds = local.n8n_pod_termination_grace_period
+
+        # The drain delay, and the only place it has ever taken effect. The
+        # module used to render n8n_prestop_sleep as an N8N_PRESTOP_SLEEP
+        # environment variable, which no chart template references and n8n
+        # does not declare, so raising the input changed nothing and the real
+        # window stayed on the chart's hardcoded `sleep 10`.
+        #
+        # What the sleep buys: SIGTERM is not sent until this hook returns, so
+        # the pod goes on serving while the ingress controller and Cilium
+        # remove it from their endpoint lists. Without the gap a rollout drops
+        # requests that were routed microseconds before the pod left the
+        # Service, which surfaces as occasional 502s during an otherwise clean
+        # deploy.
+        preStop = {
+          enabled = true
+          command = ["/bin/sh", "-c", "sleep ${var.n8n_prestop_sleep}"]
+        }
+      }
+    }
+  }
+
   # ── Rollout strategy for the single main pod ───────────────────────────────
   # The chart ships `strategy: {}`, and its template wraps the key in a `with`,
   # so an empty map renders nothing at all and the Deployment takes Kubernetes'
   # default: RollingUpdate at maxSurge 25%. Twenty-five percent of one replica
   # rounds up to one, so the new main goes Ready while the old one is still
-  # serving, and the old one then gets its preStop sleep plus its graceful
-  # shutdown budget to exit.
+  # serving, and the old one goes on serving until its pod's
+  # terminationGracePeriodSeconds runs out. That is one number, not a sum of
+  # two clocks: the kubelet runs the preStop hook inside the grace period
+  # rather than before it. The number happens to be a sum because this module
+  # sizes the period as n8n_termination_grace_period + n8n_prestop_sleep, so
+  # the drain sleep and the shutdown budget that follows it both fit.
   #
   # That window is two n8n mains sharing one Redis and one Postgres. Leader
   # election among mains is the licensed multi-main feature this module does
@@ -1011,14 +1074,15 @@ locals {
           { name = "DB_POSTGRESDB_POOL_SIZE", value = tostring(var.db_postgresdb_pool_size) },
         ],
 
-        # Seconds the pod sleeps after receiving SIGTERM before n8n begins
-        # shutting down, so the ingress controller and kube-proxy have removed
-        # it from their endpoint lists before it stops accepting connections.
-        # Without it a rolling update drops in-flight requests that were routed
-        # microseconds before the pod left the Service.
-        var.n8n_prestop_sleep == null ? [] : [
-          { name = "N8N_PRESTOP_SLEEP", value = tostring(var.n8n_prestop_sleep) },
-        ],
+        # N8N_PRESTOP_SLEEP used to be emitted here, and was read by nothing.
+        # The drain delay it describes is a pod lifecycle hook, not application
+        # configuration: chart 1.10.0 mentions the name in no template, and n8n
+        # declares no such variable (its deployment env var reference lists
+        # N8N_GRACEFUL_SHUTDOWN_TIMEOUT and not this). So the value was rendered
+        # into every container's environment, ignored there, and the actual
+        # drain window stayed on the chart's hardcoded `sleep 10` no matter what
+        # the input said. It is set through lifecycle.*.preStop.command in
+        # k8s_values_lifecycle above, where it takes effect.
 
         # Guardrails on what a workflow can decompress. Left to n8n's own
         # defaults when null, rather than pinned to a value this module invented.
@@ -1379,6 +1443,7 @@ locals {
     local.k8s_values_hpa,
     local.k8s_values_pdb,
     local.k8s_values_strategy,
+    local.k8s_values_lifecycle,
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,

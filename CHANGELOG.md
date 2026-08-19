@@ -94,6 +94,43 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- `n8n_prestop_sleep` now sets the drain delay it describes. It was rendered as
+  an `N8N_PRESTOP_SLEEP` environment variable on every container, which nothing
+  reads: chart 1.10.0 references the name in no template, and n8n declares no
+  such variable (its deployment reference lists `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`
+  and not this one). The drain delay is a pod lifecycle hook, so the real
+  window stayed on the chart's hardcoded `sleep 10` regardless of the input.
+
+  An operator who raised it to survive a slow endpoint removal got the value
+  they asked for in `kubectl describe pod` and the old behaviour in the
+  cluster. It is now the chart's `lifecycle.*.preStop.command` on all three pod
+  families, and the dead environment variable is no longer rendered.
+
+- `n8n_termination_grace_period` now sets the pod's own
+  `terminationGracePeriodSeconds`, not only n8n's internal shutdown budget.
+
+  It reached `N8N_GRACEFUL_SHUTDOWN_TIMEOUT`, through the chart's
+  `redis.worker.timeout`, and stopped there. The pod-level grace period, which
+  is what decides when the kubelet gives up and sends SIGKILL, stayed on the
+  chart's 60 whatever the input said.
+
+  The two clocks do not start together. Kubernetes begins the grace period when
+  the pod is marked for deletion, runs the preStop hook, and sends SIGTERM only
+  once that hook returns, so n8n's budget starts one drain sleep late. At the
+  defaults that is a 10 second sleep inside a 60 second grace period against a
+  60 second budget: n8n was killed at 50 of the 60 seconds it had been told it
+  had, mid-execution.
+
+  Raising the input bought nothing and said nothing. Asking for 300 seconds of
+  drain still got a pod killed at 60, so the ceiling stayed at roughly 50
+  seconds of usable shutdown no matter what the input said. Executions that
+  finished inside that window were fine either way; the long-running ones the
+  raised budget was meant to protect were exactly the ones it did not, and a
+  worker scale-down or a node drain killed them with nothing reporting why.
+  The pod period is now the drain sleep plus the budget, on main, worker and
+  webhook processor alike, which is what makes the variable's description true.
+
+
 - `check.custom_image_tag_needs_a_task_runner_tag` no longer warns on a
   private mirror of the stock image. It used "the caller set a tag" as its
   proxy for "this tag may not exist upstream", which stopped being one the
