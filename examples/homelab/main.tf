@@ -93,7 +93,7 @@ module "n8n" {
   # empty namespace unchanged; create the Secret first, then add these.
   #
   #   kubectl create secret generic ai-assistant-secrets \
-  #     --from-literal=anthropic-api-key=... \
+  #     --from-literal=model-api-key=... \
   #     --from-literal=sandbox-api-key=...
   #
   # n8n_extra_env is unset in this example, so this goes in whole, brackets
@@ -114,7 +114,7 @@ module "n8n" {
   #   {
   #     name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
   #     secret_name = "ai-assistant-secrets"
-  #     secret_key  = "anthropic-api-key"
+  #     secret_key  = "model-api-key"
   #   },
   #   {
   #     name        = "N8N_SANDBOX_SERVICE_API_KEY"
