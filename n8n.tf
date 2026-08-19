@@ -390,6 +390,21 @@ check "image_pull_secrets_need_a_custom_image" {
   }
 }
 
+check "rolling_update_still_overlaps_two_mains" {
+  assert {
+    # maxSurge = 0 is the strongest thing RollingUpdate offers, and it is not
+    # enough. It bounds how many pods may exist, and a Terminating pod stops
+    # counting the moment its ReplicaSet is scaled to zero, while the process
+    # inside it runs until its preStop hook and graceful shutdown finish. So
+    # the controller creates the incoming main and the outgoing one keeps
+    # serving beside it for up to n8n_prestop_sleep + n8n_termination_grace_
+    # period. Recreate is the only strategy that waits for the old pod to be
+    # gone, which is why it is the default.
+    condition     = var.n8n_main_strategy == "RollingUpdate" ? false : true
+    error_message = "n8n_main_strategy is RollingUpdate, which does not give the main pod an overlap-free rollout. It renders maxSurge = 0 so a second main is never scheduled, but the outgoing pod goes on running for its preStop sleep and graceful shutdown budget after the incoming one is created, currently up to ${var.n8n_prestop_sleep + var.n8n_termination_grace_period}s. For that window two n8n mains share one Redis and one Postgres with no leader election between them, because multi-main is licensed and this module deploys Community edition: both hold the schedule triggers, cron workflows fire twice, and on a version bump the new main runs its one-way startup migrations while the old one is still reading the old schema. Set n8n_main_strategy = \"Recreate\" unless your tooling requires the RollingUpdate strategy type and you accept that window."
+  }
+}
+
 check "main_pdb_blocks_the_main_pod_node_drain" {
   assert {
     # Two ways in, because the typed input is not the only one. Helm gives the

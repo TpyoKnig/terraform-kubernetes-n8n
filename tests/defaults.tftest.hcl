@@ -1947,6 +1947,28 @@ run "rolling_update_is_rendered_with_no_surge" {
     condition     = local.k8s_values_final.strategy.rollingUpdate.maxUnavailable == 1
     error_message = "RollingUpdate with maxSurge = 0 needs maxUnavailable >= 1, or the Deployment can never make progress: it may neither add a pod nor remove one."
   }
+
+  # maxSurge = 0 bounds the pod count, not the overlap: the outgoing pod stops
+  # counting once its ReplicaSet is scaled to zero, and goes on serving through
+  # its preStop hook and shutdown budget while the incoming pod starts. The
+  # plan has to say so, or the strategy reads as equivalent to Recreate.
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# The default must not trip that warning, or it fires on every deployment and
+# becomes noise.
+run "the_default_strategy_warns_about_nothing" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.strategy.type == "Recreate"
+    error_message = "The main Deployment must default to Recreate, the only strategy that waits for the old main to be gone."
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_final.strategy), "rollingUpdate")
+    error_message = "Recreate must not carry a rollingUpdate block; the Deployment API rejects it."
+  }
 }
 
 run "the_main_strategy_rejects_a_surging_value" {

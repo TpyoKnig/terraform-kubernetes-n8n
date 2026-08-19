@@ -10,7 +10,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Added
 
 - `n8n_main_strategy` sets the main Deployment's rollout strategy, and
-  **defaults to `Recreate`, which changes how every deployment rolls.**
+  **defaults to `Recreate`, which changes how the main Deployment rolls.** The
+  worker and webhook-processor Deployments are untouched and keep rolling as
+  they did; they are horizontally scaled and have no single-instance
+  constraint to protect.
 
   The chart ships `strategy: {}` behind a `with`, so it rendered nothing and
   the Deployment took Kubernetes' own default: RollingUpdate at maxSurge 25%.
