@@ -65,12 +65,15 @@ resource "kubectl_manifest" "cnpg_cluster" {
   # cluster, and a module that installed one would own upgrading and destroying
   # it on behalf of workloads it cannot see.
   #
-  # Unlike KEDA there is no attestation input for it either, and none is
-  # needed. A missing KEDA operator leaves a ScaledObject that never reconciles
-  # and pins workers at their floor without failing anything, which is why that
-  # one is worth asking about. A missing CNPG operator fails this apply
-  # outright, with the API server naming the unknown kind, so the error already
-  # says what is wrong.
+  # Unlike KEDA there is no attestation input for it either, and the two
+  # failures are worth telling apart. With nothing installed at all the CRD is
+  # missing too, so this apply fails outright with the API server naming the
+  # unknown kind, and the error already says what is wrong. With the CRD
+  # present but the operator absent or unavailable, the manifest applies
+  # cleanly and nothing reconciles it: no Postgres pods, no Service, and an
+  # apply that reports success. That case looks exactly like the KEDA one and
+  # this module does not detect it. `kubectl get cluster -n <ns>` showing no
+  # instances, or no `cnpg-controller-manager` in `cnpg-system`, is the tell.
   #
   # (An earlier version of this comment cited
   # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this

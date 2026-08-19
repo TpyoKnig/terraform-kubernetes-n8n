@@ -110,8 +110,9 @@ locals {
 # than as a literal value, because a literal is written into the rendered Helm
 # release values, which Helm then stores in its own release Secret in the
 # cluster (sha256-addressed, retained per revision) on top of Terraform state.
-# The task runner auth token is the exception: it encrypts nothing, so it is
-# passed to the chart as a literal.
+# The task runner auth token is not among them: the module neither generates
+# nor passes it, and the chart mints it into a Secret of its own (see the
+# section above).
 
 resource "kubernetes_secret" "n8n" {
   # Gated to zero only when n8n_encryption_key_secret_ref replaces this Secret

@@ -868,18 +868,23 @@ variable "cnpg_storage_class" {
 }
 
 variable "cnpg_postgres_image_tag" {
-  description = "Postgres image tag for CNPG (ghcr.io/cloudnative-pg/postgresql:<tag>). Only used when postgres_backend = \"cnpg\". Defaults to the major version alone, so PostgreSQL minor releases are picked up as they are published. That is the opposite of what n8n_image_tag does, on purpose: a PostgreSQL minor is security and bug fixes only, is data and wire compatible with the rest of its major, and upgrades by restarting the instance, which CloudNativePG performs as a controlled rolling operation. An n8n upgrade runs one-way schema migrations, which is why that one is pinned and this one is not, and pinning here instead would leave the database on a known-vulnerable minor until somebody remembered to bump it. Set a full version (e.g. \"16.10\") to freeze it anyway, for a reproducible rebuild or an air-gapped mirror that carries only certain tags. Changing the MAJOR version is a different matter entirely: CloudNativePG does not upgrade a major in place, so it needs a new Cluster and a dump/restore or a logical replication cutover."
+  description = "Postgres image tag for CNPG (ghcr.io/cloudnative-pg/postgresql:<tag>). Only used when postgres_backend = \"cnpg\". Defaults to the major version alone, which is a rolling tag: whatever minor it points at is what a newly created instance pulls. Note what that does and does not do. It does not roll a running cluster, because the tag string does not change and CloudNativePG has no new image reference to act on; the newer minor arrives whenever an instance is next recreated for some other reason. To take a minor deliberately, bump this to the version you want, which does change the Cluster spec and does trigger CNPG's controlled rolling restart, or drive it from an operator ImageCatalog instead. That this is not pinned the way n8n_image_tag is, is on purpose: a PostgreSQL minor is security and bug fixes only and is data and wire compatible with the rest of its major, while an n8n upgrade runs one-way schema migrations. Upstream also publishes tags carrying the image type and distribution, `16.10-minimal-trixie` and the like, and documents those as the supported form; the bare `16` and `16.10` spellings are deprecated and are to be removed when the bullseye images reach end of life, so a qualified tag is the more durable choice even though the default here is still the bare major. Changing the MAJOR version is a different matter entirely: CloudNativePG does not upgrade a major in place, so it needs a new Cluster and a dump/restore or a logical replication cutover."
   type        = string
   default     = "16"
   nullable    = false
 
   validation {
-    # A bare major, or a full major.minor. The image publishes both, and this
-    # rejects the shapes that quietly resolve to something else: an empty
-    # string (the operator would take the image's own latest), a leading "v",
-    # and a tag carrying a registry or digest.
-    condition     = can(regex("^[0-9]+(\\.[0-9]+)?$", var.cnpg_postgres_image_tag))
-    error_message = "cnpg_postgres_image_tag must be a PostgreSQL major (\"16\") or major.minor (\"16.10\"). No leading \"v\", no digest, and no empty string: the tag is interpolated straight into the Cluster's imageName, so anything else surfaces as a pod that cannot pull rather than as a plan error."
+    # A version, optionally followed by the image type, distribution and build
+    # timestamp the upstream tags carry: "16", "16.10", "16-minimal-trixie",
+    # "16.10-standard-bookworm", "16.10-202511051200-minimal-trixie". The
+    # suffixes are deliberately not enumerated, because the set of types and
+    # distributions changes without this module having any say in it.
+    #
+    # What this does reject is the shapes that quietly resolve to something
+    # else: an empty string (the operator would take the image's own latest), a
+    # leading "v", and a tag carrying a registry or a digest.
+    condition     = can(regex("^[0-9]+(\\.[0-9]+)?(-[0-9A-Za-z.]+)*$", var.cnpg_postgres_image_tag))
+    error_message = "cnpg_postgres_image_tag must start with a PostgreSQL major (\"16\") or major.minor (\"16.10\"), optionally followed by the image type and distribution (\"16.10-minimal-trixie\"). No leading \"v\", no digest, and no empty string: the tag is interpolated straight into the Cluster's imageName, so anything else surfaces as a pod that cannot pull rather than as a plan error."
   }
 }
 

@@ -3499,6 +3499,35 @@ run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
   expect_failures = [var.cnpg_max_connections]
 }
 
+# Upstream's supported tags name the image type and distribution, and the bare
+# major it defaults to here is the deprecated spelling. Rejecting the supported
+# form would leave the module on the tags that are going away.
+run "cnpg_postgres_image_tag_accepts_a_qualified_upstream_tag" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10-minimal-trixie"
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.imageName == "ghcr.io/cloudnative-pg/postgresql:16.10-minimal-trixie"
+    error_message = "The tag is interpolated into imageName verbatim, whatever shape it is."
+  }
+}
+
+# A registry or a digest in this input produces an imageName that resolves to
+# something other than what it reads as, which is a pull failure at run time
+# rather than a plan error.
+run "cnpg_postgres_image_tag_rejects_a_digest" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+
+  expect_failures = [var.cnpg_postgres_image_tag]
+}
+
 # ── Binary data mode ──────────────────────────────────────────────────────────
 
 # The output used to be the string "filesystem" regardless of configuration,

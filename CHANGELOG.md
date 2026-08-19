@@ -184,12 +184,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `ClusterIssuer` in `modules/tls-letsencrypt`), so a future 2.0 arriving on an
   unrelated apply is not a risk worth carrying. Lock files refreshed.
 
-- `cnpg_postgres_image_tag` gains a validation and an explanation of why it
-  floats on the major version while `n8n_image_tag` is pinned: a PostgreSQL
-  minor is security and bug fixes, data and wire compatible, applied by a
-  restart CloudNativePG performs as a rolling operation, whereas an n8n upgrade
-  runs one-way schema migrations. Pinning here would park the database on a
-  known-vulnerable minor until someone remembered to bump it.
+- `cnpg_postgres_image_tag` gains a validation, which accepts the qualified
+  upstream tags (`16.10-minimal-trixie` and the like) as well as the bare
+  `16` and `16.10`, and rejects an empty string, a leading `v`, and a tag
+  carrying a registry or digest. The description now says what the default
+  rolling tag actually does: a newly created instance pulls whatever minor the
+  tag points at, but a running cluster does not roll, because the tag string
+  does not change and CloudNativePG has no new image reference to act on. To
+  take a minor deliberately, bump the tag or drive it from an ImageCatalog. It
+  also records that the bare spellings are deprecated upstream in favour of the
+  ones naming the image type and distribution.
 
 - Corrected comments and descriptions that misdescribed the code: the values
   assembly banner claimed the chart 1.11.0 schema while the pin is 1.10.0;
