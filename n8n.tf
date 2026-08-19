@@ -119,12 +119,21 @@ resource "kubernetes_secret" "n8n" {
     namespace = local.namespace_name
   }
 
+  # Exactly the four keys the chart's coreSecretsEnv helper reads from this
+  # Secret. A WEBHOOK_URL key sat here for a long time and was never read by
+  # anything: on a single host the chart wires that variable from its own
+  # ConfigMap (webhook.url / the first ingress host), and on a split ingress
+  # this module injects local.k8s_webhook_url through config.extraEnv instead
+  # (see k8s_split_ingress_urls in locals.tf). Either way the value the pods
+  # run never came from this Secret. Worse than dead, the key disagreed with
+  # the real one whenever k8s_ingress_host was set, so anyone inspecting the
+  # Secret was reading a wrong answer. Removed; the chart never referenced it,
+  # so nothing about the pods changes.
   data = {
     N8N_ENCRYPTION_KEY = local.n8n_encryption_key
     N8N_HOST           = local.n8n_domain
     N8N_PORT           = "5678"
     N8N_PROTOCOL       = "http"
-    WEBHOOK_URL        = coalesce(var.n8n_webhook_url, "https://${local.n8n_domain}")
   }
 }
 
