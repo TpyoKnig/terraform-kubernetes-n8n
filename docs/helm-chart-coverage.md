@@ -48,7 +48,7 @@ your CI can raise, review and roll back, which is the whole point.
 | `image.pullPolicy` | **Hardcoded** `IfNotPresent`. Not exposed. |
 | `image.repository` | Exposed as `n8n_image_repository`. Omitted when null, so the chart's `docker.n8n.io/n8nio/n8n` applies. `n8n_image_pull_secrets` covers a private registry. |
 | `queueMode.*` | Hardcoded `enabled = true`. Queue mode is the module's premise, not an option. Worker count and concurrency are exposed as `n8n_worker_*`. |
-| `replicaCount` | Exposed for the main pool, but the main pod stays at 1: a second main needs leader election, which n8n gates behind a licence. |
+| `replicaCount` | Pinned to 1 for the main pool with no input: a second main needs leader election, which n8n gates behind a licence. |
 | `webhookProcessor.*` | Exposed. Separate pool, replica count, and `disableProductionWebhooksOnMainProcess` hardcoded true. |
 | `webhook.url` | Exposed as `n8n_webhook_url`. |
 | `hpa.main`, `hpa.worker`, `hpa.webhookProcessor` | Exposed through the `n8n_*_hpa_*` inputs. |
@@ -64,7 +64,7 @@ your CI can raise, review and roll back, which is the whole point.
 | `executions.*` | Exposed: `n8n_execution_timeout` / `_timeout_max` (timeout, timeoutMax), `n8n_execution_concurrency_limit` (concurrency.productionLimit), `n8n_pruning_max_age` / `_max_count` (pruning). The chart reads these top-level only; there is no `config.executions`. |
 | `taskRunners.*` | Exposed: enabled, mode, native Python runner, and the launcher config through the allowlist inputs. |
 | `taskRunners.image.tag` | Exposed as `n8n_task_runner_image_tag`. Omitted when null, so the chart falls back to the application image tag. |
-| `taskRunners.image.repository`, `.resources`, `.broker`, `.launcher` | Not exposed. |
+| `taskRunners.image.repository`, `.resources`, `.broker` | Not exposed. `taskRunners.launcher.autoShutdownTimeout` is set from `n8n_task_runner_auto_shutdown_timeout`; the rest of `.launcher` is not exposed. |
 | `ingress.*` | Exposed when `create_ingress = true`: class, hosts, TLS, annotations, sticky sessions, and the webhook-processor Ingress. |
 | `resources.*` | Exposed for all four pools: main, worker, webhookProcessor, taskRunner. |
 | `serviceAccount.create`, `.name` | Exposed. |

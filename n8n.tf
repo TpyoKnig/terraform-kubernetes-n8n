@@ -174,7 +174,9 @@ resource "kubernetes_secret" "n8n_redis" {
   # addition (count already gated on local.redis_auth_active alone), so
   # narrowing the condition further does not move its address the way gating
   # kubernetes_secret.n8n and kubernetes_secret.n8n_db above does for the
-  # first time; no `moved` block is needed here. See refactoring.tf.
+  # first time; no `moved` block is needed here. (Those two shipped their
+  # count gating in the module's initial release, so no address ever moved
+  # and no moved blocks exist for them either.)
   count = local.redis_auth_active && var.redis_auth_token_secret_ref == null ? 1 : 0
 
   metadata {
@@ -318,8 +320,9 @@ check "otel_tuning_requires_master_switch" {
 # meant. All are warnings rather than errors: each is legitimate in some
 # deployment, and none can be decided with certainty from the inputs alone.
 #
-# Written as `guard ? body : true` per AGENTS.md, since Terraform 1.9 (the
-# version floor) does not short-circuit && and ||.
+# Written as `guard ? body : true` per AGENTS.md's consistency rule for
+# guard-style conditions. (The floor is 1.11, which does short-circuit && and
+# ||; the shape predates that floor and stays for consistency, not necessity.)
 
 check "custom_image_repository_needs_an_explicit_tag" {
   assert {

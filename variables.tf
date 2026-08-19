@@ -1159,10 +1159,10 @@ variable "redis_host" {
   # has nowhere to connect: the same succeeds-then-fails-at-runtime shape the
   # check blocks in redis.tf exist to prevent.
   #
-  # Written as nested ternaries rather than `||` and `&&` because Terraform 1.9,
-  # which CI pins, does not short-circuit either operator. trimspace(null) is a
-  # hard error, so the null test has to gate the blank test structurally rather
-  # than by evaluation order. See AGENTS.md.
+  # Written as nested ternaries rather than `||` and `&&` per AGENTS.md's
+  # consistency rule for guard-style conditions: the null test gates the blank
+  # test structurally (trimspace(null) is a hard error) rather than relying on
+  # short-circuit evaluation.
   validation {
     # On the valkey path the module derives the Redis host from the Valkey
     # Service DNS (local.k8s_redis_host in locals.tf) rather than reading
@@ -1308,7 +1308,7 @@ variable "n8n_webhook_hpa_min_replicas" {
 }
 
 variable "n8n_webhook_hpa_max_replicas" {
-  description = "Maximum replicas for n8n webhook processor pods. HPA will not scale above this. The default of 8 is sized to the default node group (node_max × node_instance_type), alongside the main and worker ceilings. Webhook processors are the cheapest pod family to scale (no task runner sidecar, 300m by default), so this is usually the first ceiling to raise once node_max goes up. See n8n_main_hpa_max_replicas and README.md → \"Sizing autoscaling against node capacity\"."
+  description = "Maximum replicas for n8n webhook processor pods. HPA will not scale above this. The default of 8 is sized alongside the main and worker ceilings to fit a small cluster. Webhook processors are the cheapest pod family to scale (no task runner sidecar, 300m by default), so this is usually the first ceiling to raise as the cluster grows. The capacity check (k8s_capacity_check_enabled) warns when the ceilings outgrow the cluster; see README.md → \"Sizing\"."
   type        = number
   default     = 8
   nullable    = false
@@ -1350,13 +1350,13 @@ variable "n8n_metrics_enabled" {
 }
 
 variable "n8n_templates_enabled" {
-  description = "Enable n8n's workflow templates and template suggestions. Maps to N8N_TEMPLATES_ENABLED. When false, sets N8N_TEMPLATES_ENABLED=false on all n8n pods (main, worker, webhook processor) via config.extraEnv. Defaults to true, matching n8n's own default. Note that explicitly setting true emits no env var (n8n's default already applies). Set to false to hide the templates library, e.g. when enforcing curated internal workflows."
+  description = "Enable n8n's workflow templates and template suggestions. Maps to N8N_TEMPLATES_ENABLED. When false, sets N8N_TEMPLATES_ENABLED=false on all n8n pods (main, worker, webhook processor) via config.extraEnv. Defaults to true, matching n8n's own default. The value is rendered explicitly either way, so the deployed env states the choice rather than leaning on n8n's default. Set to false to hide the templates library, e.g. when enforcing curated internal workflows."
   type        = bool
   default     = true
 }
 
 variable "n8n_personalization_enabled" {
-  description = "Whether n8n asks users personalization survey questions and tailors content/recommendations based on the answers. Maps to N8N_PERSONALIZATION_ENABLED. When false, sets N8N_PERSONALIZATION_ENABLED=false on all n8n pods (main, worker, webhook processor) via config.extraEnv. Defaults to true, matching n8n's own default. Note that explicitly setting true emits no env var (n8n's default already applies). Set to false to skip the personalization survey, e.g. on shared or ephemeral instances."
+  description = "Whether n8n asks users personalization survey questions and tailors content/recommendations based on the answers. Maps to N8N_PERSONALIZATION_ENABLED. When false, sets N8N_PERSONALIZATION_ENABLED=false on all n8n pods (main, worker, webhook processor) via config.extraEnv. Defaults to true, matching n8n's own default. The value is rendered explicitly either way, so the deployed env states the choice rather than leaning on n8n's default. Set to false to skip the personalization survey, e.g. on shared or ephemeral instances."
   type        = bool
   default     = true
 }
@@ -1777,8 +1777,8 @@ variable "n8n_otel_exporter_otlp_endpoint" {
   type        = string
   default     = null
 
-  # Null-safe ternary (see n8n_otel_traces_sample_rate for the Terraform 1.9.x
-  # short-circuit rationale): only validate the scheme when a value is set.
+  # Null-safe ternary, per AGENTS.md's consistency rule for guard-style
+  # conditions: only validate the scheme when a value is set.
   validation {
     condition = var.n8n_otel_exporter_otlp_endpoint == null ? true : (
       startswith(var.n8n_otel_exporter_otlp_endpoint, "http://") ||
@@ -1806,12 +1806,9 @@ variable "n8n_otel_traces_sample_rate" {
   type        = number
   default     = null
 
-  # Use a ternary rather than `null || numeric_op` here: Terraform 1.9.x
-  # eagerly evaluates both sides of the logical OR during validation, so the
-  # `null >= 0` branch errors with 'argument must not be null.' even when
-  # the variable is null. Ternaries DO short-circuit, so wrapping the numeric
-  # comparison in `var == null ? true : (...)` keeps the null path entirely
-  # off the numeric-op branch.
+  # Ternary rather than `null || numeric_op`, per AGENTS.md's consistency
+  # rule for guard-style conditions: the null guard gates the numeric
+  # comparison structurally rather than relying on short-circuit evaluation.
   validation {
     condition = var.n8n_otel_traces_sample_rate == null ? true : (
       var.n8n_otel_traces_sample_rate >= 0 && var.n8n_otel_traces_sample_rate <= 1
@@ -1993,7 +1990,7 @@ variable "n8n_worker_keda_min_replicas" {
 }
 
 variable "n8n_worker_keda_max_replicas" {
-  description = "Maximum worker replicas KEDA may scale to. Workers compete for the same nodes as the main and webhook pods, and each carries a task runner sidecar, so this ceiling counts against the same node group budget as the two HPA maxima. See README.md → \"Sizing autoscaling against node capacity\"."
+  description = "Maximum worker replicas KEDA may scale to. Workers compete for the same nodes as the main and webhook pods, and each carries a task runner sidecar, so this ceiling counts against the same cluster CPU budget as the webhook HPA maximum. The capacity check (k8s_capacity_check_enabled) warns when the ceilings outgrow the cluster; see README.md → \"Sizing\"."
   type        = number
   default     = 10
   nullable    = false

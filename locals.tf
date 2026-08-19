@@ -8,12 +8,9 @@
 locals {
   n8n_domain = var.n8n_domain
 
-  # Every hostname n8n answers on, primary first. Single source of truth for the
-  # Ingress host rules, so the editor and webhook routes cannot drift apart.
-  # n8n_domain stays first and canonical: it is what n8n advertises.
-  #
-  # Lowercased because Kubernetes rejects uppercase Ingress hosts. DNS itself is
-  # case-insensitive, so normalizing here changes nothing a caller can observe.
+  # A plain alias, not normalized here: the hostname list the Ingresses use is
+  # assembled and lowercased at k8s_ingress_hosts further down. This value is
+  # what n8n advertises as N8N_HOST, verbatim.
 
   # Service coordinates the Helm chart creates. Named here so the outputs a
   # bring-your-own Ingress consumes cannot drift from what the chart renders.
@@ -512,8 +509,9 @@ locals {
   }
 
   # The module provisions no object storage: it will not own a stateful data
-  # service on a cluster it does not own. Binary and execution data stay on
-  # filesystem mode, backed by whatever the cluster's StorageClass provides.
+  # service on a cluster it does not own. Binary data follows
+  # n8n_binary_data_mode - Postgres by default, or filesystem on a shared
+  # volume the caller mounts - and execution data stays in Postgres.
   # See docs/operations.md for wiring an external bucket by hand.
   # WEBHOOK_URL is the address n8n hands out for callers to POST to. Left
   # unset, n8n builds it from N8N_PROTOCOL + N8N_HOST, and N8N_PROTOCOL is
@@ -936,8 +934,16 @@ locals {
           { name = "N8N_REDIS_KEY_PREFIX", value = var.redis_key_prefix },
         ],
 
-        # Declared TLS on a caller-supplied endpoint. n8n reads this directly;
-        # the chart has no redis.tls key to set instead.
+        # Declared TLS on a caller-supplied endpoint. Set through the
+        # environment rather than the chart's redis.tls key: both render the
+        # same QUEUE_BULL_REDIS_TLS on every pod (the chart's via its
+        # ConfigMap), and staying in config.extraEnv keeps this list the one
+        # place the module's own env decisions live. The QUEUE_ prefix
+        # reservation blocks the name from the two env inputs; an
+        # n8n_extra_helm_values overlay setting redis.tls alongside
+        # redis_transit_encryption_enabled is NOT blocked, and renders the
+        # name twice - the duplicate-env failure that wedges the next helm
+        # upgrade. Use the module input, not the overlay, for this key.
         local.valkey_enabled || !local.redis_tls_active ? [] : [
           { name = "QUEUE_BULL_REDIS_TLS", value = "true" },
         ],

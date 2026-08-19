@@ -56,6 +56,7 @@ Not gaps, and not planned:
   destroying it on behalf of workloads it cannot see.
 - **Managing DNS.** How a name reaches a self-hosted cluster has no portable
   answer. Worked strategies belong in example roots, and two ship today.
-- **An object-storage data plane.** Binary data stays on filesystem mode. A
+- **An object-storage data plane.** Binary data stays in Postgres or on a
+  shared volume (`n8n_binary_data_mode`). A
   bucket outlives any one n8n deployment, so the module does not create one:
   `docs/operations.md` covers pointing at your own.

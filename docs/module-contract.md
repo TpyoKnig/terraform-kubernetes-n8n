@@ -144,7 +144,7 @@ been the single most common review finding on this repo.
 ## 5. Testing
 
 5.1 Every root has a mocked plan suite that runs with no cluster and no
-credentials: the module root, all four examples, both submodules.
+credentials: the module root, all six examples, both submodules.
 
 5.2 A new resource or behaviour ships with a plan-time assertion. A new input
 ships with an assertion that it reaches the rendered values.
@@ -233,8 +233,8 @@ supported and documented in [`operations.md`](./operations.md#binary-data).
 | --- | --- |
 | 3.2 descriptions present | tflint, `docs` CI job |
 | 3.6 naming families | `scripts/check-variable-prefixes.sh`, `naming` CI job |
-| 4.2 generated block in sync | `terraform-docs --output-check`, all 7 roots |
-| 5.1 mocked suites pass | `terraform test`, all 7 roots |
+| 4.2 generated block in sync | `terraform-docs --output-check`, all 9 roots |
+| 5.1 mocked suites pass | `terraform test`, all 9 roots |
 | 6.1 lint and scan clean | tflint, checkov, both hard-fail |
 | 8.3 commit format | review only |
 
