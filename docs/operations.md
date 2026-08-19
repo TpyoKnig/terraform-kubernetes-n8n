@@ -309,8 +309,9 @@ It only ever warns. Ceilings the current cluster cannot reach are a legitimate
 configuration if adding nodes is the next thing you plan to do.
 
 What counts as schedulable: cordoned nodes and nodes carrying any `NoSchedule`
-taint are excluded, so a lab with three tainted control planes alongside three
-workers is not counted at twice its real size. The filter is blunt in the safe
+or `NoExecute` taint are excluded (`PreferNoSchedule` is a preference, not a
+bar, so those nodes still count), so a lab with three tainted control planes
+alongside three workers is not counted at twice its real size. The filter is blunt in the safe
 direction: a taint the n8n pods would tolerate still excludes the node, which
 understates supply and warns slightly early.
 
