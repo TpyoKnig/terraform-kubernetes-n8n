@@ -8,17 +8,19 @@ Use this one when the worker tier autoscales. Queue-mode n8n hits a connection l
 
 Every n8n pod holds `db_postgresdb_pool_size` persistent PostgreSQL connections. That number gets multiplied by a pod count an autoscaler owns, and the CNPG `Cluster` this module creates runs `max_connections = 200`.
 
-Work it through at the module defaults:
+Work it through at the module defaults, which is the interesting part: it fits, and barely.
 
-| | |
-|---|---|
-| `max_connections` | 200 |
-| less `superuser_reserved_connections` | 197 usable |
-| `db_postgresdb_pool_size` | 10 per pod |
-| worker tier at its KEDA ceiling | 16 pods |
-| webhook-processor tier at its HPA ceiling | 8 pods |
-| main | 1 pod |
-| **demanded** | **250** |
+| | at module defaults | worker ceiling raised to 16 |
+|---|---|---|
+| `max_connections` | 200 | 200 |
+| less `superuser_reserved_connections` | 197 usable | 197 usable |
+| `db_postgresdb_pool_size` | 10 per pod | 10 per pod |
+| worker tier at its KEDA ceiling | 10 pods | 16 pods |
+| webhook-processor tier at its HPA ceiling | 8 pods | 8 pods |
+| main | 1 pod | 1 pod |
+| **demanded** | **190** | **250** |
+
+So the stock configuration sits seven connections from the wall, and the first thing anyone does when the queue backs up is raise `n8n_worker_keda_max_replicas`. Six more workers is all it takes. Nothing warns you: the ceiling is a resource decision everywhere else, and this is the one place it is also a connection decision.
 
 Past the limit, pods do not degrade. A new worker cannot initialise its pool, exits non-zero, and CrashLoops:
 
@@ -75,7 +77,9 @@ That last one is not a preference. The CNPG `Pooler` serves clients in plaintext
 
 Transaction mode gives up session-scoped state: server-side named prepared statements, `LISTEN`/`NOTIFY`, session-level advisory locks, and `SET`. n8n in queue mode uses Redis for queueing and leader election rather than Postgres `LISTEN`, and node-postgres issues unnamed portals by default, so the paths n8n actually takes are unaffected.
 
-The case to watch is TypeORM migrations at startup. If n8n ever fails to boot after a version bump with a lock-related error, point it at the direct Postgres endpoint for that boot and back afterwards. The `backing_services.postgres_direct_host` output exists for exactly this, and for any `psql` session that needs to hold state across statements.
+The case to watch is TypeORM migrations at startup. If n8n ever fails to boot after a version bump with a lock-related error, set `cnpg_pooler_enabled = false`, apply so the release points back at the `-rw` Service, let it migrate, then turn it on again. There is no per-boot override: `db_host` is ignored on the CNPG backend, and `backing_services.postgres_direct_host` is an output rather than a lever, for `psql` and for maintenance you run yourself.
+
+That caveat is not theoretical. A session-scoped advisory lock taken through the pooler stayed held by a server backend after the client disconnected, and blocked a later direct connection until the backend was terminated.
 
 ## Sizing it
 
@@ -88,7 +92,7 @@ Two numbers, and only one of them is about pods.
 
 With a pooler in front, raising `n8n_worker_keda_max_replicas` is a resource question rather than a connection one. Without one it was neither: more workers meant more connections against the same limit, so raising the ceiling brought the CrashLoop on sooner.
 
-Check per-node CPU before you raise it. The scheduler places whole worker pods on individual nodes, so a cluster-wide free-CPU total overstates what is actually reachable; a cluster with 13,000m free spread across five nodes may fit far fewer 600m pods than the division suggests.
+Check per-node CPU before you raise it. The scheduler places whole worker pods on individual nodes, so a cluster-wide free-CPU total overstates what is actually reachable; a cluster with 13,000m free spread across five nodes may fit far fewer 700m pods than the division suggests.
 
 ## Throughput and sizing
 
@@ -111,21 +115,21 @@ Budget **3 executions/sec per worker** for this workflow, then check the two lim
 
 | Target | Workers | Worker CPU requests | Pods total | Client conns used |
 |---|---|---|---|---|
-| 15/s | 5 | 3,000m | ~14 | 70 |
-| 30/s | 10 | 6,000m | ~19 | 95 |
-| 50/s | 16 | 9,600m | ~25 | 125 |
-| 75/s | 25 | 15,000m | ~34 | 170 |
-| 100/s | 34 | 20,400m | ~43 | 215 |
+| 15/s | 5 | 3,500m | ~14 | 70 |
+| 30/s | 10 | 7,000m | ~19 | 95 |
+| 50/s | 16 | 11,200m | ~25 | 125 |
+| 75/s | 25 | 17,500m | ~34 | 170 |
+| 100/s | 34 | 23,800m | ~43 | 215 |
 
-Worker CPU requests are 600m per pod: 500m for the worker plus 100m for the task-runner sidecar. Pods total adds the webhook-processor tier at its ceiling of 8, plus main. Client connections are `pods x db_postgresdb_pool_size` at the 5 this example sets.
+Worker CPU requests are **700m per pod**, not 500m: this example sets `n8n_task_runners_enabled = true`, which adds a task-runner sidecar at the module's default `n8n_task_runner_cpu_request` of 200m on top of the worker's 500m. Sizing on 500m understates the tier by 40%, and the shortfall shows up as `Pending` replicas rather than as an error. Drop the sidecar or lower its request and the column shrinks accordingly. Pods total adds the webhook-processor tier at its ceiling of 8, plus main. Client connections are `pods x db_postgresdb_pool_size` at the 5 this example sets.
 
-**The connection column is the point of this example.** It never approaches `cnpg_pooler_max_client_conn x cnpg_pooler_instances` (1,000 here), and the *server* side stays fixed at 50 real backends across every row. Without the pooler, that same 100/s row would demand 430 connections against 197 available, and the tier would CrashLoop somewhere around the 30/s row instead.
+**The connection column is the point of this example.** It never approaches `cnpg_pooler_max_client_conn x cnpg_pooler_instances` (1,000 here), and n8n's real backends stay capped at `cnpg_pooler_pool_size x cnpg_pooler_instances` = 50 across every row. Total Postgres backends run a little above that, 61-63 measured, because CNPG's own instance manager, replication and metrics connections are not n8n's and do not come out of the pooler's budget. Without the pooler, that same 100/s row would demand 430 connections against 197 available, and the tier would CrashLoop somewhere around the 30/s row instead.
 
 ### The limit that actually bites: node CPU
 
 Worker pods are scheduled whole, onto individual nodes. A cluster-wide free-CPU total overstates what is reachable, and the error is not small.
 
-Worked example from the lab. Free CPU per node was 3436m, 2636m, 3566m, 2206m and 2086m: 13,930m in total, which divides to 23 pods at 600m. Per node it is 5 + 4 + 5 + 3 + 3 = **20 pods**, and that fills every node to the brim. Sizing from the total would have put the KEDA ceiling at a number the scheduler could never reach, and the surplus replicas sit `Pending` while the queue backs up. A queue draining slowly because replicas are Pending looks exactly like one draining slowly because workers are saturated.
+Worked example from the lab. Free CPU per node was 3436m, 2636m, 3566m, 2206m and 2086m: 13,930m in total, which divides to 19 pods at 700m. Per node it is 4 + 3 + 5 + 3 + 2 = **17 pods**, and that fills every node to the brim. Sizing from the total would have put the KEDA ceiling at a number the scheduler could never reach, and the surplus replicas sit `Pending` while the queue backs up. A queue draining slowly because replicas are Pending looks exactly like one draining slowly because workers are saturated.
 
 So: divide per node, then leave a node's worth of headroom.
 

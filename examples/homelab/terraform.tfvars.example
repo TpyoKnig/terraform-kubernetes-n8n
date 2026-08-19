@@ -16,7 +16,9 @@ ui_host = "n8n.example.com"
 # Defaults to the standard kubeconfig location; override for other clusters.
 # kubeconfig_path = "~/.kube/config"
 
-# Namespace to deploy into. Created by the module.
+# Namespace to deploy into. Created by the module, unless shared_storage_class
+# is set below, in which case this example creates it first: the shared claim
+# has to exist before the Helm release, and the claim needs the namespace.
 # namespace = "n8n"
 
 # cert-manager ClusterIssuer that signs the ingress certificate. Must already
