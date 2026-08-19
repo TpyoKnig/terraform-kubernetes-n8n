@@ -892,15 +892,36 @@ locals {
   # in full, printing nothing where the port belongs. These expressions are the
   # same ones k8s_values_database and k8s_values_redis use.
   #
-  # n8n_extra_helm_values can move database.port or redis.port the same way it
-  # can move networkPolicy.enabled. That is not tracked here: the effect is a
-  # warning that names a port the caller has already overridden, and following
-  # it costs the five-case treatment twice over for a case nobody has hit.
+  # n8n_extra_helm_values can move either port the same way it can move
+  # networkPolicy.enabled, and the chart writes the policy from whatever
+  # survives the merge, so the allowlist follows the overlay too. Naming the key
+  # replaces the module's value; deleting it with an explicit null falls back to
+  # the chart's own default, 5432 and 6379. A `database: null` or `redis: null`
+  # that deletes the whole block is not modelled: it takes the host and the
+  # credentials with it, so the release is broken well before the policy is.
+  n8n_extra_declares_database_port = contains(try(keys(local.n8n_extra_values_decoded.database), []), "port")
+  n8n_extra_declares_redis_port    = contains(try(keys(local.n8n_extra_values_decoded.redis), []), "port")
+
+  n8n_extra_database_port = try(tonumber(local.n8n_extra_values_decoded.database.port), null)
+  n8n_extra_redis_port    = try(tonumber(local.n8n_extra_values_decoded.redis.port), null)
+
+  n8n_network_policy_database_port = (
+    local.n8n_extra_declares_database_port
+    ? coalesce(local.n8n_extra_database_port, 5432)
+    : (local.cnpg_enabled ? 5432 : var.db_port)
+  )
+
+  n8n_network_policy_redis_port = (
+    local.n8n_extra_declares_redis_port
+    ? coalesce(local.n8n_extra_redis_port, 6379)
+    : local.k8s_redis_port
+  )
+
   n8n_network_policy_allowed_ports = [
     53,
     443,
-    local.cnpg_enabled ? 5432 : var.db_port,
-    local.k8s_redis_port,
+    local.n8n_network_policy_database_port,
+    local.n8n_network_policy_redis_port,
   ]
 
   # Everything between "://" and the first "/", "?" or "#". Null when the
@@ -928,10 +949,18 @@ locals {
   # Loopback never leaves the pod, so no NetworkPolicy applies to it and a
   # sidecar collector is reachable whatever the allowlist says. This is the
   # same reason a null endpoint is fine: n8n's own default is localhost:4318.
-  n8n_otel_endpoint_is_loopback = local.n8n_otel_endpoint_host == null ? false : (
-    local.n8n_otel_endpoint_host == "localhost" ||
-    local.n8n_otel_endpoint_host == "[::1]" ||
-    can(regex("^127\\.", local.n8n_otel_endpoint_host))
+  #
+  # Only a numeric address counts. "127.collector.example" is a perfectly
+  # ordinary hostname that a prefix match would wave through, and its A record
+  # can point anywhere. The IPv6 pattern accepts every spelling of ::1, which is
+  # any run of zero groups followed by a 1: "::1", "0:0:0:0:0:0:0:1" and
+  # "0000:...:0001" all reach the same address.
+  n8n_otel_endpoint_host_address = local.n8n_otel_endpoint_host == null ? null : trim(local.n8n_otel_endpoint_host, "[]")
+
+  n8n_otel_endpoint_is_loopback = local.n8n_otel_endpoint_host_address == null ? false : (
+    local.n8n_otel_endpoint_host_address == "localhost" ||
+    can(regex("^127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$", local.n8n_otel_endpoint_host_address)) ||
+    can(regex("^[0:]*:0*1$", local.n8n_otel_endpoint_host_address))
   )
 
   n8n_otel_collector_reachable_under_network_policy = (

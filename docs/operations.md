@@ -422,19 +422,20 @@ If you need policy written against real destinations, write a
 selector and **leave this toggle off**. The two do not compose the way it might
 look. Kubernetes unions every policy that selects a pod and no policy can
 subtract, so a destination-scoped rule of yours cannot take back a port this one
-has already opened to `to: []`. Turning both on gives you this policy's
-allowlist, not the intersection.
+has already opened to `to: []`. Turning both on keeps this policy's allowlist
+and adds whatever yours permits on top. There is no intersection to be had.
 
 Before enabling it, check whether you rely on any of:
 
 - **Workflows calling plaintext `http://` endpoints.** Port 80 is denied. This
   is the one that breaks real workflows most often.
-- **An OpenTelemetry collector on 4317 or 4318.** Denied. The module warns at
-  plan time when `n8n_otel_exporter_otlp_endpoint` resolves to a port outside
-  the allowlist above, because n8n does not treat a failed span export as an
-  error: nothing crashes, the traces just stop. A collector reached over 443,
-  one sharing the database or Redis port, and a sidecar on loopback are all
-  unaffected and draw no warning.
+- **An external OpenTelemetry collector on 4317 or 4318.** Denied. The module
+  warns at plan time when `n8n_otel_exporter_otlp_endpoint` resolves to a port
+  outside the allowlist above, because n8n does not treat a failed span export
+  as an error: nothing crashes, the traces just stop. A collector reached over
+  443 and one sharing the database or Redis port are unaffected. So is a
+  same-pod sidecar on loopback, n8n's default `http://localhost:4318` included:
+  that traffic never leaves the pod, so no NetworkPolicy governs it.
 - **SMTP for n8n's own mail** (587, 465, 25). Denied.
 - **A CNI that enforces NetworkPolicy.** Cilium and Calico do. A cluster whose
   CNI ignores policy will apply this object happily and enforce nothing, which

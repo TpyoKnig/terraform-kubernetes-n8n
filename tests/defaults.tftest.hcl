@@ -1535,6 +1535,36 @@ run "a_dotted_loopback_collector_draws_no_warning" {
   }
 }
 
+# "127.something" is a hostname, not an address, and its A record can point at
+# any host in the cluster. Only a numeric address is loopback.
+run "a_hostname_beginning_with_127_is_still_warned_about" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://127.collector.example:4318"
+  }
+
+  expect_failures = [check.network_policy_blocks_the_otel_collector]
+}
+
+# ::1 has several spellings and they all name the same address.
+run "an_expanded_ipv6_loopback_collector_draws_no_warning" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://[0:0:0:0:0:0:0:1]:4318"
+  }
+
+  assert {
+    condition     = local.n8n_otel_endpoint_is_loopback
+    error_message = "The expanded form of ::1 is the same loopback address as the compressed one."
+  }
+}
+
 # The allowlist is not just 443. The chart writes an egress rule for the
 # configured database port and another for the Redis port, both to any
 # destination, so a collector sharing one of those ports is reachable. 5432 is
@@ -1557,6 +1587,39 @@ run "a_collector_on_the_database_port_draws_no_warning" {
   assert {
     condition     = local.n8n_otel_collector_reachable_under_network_policy
     error_message = "A port the policy opens to every destination cannot make the collector unreachable."
+  }
+}
+
+# The overlay is merged last, so a database.port set there is the port the chart
+# writes into the policy. The allowlist has to move with it, or the check warns
+# about the port the caller has replaced and stays quiet about the one in force.
+run "an_overlay_moved_database_port_moves_the_allowlist" {
+  command = plan
+
+  variables {
+    n8n_network_policy_enabled      = true
+    n8n_otel_enabled                = true
+    n8n_otel_exporter_otlp_endpoint = "http://otel.observability.svc.cluster.local:6543"
+
+    n8n_extra_helm_values = <<-YAML
+      database:
+        port: 6543
+    YAML
+  }
+
+  assert {
+    condition     = contains(local.n8n_network_policy_allowed_ports, 6543)
+    error_message = "The overlay's database port is the one the rendered policy allows."
+  }
+
+  assert {
+    condition     = !contains(local.n8n_network_policy_allowed_ports, 5432)
+    error_message = "The port the overlay replaced is no longer in the rendered policy."
+  }
+
+  assert {
+    condition     = local.n8n_otel_collector_reachable_under_network_policy
+    error_message = "A collector on the overlay's database port is reachable."
   }
 }
 
