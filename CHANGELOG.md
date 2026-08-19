@@ -96,6 +96,21 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- The KEDA worker trigger now consumes an external Redis endpoint the same way
+  n8n does, which the variable descriptions have promised all along. Four
+  defects in one trigger block: the address hardcoded `:6379`, so any other
+  `redis_port` had n8n executing against one address and KEDA scaling on one
+  that answers nothing; `redis_transit_encryption_enabled` never set
+  `enableTLS`, so the scaler dialled a TLS listener in plaintext;
+  `redis_username` never reached the trigger, so an ACL-authenticated endpoint
+  had KEDA authenticating as `default`, which usually cannot `LLEN` the bull
+  lists; and `passwordFromEnv` was rendered unconditionally (its gate compared
+  a never-null local against null), naming an env var that does not exist on
+  the no-auth path. In every case the workload ran fine while queue-depth
+  autoscaling silently froze at the floor. The trigger now shares the resolved
+  host/port with the workload and gates all three auth fields on the same
+  conditions the chart values use.
+
 - An external Redis without an AUTH token no longer breaks every pod.
   `redis.passwordSecret` was rendered unconditionally, and on the no-auth
   external path it named `n8n-redis-secret`, a Secret the module only creates

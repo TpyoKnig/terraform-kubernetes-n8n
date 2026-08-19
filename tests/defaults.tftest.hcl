@@ -777,6 +777,63 @@ run "an_external_redis_uses_the_caller_port_and_username" {
   }
 }
 
+# The scaler and the workload must consume the same endpoint the same way, or
+# autoscaling silently watches nothing: a hardcoded :6379 on a caller port, a
+# plaintext dial against a TLS listener, or the default ACL user where n8n
+# authenticates as a named one all leave the queue depth unreadable while the
+# workload itself runs fine.
+run "the_keda_trigger_matches_the_external_endpoint" {
+  command = plan
+
+  variables {
+    k8s_keda_installed               = true
+    redis_backend                    = "external"
+    redis_host                       = "redis.internal.example.com"
+    redis_port                       = 6380
+    redis_username                   = "n8n"
+    redis_auth_token                 = "not-a-real-token"
+    redis_transit_encryption_enabled = true
+  }
+
+  assert {
+    condition     = alltrue([for t in local.k8s_values_keda.keda.worker.triggers : t.metadata.address == "redis.internal.example.com:6380"])
+    error_message = "The trigger address must carry the caller's port, not a hardcoded 6379."
+  }
+
+  assert {
+    condition     = alltrue([for t in local.k8s_values_keda.keda.worker.triggers : try(t.metadata.enableTLS, null) == "true"])
+    error_message = "With redis_transit_encryption_enabled, the trigger must set enableTLS or the scaler dials the TLS listener in plaintext."
+  }
+
+  assert {
+    condition     = alltrue([for t in local.k8s_values_keda.keda.worker.triggers : try(t.metadata.username, null) == "n8n"])
+    error_message = "The trigger must authenticate as the same ACL user n8n does."
+  }
+
+  assert {
+    condition     = alltrue([for t in local.k8s_values_keda.keda.worker.triggers : try(t.metadata.passwordFromEnv, null) == "QUEUE_BULL_REDIS_PASSWORD"])
+    error_message = "With an AUTH token set, the trigger must resolve it from the worker's QUEUE_BULL_REDIS_PASSWORD."
+  }
+}
+
+run "the_keda_trigger_carries_no_auth_metadata_without_auth" {
+  command = plan
+
+  variables {
+    k8s_keda_installed = true
+    redis_backend      = "external"
+    redis_host         = "redis.internal.example.com"
+  }
+
+  assert {
+    condition = alltrue([
+      for t in local.k8s_values_keda.keda.worker.triggers :
+      !contains(keys(t.metadata), "passwordFromEnv") && !contains(keys(t.metadata), "enableTLS") && !contains(keys(t.metadata), "username")
+    ])
+    error_message = "On a no-auth plaintext endpoint the trigger must carry none of passwordFromEnv, enableTLS or username: naming an env var that does not exist authenticates with an empty password against a server expecting none."
+  }
+}
+
 # The chart's deployments guard the QUEUE_BULL_REDIS_PASSWORD secretKeyRef on
 # `if and .name .key`, so an omitted passwordSecret renders no reference at
 # all. Rendered unconditionally, it named "n8n-redis-secret" on the no-auth
