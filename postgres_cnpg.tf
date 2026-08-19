@@ -82,11 +82,17 @@ resource "kubectl_manifest" "cnpg_cluster" {
   #     detect it.
   #
   # In that last case a Cluster being created for the first time gets no
-  # Postgres pods and no Service; one the operator had already reconciled keeps
-  # its running pods and Service and simply stops having changes acted on. The
-  # tell is `status.readyInstances` short of `spec.instances` (or absent) with
-  # no controller pod running in whichever namespace the operator was installed
-  # into, cnpg-system by convention rather than by rule.
+  # Postgres pods and no Service; a Cluster the operator had already reconciled
+  # keeps its running pods and Service and simply stops having changes acted
+  # on. The tell is the absence of a controller: no CNPG controller pod running
+  # in whichever namespace the operator was installed into, cnpg-system by
+  # convention rather than by rule. Check that directly rather than reading the
+  # Cluster's status, because `status` is a persisted field on the resource and
+  # nothing clears it when the operator goes: a cluster that was healthy when
+  # the operator was removed still reports `readyInstances` equal to
+  # `spec.instances` while nothing is reconciling it. A short or absent
+  # `readyInstances` narrows it down on a Cluster that never came up, but its
+  # being correct proves nothing.
   #
   # (An earlier version of this comment cited
   # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this

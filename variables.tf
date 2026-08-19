@@ -881,8 +881,9 @@ variable "cnpg_postgres_image_tag" {
     # distributions changes without this module having any say in it.
     #
     # What this does reject is the shapes that quietly resolve to something
-    # else: an empty string (the operator would take the image's own latest), a
-    # leading "v", and a tag carrying a registry or a digest.
+    # else: an empty string (which renders a trailing colon and no tag, an
+    # invalid reference rather than a floating one), a leading "v", and a tag
+    # carrying a registry or a digest.
     condition     = can(regex("^[0-9]+(\\.[0-9]+)?(-[0-9A-Za-z.]+)*$", var.cnpg_postgres_image_tag))
     error_message = "cnpg_postgres_image_tag must start with a PostgreSQL major (\"16\") or major.minor (\"16.10\"), optionally followed by the image type and distribution (\"16.10-minimal-trixie\"). No leading \"v\", no digest, and no empty string: the tag is interpolated straight into the Cluster's imageName, so anything else surfaces as a pod that cannot pull rather than as a plan error."
   }
