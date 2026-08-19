@@ -2029,3 +2029,43 @@ run "cnpg_pooler_pool_budget_allows_the_defaults" {
     error_message = "The documented default is 25 x 2 = 50 real connections; got ${var.cnpg_pooler_pool_size * var.cnpg_pooler_instances}."
   }
 }
+
+# The pooler budget is derived from cnpg_max_connections rather than from a
+# literal copied out of postgres_cnpg.tf, so the two cannot drift and a caller
+# who needs a larger pool has a way to get one. Same product the run above
+# rejects at the default limit, accepted once the limit moves.
+run "cnpg_pooler_pool_budget_follows_max_connections" {
+  command = plan
+
+  variables {
+    postgres_backend          = "cnpg"
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_max_connections      = 400
+    cnpg_pooler_instances     = 4
+    cnpg_pooler_pool_size     = 50
+  }
+
+  assert {
+    condition     = var.cnpg_pooler_pool_size * var.cnpg_pooler_instances <= floor(var.cnpg_max_connections * 0.75)
+    error_message = "200 real connections must fit inside three quarters of a 400 limit."
+  }
+}
+
+# And the limit the validation is measured against is the one the Cluster
+# actually runs. Without this the input could be validated against a number the
+# manifest never receives, which is the drift the derivation exists to prevent,
+# reintroduced one layer down.
+run "cnpg_cluster_renders_the_configured_max_connections" {
+  command = plan
+
+  variables {
+    postgres_backend     = "cnpg"
+    cnpg_max_connections = 321
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.postgresql.parameters.max_connections == "321"
+    error_message = "The CNPG Cluster must run the cnpg_max_connections it was given; got ${yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.postgresql.parameters.max_connections}."
+  }
+}

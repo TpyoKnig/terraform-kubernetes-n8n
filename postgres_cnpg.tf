@@ -48,7 +48,7 @@ resource "kubectl_manifest" "cnpg_cluster" {
 
       postgresql = {
         parameters = {
-          max_connections = "200"
+          max_connections = tostring(var.cnpg_max_connections)
         }
       }
     }
@@ -74,7 +74,7 @@ resource "kubectl_manifest" "cnpg_cluster" {
 #
 # What it is for. Every n8n pod holds db_postgresdb_pool_size persistent
 # connections, so the connection budget is pod count times pool size, and pod
-# count is set by an autoscaler. The Cluster above runs max_connections = 200,
+# count is set by an autoscaler. The Cluster above runs cnpg_max_connections,
 # less superuser_reserved_connections, so a worker tier scaling to 16 beside a
 # webhook-processor tier scaling to 8, at the default pool size of 10, asks for
 # 250 against roughly 197 available. Past that limit new pods do not degrade,

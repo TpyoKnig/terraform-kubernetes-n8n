@@ -33,6 +33,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   and the module refuses the combination at plan time. The pooler serves its
   clients in plaintext and encrypts its own leg to Postgres.
 
+- `cnpg_max_connections` sets the CNPG cluster's connection limit, default 200,
+  which is what the module hardcoded before. It is also the budget
+  `cnpg_pooler_pool_size x cnpg_pooler_instances` is validated against, capped
+  at three quarters of it, so the pooler cannot be sized past the database it
+  sits in front of and the two numbers cannot drift apart.
+
 - `backing_services.postgres_direct_host` names the CNPG rw Service even when
   a pooler is in front, so session-scoped work that transaction pooling cannot
   carry (session advisory locks, `LISTEN`/`NOTIFY`, an interactive `psql`)
