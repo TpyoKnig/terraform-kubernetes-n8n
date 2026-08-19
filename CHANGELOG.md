@@ -96,6 +96,17 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- The capacity diagnostic no longer counts a `NoExecute`-tainted node as
+  schedulable supply. `NoExecute` blocks new scheduling the same way
+  `NoSchedule` does and additionally evicts what is already running, so a node
+  held by one (`node.kubernetes.io/out-of-service`, say) inflated the
+  apparent capacity and could suppress the very warning the check exists to
+  raise - the one direction the model documents it will not be wrong in.
+  `PreferNoSchedule` nodes stay counted, since that taint is a preference
+  rather than a bar. The taints read is also guarded against a provider
+  returning `null` instead of an empty list, which was a hard plan error
+  outside any check block.
+
 - The module's `n8n-secrets` Secret no longer carries a `WEBHOOK_URL` key. The
   chart reads exactly four keys from it (`N8N_ENCRYPTION_KEY`, `N8N_HOST`,
   `N8N_PORT`, `N8N_PROTOCOL`); the fifth was never referenced by anything, and
