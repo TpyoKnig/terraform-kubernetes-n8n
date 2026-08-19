@@ -1903,6 +1903,249 @@ run "image_keys_stay_unset_when_the_caller_names_nothing" {
   }
 }
 
+# ── The single main pod's rollout strategy ────────────────────────────────────
+# The chart ships `strategy: {}` behind a `with`, so it renders nothing and the
+# Deployment takes Kubernetes' default: RollingUpdate at maxSurge 25%, which
+# rounds up to one on a one-replica Deployment. That runs two n8n mains for the
+# length of every rollout, and Community edition has no leader election to
+# arbitrate them.
+run "the_main_rolls_without_overlap_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.strategy.type == "Recreate"
+    error_message = "The main Deployment must default to Recreate. Left unset, the chart renders no strategy and Kubernetes surges a second main on every rollout, which duplicates schedule triggers with nothing logging that it happened."
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_final.strategy), "rollingUpdate")
+    error_message = "Recreate must not carry a rollingUpdate block; the API server rejects the combination."
+  }
+}
+
+# The alternative has to be zero-overlap too. RollingUpdate without an explicit
+# maxSurge = 0 is the surging default under another name, so rendering the type
+# alone would reintroduce exactly the bug this input exists to remove.
+run "rolling_update_is_rendered_with_no_surge" {
+  command = plan
+
+  variables {
+    n8n_main_strategy = "RollingUpdate"
+  }
+
+  assert {
+    condition     = local.k8s_values_final.strategy.type == "RollingUpdate"
+    error_message = "n8n_main_strategy = RollingUpdate must reach the chart."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.strategy.rollingUpdate.maxSurge == 0
+    error_message = "RollingUpdate must render maxSurge = 0. Without it Kubernetes defaults to 25%, which is one extra pod on a one-replica Deployment, which is two mains."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.strategy.rollingUpdate.maxUnavailable == 1
+    error_message = "RollingUpdate with maxSurge = 0 needs maxUnavailable >= 1, or the Deployment can never make progress: it may neither add a pod nor remove one."
+  }
+
+  # maxSurge = 0 bounds the pod count, not the overlap: the outgoing pod stops
+  # counting once its ReplicaSet is scaled to zero, and goes on serving through
+  # its preStop hook and shutdown budget while the incoming pod starts. The
+  # plan has to say so, or the strategy reads as equivalent to Recreate.
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# The typed input is not the only way to select a strategy. n8n_extra_helm_values
+# is merged after the module's values and Helm gives the later file precedence,
+# so an overlay setting strategy.type must reach the same warning.
+run "an_extra_values_overlay_cannot_select_rolling_update_silently" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        type: RollingUpdate
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "RollingUpdate"
+    error_message = "An overlay setting strategy.type must decide the effective strategy, since Helm lets it win over the module's own values."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# In Helm an explicit null deletes rather than defaults. `strategy: null` in the
+# overlay removes the module's Recreate from the merged values, and the
+# Deployment falls back to Kubernetes' own RollingUpdate at maxSurge 25% --
+# strictly worse than selecting RollingUpdate here, which at least pins the
+# surge to 0. A coalesce over the value alone reads this as "not set" and stays
+# quiet on the most dangerous configuration of the three.
+run "an_overlay_deleting_the_strategy_still_warns" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy: null
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An overlay setting strategy: null deletes the module's value in Helm, which must be recognised as handing the strategy to Kubernetes rather than as leaving the input in force."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# Emptying just the type is the same deletion one level down.
+run "an_overlay_nulling_the_strategy_type_still_warns" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        type: null
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An overlay setting strategy.type: null empties the field, which must be recognised as handing the strategy to Kubernetes."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# The two deletions are not interchangeable. Nulling the whole key removes the
+# rollingUpdate settings with it, so Kubernetes has nothing left to read and
+# applies its own maxSurge of 25%. Nulling only the type leaves the siblings in
+# the merged values, so the surge is whatever those siblings ask for. The check
+# fires either way, but it must not tell the reader 25% when the overlay has
+# named a different number.
+run "nulling_the_strategy_type_is_distinguished_from_nulling_the_key" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        type: null
+        rollingUpdate:
+          maxSurge: 2
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_extra_deletes_strategy_type && !local.n8n_extra_deletes_strategy
+    error_message = "Nulling strategy.type deletes only the type; the whole-key deletion must stay false so the diagnostic does not claim rollingUpdate was removed too."
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_left_to_kubernetes
+    error_message = "Either deletion still hands the strategy type to Kubernetes, so the check must fire for both."
+  }
+
+  expect_failures = [check.rolling_update_still_overlaps_two_mains]
+}
+
+# A strategy mapping that carries no type key is a merge rather than a
+# deletion: Helm keeps the module's own type and only adds whatever else the
+# overlay brought. Reading that as a deletion warns about a Deployment that is
+# still on Recreate, and a warning that fires on a safe configuration is the
+# fastest way to teach people to ignore it.
+run "an_overlay_declaring_strategy_without_a_type_keeps_the_module_value" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy: {}
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "Recreate"
+    error_message = "An empty strategy mapping merges over nothing, so the module's own type must survive it."
+  }
+
+  assert {
+    condition     = !local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An empty mapping is not an explicit null, so it must not be read as deleting the module's strategy."
+  }
+}
+
+# Same merge one level down, with a sibling key present to show the mapping is
+# genuinely non-empty and still leaves the type alone.
+run "an_overlay_setting_only_rolling_update_fields_keeps_the_module_type" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        rollingUpdate:
+          maxUnavailable: 1
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "Recreate"
+    error_message = "A strategy mapping that never mentions type must leave the module's type in force."
+  }
+
+  assert {
+    condition     = !local.n8n_main_strategy_left_to_kubernetes
+    error_message = "A missing type key is an absence, not a deletion, so nothing is handed to Kubernetes here."
+  }
+}
+
+# An overlay that says nothing about the strategy must leave the input in force.
+run "an_unrelated_overlay_leaves_the_strategy_alone" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      podLabels:
+        team: platform
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "Recreate"
+    error_message = "An overlay that never mentions strategy must leave n8n_main_strategy deciding."
+  }
+
+  assert {
+    condition     = !local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An absent strategy key is not a deletion; only an explicit null is."
+  }
+}
+
+# The default must not trip that warning, or it fires on every deployment and
+# becomes noise.
+run "the_default_strategy_warns_about_nothing" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.strategy.type == "Recreate"
+    error_message = "The main Deployment must default to Recreate, the only strategy that waits for the old main to be gone."
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_final.strategy), "rollingUpdate")
+    error_message = "Recreate must not carry a rollingUpdate block; the Deployment API rejects it."
+  }
+}
+
+run "the_main_strategy_rejects_a_surging_value" {
+  command = plan
+
+  variables {
+    n8n_main_strategy = "OnDelete"
+  }
+
+  expect_failures = [var.n8n_main_strategy]
+}
+
 # ── The single main pod's disruption budget ───────────────────────────────────
 # The chart defaults pdb.enabled to true at minAvailable = 1 and renders it over
 # the main Deployment, which this module pins to one replica. That is

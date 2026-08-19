@@ -624,6 +624,48 @@ locals {
     }
   }
 
+  # ── Rollout strategy for the single main pod ───────────────────────────────
+  # The chart ships `strategy: {}`, and its template wraps the key in a `with`,
+  # so an empty map renders nothing at all and the Deployment takes Kubernetes'
+  # default: RollingUpdate at maxSurge 25%. Twenty-five percent of one replica
+  # rounds up to one, so the new main goes Ready while the old one is still
+  # serving, and the old one then gets its preStop sleep plus its graceful
+  # shutdown budget to exit.
+  #
+  # That window is two n8n mains sharing one Redis and one Postgres. Leader
+  # election among mains is the licensed multi-main feature this module does
+  # not carry, so both pods hold schedule triggers and both register on the
+  # pub/sub command channel: cron workflows fire twice, and nothing anywhere
+  # records that a second main existed. On a version bump the new main also
+  # runs its one-way startup migrations while the old one is still reading the
+  # old schema. Everything the module does to guarantee one main
+  # (replicaCount = 1, hpa.main.enabled = false) was true except during the
+  # rollout that changes it.
+  #
+  # Both accepted values render zero overlap. RollingUpdate carries the
+  # explicit maxSurge = 0 that makes it so; without that key it is the default
+  # above wearing a different name.
+  #
+  # merge() rather than a ternary returning two whole objects: Terraform
+  # unifies a conditional's branches to one type, and an object carrying
+  # rollingUpdate against one that does not is "Inconsistent conditional result
+  # types". The same unification rule that stringifies a number elsewhere in
+  # this file (see launcher.autoShutdownTimeout below) rejects the mismatch
+  # outright here.
+  k8s_values_strategy = {
+    strategy = merge(
+      { type = var.n8n_main_strategy },
+      var.n8n_main_strategy == "RollingUpdate" ? {
+        # maxUnavailable must be at least 1 alongside maxSurge = 0, or the
+        # Deployment may neither add a pod nor remove one and never progresses.
+        rollingUpdate = {
+          maxSurge       = 0
+          maxUnavailable = 1
+        }
+      } : {},
+    )
+  }
+
   # ── Disruption budget for the single main pod ──────────────────────────────
   # The chart defaults pdb.enabled to true with minAvailable = 1, and renders
   # the object over the main Deployment only (templates/pdb.yaml selects
@@ -643,6 +685,56 @@ locals {
   # try() covers the empty default, a value that is not a mapping, and a
   # mapping with no pdb key, all of which mean "not enabled here".
   n8n_pdb_enabled_via_extra_values = try(yamldecode(var.n8n_extra_helm_values).pdb.enabled, false) == true
+
+  # The strategy the Deployment actually ends up with. Same two-routes problem
+  # as the PDB below: n8n_extra_helm_values is merged after the module's own
+  # values and Helm gives the later file precedence, so the overlay can select
+  # RollingUpdate regardless of what the typed input says.
+  #
+  # Helm merges the two values files key by key, and an explicit null in the
+  # later one is a deletion rather than an absence. That splits the overlay
+  # into five outcomes, and only two of them take the Deployment away from
+  # this module's Recreate:
+  #
+  #   strategy absent                -> module's type stands
+  #   strategy: null                 -> whole key deleted, Kubernetes default
+  #   strategy: {} or no `type` key  -> map merge, module's type survives
+  #   strategy: {type: null}         -> type deleted, Kubernetes default
+  #   strategy: {type: X}            -> X
+  #
+  # The Kubernetes default is RollingUpdate at maxSurge 25%, which is worse
+  # than asking for RollingUpdate here: this module's own rendering at least
+  # pins maxSurge to 0, so it overlaps a terminating main rather than surging
+  # a second one to Ready. Neither coalesce nor a plain key-presence test
+  # separates the deletions from the merges, so each null is tested for
+  # directly.
+  n8n_extra_values_decoded = try(yamldecode(var.n8n_extra_helm_values), {})
+
+  n8n_extra_values_keys = try(keys(local.n8n_extra_values_decoded), [])
+
+  n8n_extra_declares_strategy = contains(local.n8n_extra_values_keys, "strategy")
+
+  # `strategy: null` decodes to null while `strategy: {}` decodes to an empty
+  # map, so this is the one test that tells a deleted key from an empty one.
+  n8n_extra_deletes_strategy = local.n8n_extra_declares_strategy && try(local.n8n_extra_values_decoded.strategy, null) == null
+
+  # keys() of a null or a non-mapping raises, and try() reads that as "no type
+  # key here", which is what a map merge leaving the module's type alone means.
+  n8n_extra_declares_strategy_type = contains(try(keys(local.n8n_extra_values_decoded.strategy), []), "type")
+
+  n8n_main_strategy_via_extra_values = try(local.n8n_extra_values_decoded.strategy.type, null)
+
+  n8n_extra_deletes_strategy_type = local.n8n_extra_declares_strategy_type && local.n8n_main_strategy_via_extra_values == null
+
+  # True only for the two deletion rows above, where nothing pins maxSurge and
+  # the incoming main goes Ready beside the outgoing one rather than after it.
+  n8n_main_strategy_left_to_kubernetes = local.n8n_extra_deletes_strategy || local.n8n_extra_deletes_strategy_type
+
+  n8n_main_strategy_effective = (
+    local.n8n_main_strategy_left_to_kubernetes ? "RollingUpdate" : (
+      local.n8n_main_strategy_via_extra_values != null ? local.n8n_main_strategy_via_extra_values : var.n8n_main_strategy
+    )
+  )
 
   # Whether a PodDisruptionBudget ends up in the release at all, by either
   # route. Named because the check block asks exactly this question, and a
@@ -1286,6 +1378,7 @@ locals {
     local.k8s_values_s3_off,
     local.k8s_values_hpa,
     local.k8s_values_pdb,
+    local.k8s_values_strategy,
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,
