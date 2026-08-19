@@ -167,6 +167,18 @@ variable "k8s_ingress_extra_annotations" {
   nullable    = false
 }
 
+variable "n8n_proxy_hops" {
+  description = "How many proxies append to X-Forwarded-For between the client and an n8n pod, wired to N8N_PROXY_HOPS on every pod type. Defaults to 1, which counts a single ingress controller and is right for the Ingress this module renders. Raise it for anything further out: a Cloudflare Tunnel, a CDN, a WAF or an outer reverse proxy each add one, so ingress-nginx behind Cloudflare is 2. A wrong count is as bad as none, and nothing errors either way: too low and n8n reads a proxy's address as the client, too high and it reads a value the client could have forged, and every rate limit, audit log line and IP-based restriction depends on which. Set 0 only if nothing proxies to the pods at all. Rendered whether or not the module owns the Ingress, because a caller running their own routing (create_ingress = false) is behind a proxy just the same; that path previously emitted nothing, so n8n trusted no forwarded header and attributed every request to the ingress controller."
+  type        = number
+  default     = 1
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_proxy_hops == floor(var.n8n_proxy_hops) && var.n8n_proxy_hops >= 0 && var.n8n_proxy_hops <= 10
+    error_message = "n8n_proxy_hops must be a whole number between 0 and 10. It counts proxies in front of the pods, so a fraction is not a hop, and a value past 10 is a typo rather than a topology: each hop tells n8n to trust one more entry in a header the client controls."
+  }
+}
+
 variable "n8n_extra_helm_values" {
   description = "Raw YAML merged on top of the module-rendered chart values. The escape hatch for chart knobs this module exposes no typed input for. Merging is Helm's, which coalesces maps but replaces lists outright, so an overlay that sets a list the module already renders substitutes its own rather than adding to it. config.extraEnv is the list where that matters most: overriding it there drops N8N_ENCRYPTION_KEY and every connection variable the module assembles, and the release still installs, so the failure surfaces as pods that come up misconfigured. Use n8n_extra_env for plain values and n8n_extra_env_from_secret for secretKeyRef entries; both append to that list instead of replacing it."
   type        = string

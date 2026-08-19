@@ -261,6 +261,15 @@ resource "helm_release" "n8n" {
     kubernetes_secret.n8n,
     kubernetes_secret.n8n_db,
     kubernetes_secret.n8n_redis,
+    # The ordering the two-name scheme in locals.tf depends on, and which was
+    # described there while nothing enforced it. On the apply that first sets
+    # n8n_image_pull_secrets, the release switches serviceAccount.create to
+    # false and names the module's account: that account has to exist first, or
+    # the new pods fail admission looking for a ServiceAccount Terraform has
+    # not created yet. There is no attribute reference between the two to carry
+    # the edge implicitly, because the release consumes only the name, which is
+    # a local.
+    kubernetes_service_account_v1.n8n,
     helm_release.valkey,
     kubectl_manifest.cnpg_cluster,
     # Ordering, not just tidiness. When the pooler is enabled the release's

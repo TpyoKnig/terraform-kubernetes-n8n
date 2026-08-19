@@ -73,14 +73,12 @@ module "n8n" {
     read_only  = false
   }] : []
 
-  n8n_extra_env = concat(
-    [
-      # Two hops by default here, where ../homelab-split-ingress uses one. That
-      # example sits behind ingress-nginx alone; this one adds the Cloudflare
-      # edge in front of it. See var.proxy_hops.
-      { name = "N8N_PROXY_HOPS", value = tostring(var.proxy_hops) },
-    ],
-  )
+  # Two hops by default here, where ../homelab-split-ingress uses one. That
+  # example sits behind ingress-nginx alone; this one adds the Cloudflare edge
+  # in front of it. See var.proxy_hops. This used to go through n8n_extra_env,
+  # which was the escape hatch doing a typed input's job; N8N_PROXY_HOPS is now
+  # module-managed and reserved against that input.
+  n8n_proxy_hops = var.proxy_hops
 
   # The mount alone does nothing. n8n defaults binary data to filesystem in
   # regular mode but to database in scaling mode, and this module always runs

@@ -69,18 +69,14 @@ module "n8n" {
   # and worker pods; the base n8n image ships no Python).
   n8n_task_runners_enabled = true
 
-  n8n_extra_env = concat(
-    [
-      # The module sets this itself when it owns the Ingress. With
-      # create_ingress = false it cannot know what sits in front, so the caller
-      # declares it: without it n8n reads the ingress controller's own address
-      # as the client IP, and every rate limit, audit log line and IP-based
-      # restriction sees one source. See var.proxy_hops for how to count your
-      # own chain; the default of 1 covers ingress-nginx alone and is wrong the
-      # moment anything sits in front of it.
-      { name = "N8N_PROXY_HOPS", value = tostring(var.proxy_hops) },
-    ],
-  )
+  # Counted by the caller, because with create_ingress = false the module
+  # cannot know what sits in front. This used to go through n8n_extra_env,
+  # which was the escape hatch doing a typed input's job; N8N_PROXY_HOPS is now
+  # module-managed and reserved against that input, so setting it there is a
+  # plan-time error. See var.proxy_hops for how to count your own chain: the
+  # default of 1 covers ingress-nginx alone and is wrong the moment anything
+  # sits in front of it.
+  n8n_proxy_hops = var.proxy_hops
 
   # The mount alone does nothing. n8n defaults binary data to filesystem in
   # regular mode but to database in scaling mode, and this module always runs

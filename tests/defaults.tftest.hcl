@@ -1443,6 +1443,62 @@ run "attesting_keda_still_leaves_the_webhook_processor_an_autoscaler" {
   }
 }
 
+# ── Proxy hops ────────────────────────────────────────────────────────────────
+# The count was a literal 1 gated on create_ingress, so a caller running their
+# own routing got no N8N_PROXY_HOPS at all and n8n attributed every request to
+# the ingress controller's own address. Both split-ingress examples worked
+# around that through n8n_extra_env, which is the escape hatch doing a typed
+# input's job.
+run "proxy_hops_are_rendered_on_both_routing_paths" {
+  command = plan
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_PROXY_HOPS"
+    ]) == "1"
+    error_message = "N8N_PROXY_HOPS must render from n8n_proxy_hops when the module owns the Ingress."
+  }
+}
+
+run "proxy_hops_reach_a_caller_owned_ingress_too" {
+  command = plan
+
+  variables {
+    create_ingress = false
+    n8n_proxy_hops = 2
+  }
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "N8N_PROXY_HOPS"
+    ]) == "2"
+    error_message = "N8N_PROXY_HOPS must render with create_ingress = false. A caller running their own routing is behind a proxy just the same, and emitting nothing there makes n8n read the ingress controller as the client for every request."
+  }
+}
+
+# The module writes this name, so a second entry of the same name from the
+# escape hatch is the duplicate that fails every later helm upgrade's
+# strategic merge patch, rollback included.
+run "proxy_hops_are_reserved_against_the_env_escape_hatch" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [{ name = "N8N_PROXY_HOPS", value = "3" }]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "proxy_hops_reject_a_count_that_is_not_a_hop" {
+  command = plan
+
+  variables {
+    n8n_proxy_hops = 1.5
+  }
+
+  expect_failures = [var.n8n_proxy_hops]
+}
+
 # ── A worker floor of zero deletes the pool ───────────────────────────────────
 # The input was documented as accepting 0 because "KEDA scales a ScaledObject
 # to zero natively". KEDA does, but this value is also
@@ -2120,6 +2176,62 @@ run "a_fractional_shutdown_budget_is_rejected_too" {
   expect_failures = [var.n8n_termination_grace_period]
 }
 
+
+# ── ServiceAccount ownership ──────────────────────────────────────────────────
+# The chart renders imagePullSecrets nowhere, on the pod spec or on the
+# ServiceAccount, so attaching them to the account the pods already run as is
+# the only lever a private registry has. That means the module takes the
+# account over, but only when there is something to attach.
+#
+# Both keys below were hardcoded (create = true, name = "n8n") while the locals
+# and the ServiceAccount resource decided otherwise, so the whole input was a
+# no-op: an account was created that no pod ever ran as. No assertion covered
+# the serviceAccount values, which is exactly how it survived.
+run "the_chart_keeps_its_service_account_by_default" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.create == true
+    error_message = "With no image pull secrets the chart must go on creating its own ServiceAccount, or an existing deployment's account changes owner for no reason."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.name == "n8n"
+    error_message = "The default account name must stay \"n8n\", the name the chart has always used, so nothing moves for a deployment that does not use image pull secrets."
+  }
+}
+
+run "image_pull_secrets_hand_the_service_account_to_the_module" {
+  command = plan
+
+  variables {
+    n8n_image_pull_secrets = ["registry-creds"]
+    n8n_image_repository   = "registry.internal.example.com/n8n"
+  }
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.create == false
+    error_message = "With image pull secrets set the chart must stop creating the account, or Helm and Terraform both own one and the apply fails on a name that already exists."
+  }
+
+  # The two owners use different names on purpose: the module's account is
+  # created alongside the chart's on the apply that first enables this, rather
+  # than colliding with it.
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.name == "n8n-pull"
+    error_message = "The chart must be pointed at the module's own account name. Pointing it at the chart's name collides with the account Helm still owns on the enabling apply."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.serviceAccount.name == local.n8n_service_account_name
+    error_message = "The chart's serviceAccount.name and the ServiceAccount resource in n8n.tf must read the same local, or the pods run as an account that carries no pull secrets."
+  }
+
+  assert {
+    condition     = one(kubernetes_service_account_v1.n8n[*].metadata[0].name) == "n8n-pull"
+    error_message = "The module must create the account it points the chart at."
+  }
+}
 
 # ── The single main pod's rollout strategy ────────────────────────────────────
 # The chart ships `strategy: {}` behind a `with`, so it renders nothing and the
