@@ -73,13 +73,20 @@ output "n8n_encryption_key" {
 # ── Backing services ──────────────────────────────────────────────────────────
 
 output "backing_services" {
-  description = "Resolved endpoints for n8n's Postgres and Redis backends. Names the in-cluster CNPG rw Service and Valkey Service on the default path, or the caller-supplied endpoints when postgres_backend / redis_backend are \"external\". The secret names are where each password actually lives; the module never emits those values as outputs, because on the in-cluster path it does not own them: CNPG generates the Postgres password into its own \"<cluster>-app\" Secret. Useful for a Grafana datasource, a debug pod, or a smoke test that needs to reach the backing services directly."
+  description = "Resolved endpoints for n8n's Postgres and Redis backends. Names the in-cluster CNPG rw Service and Valkey Service on the default path, or the caller-supplied endpoints when postgres_backend / redis_backend are \"external\". With cnpg_pooler_enabled, postgres_host is the PgBouncer Service rather than the rw Service, because that is what n8n connects to; postgres_direct_host stays pointed at Postgres itself for the maintenance that a transaction-mode pooler cannot carry (session advisory locks, LISTEN/NOTIFY, an interactive psql holding session state). The secret names are where each password actually lives; the module never emits those values as outputs, because on the in-cluster path it does not own them: CNPG generates the Postgres password into its own \"<cluster>-app\" Secret. Useful for a Grafana datasource, a debug pod, or a smoke test that needs to reach the backing services directly."
   value = {
     # Consumed by tests/scripts/smoke-test.sh.
     postgres_host   = local.k8s_pg_host
     postgres_secret = local.k8s_pg_secret_name
-    redis_host      = local.k8s_redis_host
-    redis_secret    = local.k8s_redis_secret_name
-    binary_storage  = "filesystem"
+
+    # What n8n uses is postgres_host above, which becomes the pooler when one
+    # is enabled. This is always Postgres itself, so a debug pod or a migration
+    # that needs session scope has somewhere to go that is not behind
+    # PgBouncer. Null on the external path, where the module knows only the one
+    # endpoint the caller gave it.
+    postgres_direct_host = local.cnpg_enabled ? local.cnpg_service_host : null
+    redis_host           = local.k8s_redis_host
+    redis_secret         = local.k8s_redis_secret_name
+    binary_storage       = "filesystem"
   }
 }

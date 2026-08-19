@@ -850,6 +850,76 @@ variable "cnpg_database_owner" {
   nullable    = false
 }
 
+variable "cnpg_pooler_enabled" {
+  description = "Whether to put a PgBouncer connection pooler in front of the CNPG cluster and point n8n at it instead of the rw Service. Only used when postgres_backend = \"cnpg\". Off by default: a pooler is a second thing to run, and a deployment that never scales its workers past a handful of pods does not need one. Turn it on when pod count starts to drive the connection budget. Each n8n pod holds db_postgresdb_pool_size connections, so a worker tier autoscaling to 16 alongside webhook processors can demand several hundred against a max_connections that is 100 or 200 by default; past that limit new pods fail to initialise their pool and CrashLoop rather than degrading. The pooler breaks that coupling: pods connect to PgBouncer, PgBouncer holds cnpg_pooler_pool_size real connections per instance, and pod count stops being a term in the arithmetic."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    # The CNPG Pooler serves its clients in plaintext and terminates TLS on its
+    # own upstream leg to Postgres. Leaving db_postgresdb_ssl_enabled true has
+    # n8n try to negotiate TLS against a listener that does not speak it, and
+    # the failure surfaces as a connection error with nothing naming the
+    # pooler. Refuse the combination at plan time rather than at 3am.
+    condition     = !var.cnpg_pooler_enabled || var.db_postgresdb_ssl_enabled == false
+    error_message = "cnpg_pooler_enabled = true requires db_postgresdb_ssl_enabled = false: the CNPG Pooler serves clients in plaintext and encrypts its own connection to Postgres."
+  }
+
+  validation {
+    condition     = !var.cnpg_pooler_enabled || var.postgres_backend == "cnpg"
+    error_message = "cnpg_pooler_enabled = true requires postgres_backend = \"cnpg\": the Pooler is a CloudNativePG resource and attaches to the Cluster this module creates. For an external Postgres, point db_host at a pooler you run yourself."
+  }
+}
+
+variable "cnpg_pooler_instances" {
+  description = "PgBouncer replicas. Two by default so a pooler restart does not take the database path down with it. Note this does not make the database highly available: cnpg_instances governs that separately, and one Postgres behind two poolers still has one Postgres. Raising this multiplies the real connections Postgres sees, because each instance holds its own pool of cnpg_pooler_pool_size."
+  type        = number
+  default     = 2
+  nullable    = false
+
+  validation {
+    condition     = var.cnpg_pooler_instances == floor(var.cnpg_pooler_instances) && var.cnpg_pooler_instances >= 1
+    error_message = "cnpg_pooler_instances must be a whole number of at least 1."
+  }
+}
+
+variable "cnpg_pooler_mode" {
+  description = "PgBouncer pool mode. \"transaction\" (the default) returns the server connection after each transaction, which is the only mode that decouples client count from server connections and therefore the only one that solves the problem this pooler exists for. \"session\" holds a server connection for the life of the client session; because n8n's TypeORM pool is long-lived, that reproduces the original connection count and changes nothing. Transaction mode costs session-scoped state: server-side named prepared statements, LISTEN/NOTIFY, session-level advisory locks and SET. n8n in queue mode uses Redis for queueing and leader election rather than Postgres LISTEN, and node-postgres issues unnamed portals by default, so the usual paths are unaffected."
+  type        = string
+  default     = "transaction"
+  nullable    = false
+
+  validation {
+    condition     = contains(["transaction", "session", "statement"], var.cnpg_pooler_mode)
+    error_message = "cnpg_pooler_mode must be one of: transaction, session, statement."
+  }
+}
+
+variable "cnpg_pooler_pool_size" {
+  description = "Real Postgres connections each PgBouncer instance holds open, per user/database pair (PgBouncer's default_pool_size). This, multiplied by cnpg_pooler_instances, is what Postgres actually sees, and it replaces pod count as the number to check against max_connections. The default of 25 across 2 instances is 50 connections, comfortably inside the 100 a stock Postgres allows once superuser_reserved_connections is deducted."
+  type        = number
+  default     = 25
+  nullable    = false
+
+  validation {
+    condition     = var.cnpg_pooler_pool_size == floor(var.cnpg_pooler_pool_size) && var.cnpg_pooler_pool_size >= 1
+    error_message = "cnpg_pooler_pool_size must be a whole number of at least 1."
+  }
+}
+
+variable "cnpg_pooler_max_client_conn" {
+  description = "Client connections each PgBouncer instance will accept (PgBouncer's max_client_conn). These are cheap, unlike server connections, so this should sit well above what any plausible scale-up asks for: pods x db_postgresdb_pool_size. Running out reproduces the exact failure the pooler was added to remove, with the queue moved one hop closer to the caller."
+  type        = number
+  default     = 500
+  nullable    = false
+
+  validation {
+    condition     = var.cnpg_pooler_max_client_conn == floor(var.cnpg_pooler_max_client_conn) && var.cnpg_pooler_max_client_conn >= 1
+    error_message = "cnpg_pooler_max_client_conn must be a whole number of at least 1."
+  }
+}
+
 variable "db_host" {
   description = "External database host. Required when postgres_backend = 'external', ignored otherwise. Any PostgreSQL endpoint reachable from the cluster. Pointing this at a host that already runs an n8n deployment from this module shares the exact database and tables, not merely the server, which is the supported 'migrate to a new deployment, keep the same database' pattern (stop the old writer first, then cut over), not concurrent multi-tenant sharing, which this module does not support."
   type        = string

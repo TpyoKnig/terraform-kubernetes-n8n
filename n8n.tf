@@ -252,6 +252,12 @@ resource "helm_release" "n8n" {
     kubernetes_secret.n8n_redis,
     helm_release.valkey,
     kubectl_manifest.cnpg_cluster,
+    # Ordering, not just tidiness. When the pooler is enabled the release's
+    # DB host points at the Pooler Service, so a release that rolls before the
+    # Pooler exists starts pods against a name that does not resolve. They
+    # CrashLoop, the release's own wait times out, and an atomic upgrade rolls
+    # the whole thing back. Cheap edge, expensive absence.
+    kubectl_manifest.cnpg_pooler,
     kubernetes_config_map_v1.task_runners_config,
   ]
 }

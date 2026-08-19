@@ -1852,3 +1852,126 @@ run "the_container_keys_stay_absent_by_default" {
     error_message = "extraContainers and extraInitContainers must be omitted entirely when no sidecar is declared, so the chart's own defaults apply and `helm get values` stays readable."
   }
 }
+
+# ── PgBouncer pooler ──────────────────────────────────────────────────────────
+
+run "the_pooler_is_off_by_default" {
+  command = plan
+
+  # A pooler is a second thing to run. A deployment whose worker tier never
+  # leaves single digits does not need one, and defaulting it on would create
+  # two PgBouncer pods for every caller who never reads this input.
+  assert {
+    condition     = var.cnpg_pooler_enabled == false
+    error_message = "cnpg_pooler_enabled must default to false."
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_pooler) == 0
+    error_message = "No Pooler should be planned while cnpg_pooler_enabled is false."
+  }
+}
+
+run "postgres_host_is_the_cluster_when_no_pooler" {
+  command = plan
+
+  assert {
+    condition     = can(regex("-pg-rw", local.k8s_pg_host))
+    error_message = "Without a pooler, n8n must connect to the CNPG rw Service; got: ${local.k8s_pg_host}"
+  }
+}
+
+run "enabling_the_pooler_plans_one_and_moves_the_host" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_pooler) == 1
+    error_message = "Expected exactly one Pooler when cnpg_pooler_enabled = true."
+  }
+
+  # The host moving is the whole contract. Everything downstream (the helm
+  # values tree, the backing_services output, the smoke test) reads
+  # local.k8s_pg_host, so this one assertion covers all of them.
+  assert {
+    condition     = local.k8s_pg_host == local.cnpg_pooler_host
+    error_message = "n8n must connect to the Pooler Service when one is enabled; got: ${local.k8s_pg_host}"
+  }
+}
+
+run "the_pooler_needs_the_cnpg_backend" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    postgres_backend          = "external"
+    db_host                   = "postgres.example.com"
+    db_password               = "s3cret-not-real"
+  }
+
+  # A Pooler attaches to a CNPG Cluster. On the external path there is none, so
+  # the input would silently do nothing rather than fail, and the caller would
+  # be left believing they had pooling.
+  expect_failures = [var.cnpg_pooler_enabled]
+}
+
+run "the_pooler_refuses_to_run_with_tls_on" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = true
+  }
+
+  # PgBouncer serves clients in plaintext and encrypts its own leg upstream.
+  # Left true, n8n negotiates TLS against a listener that does not speak it and
+  # the error names a connection failure with nothing pointing at the pooler.
+  # Cheaper to refuse at plan time.
+  expect_failures = [var.cnpg_pooler_enabled]
+}
+
+run "pooler_sizing_inputs_reject_nonsense" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_pooler_instances     = 0
+  }
+
+  # Zero instances is a Pooler that exists in the API and answers nothing,
+  # while n8n's DB host now points at its Service.
+  expect_failures = [var.cnpg_pooler_instances]
+}
+
+run "the_pool_mode_is_constrained" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_pooler_mode          = "transactional"
+  }
+
+  # PgBouncer takes transaction, session or statement. A near-miss like this
+  # one is rejected by PgBouncer at startup, several minutes and one CrashLoop
+  # after apply.
+  expect_failures = [var.cnpg_pooler_mode]
+}
+
+run "transaction_mode_is_the_default_because_session_solves_nothing" {
+  command = plan
+
+  # Session mode holds a server connection for the life of the client session.
+  # n8n's TypeORM pool is long-lived, so session mode reproduces the original
+  # connection count exactly and the pooler buys nothing.
+  assert {
+    condition     = var.cnpg_pooler_mode == "transaction"
+    error_message = "cnpg_pooler_mode must default to \"transaction\"; session mode does not decouple client count from server connections."
+  }
+}
