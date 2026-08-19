@@ -2018,6 +2018,55 @@ run "an_overlay_nulling_the_strategy_type_still_warns" {
   expect_failures = [check.rolling_update_still_overlaps_two_mains]
 }
 
+# A strategy mapping that carries no type key is a merge rather than a
+# deletion: Helm keeps the module's own type and only adds whatever else the
+# overlay brought. Reading that as a deletion warns about a Deployment that is
+# still on Recreate, and a warning that fires on a safe configuration is the
+# fastest way to teach people to ignore it.
+run "an_overlay_declaring_strategy_without_a_type_keeps_the_module_value" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy: {}
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "Recreate"
+    error_message = "An empty strategy mapping merges over nothing, so the module's own type must survive it."
+  }
+
+  assert {
+    condition     = !local.n8n_main_strategy_left_to_kubernetes
+    error_message = "An empty mapping is not an explicit null, so it must not be read as deleting the module's strategy."
+  }
+}
+
+# Same merge one level down, with a sibling key present to show the mapping is
+# genuinely non-empty and still leaves the type alone.
+run "an_overlay_setting_only_rolling_update_fields_keeps_the_module_type" {
+  command = plan
+
+  variables {
+    n8n_extra_helm_values = <<-YAML
+      strategy:
+        rollingUpdate:
+          maxUnavailable: 1
+    YAML
+  }
+
+  assert {
+    condition     = local.n8n_main_strategy_effective == "Recreate"
+    error_message = "A strategy mapping that never mentions type must leave the module's type in force."
+  }
+
+  assert {
+    condition     = !local.n8n_main_strategy_left_to_kubernetes
+    error_message = "A missing type key is an absence, not a deletion, so nothing is handed to Kubernetes here."
+  }
+}
+
 # An overlay that says nothing about the strategy must leave the input in force.
 run "an_unrelated_overlay_leaves_the_strategy_alone" {
   command = plan
