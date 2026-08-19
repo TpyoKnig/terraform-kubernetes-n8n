@@ -57,7 +57,8 @@ your CI can raise, review and roll back, which is the whole point.
 | `database.*` | Exposed. `postgres_backend` selects `cnpg` or `external`; the `db_*` inputs carry the external endpoint. |
 | `database.ssl` | **Deliberately not set.** Postgres TLS is wired through environment variables instead, so the setting has one source rather than two that can disagree. `db_postgresdb_ssl_enabled` is the input. |
 | `redis.*` | Exposed. `redis_backend` selects `valkey` or `external`; the `redis_*` inputs carry the external endpoint. |
-| `redis.tls`, `redis.prefix` | **Deliberately not set**, same reasoning as `database.ssl`. Use `redis_transit_encryption_enabled` and `redis_key_prefix`. |
+| `redis.tls` | **Deliberately not set**, same reasoning as `database.ssl`: `redis_transit_encryption_enabled` wires QUEUE_BULL_REDIS_TLS through the environment instead. |
+| `redis.prefix` | Exposed as `redis_key_prefix` (renders QUEUE_BULL_PREFIX). Omitted when null so Bull's own `bull` default applies; the same input also sets N8N_REDIS_KEY_PREFIX and the KEDA listName. |
 | `config.extraEnv` | Exposed as `n8n_extra_env`, applied to every n8n pod. Reserved names are rejected at plan time. |
 | `config.timezone` | Exposed as `n8n_timezone`. |
 | `executions.*` | Exposed: `n8n_execution_timeout` / `_timeout_max` (timeout, timeoutMax), `n8n_execution_concurrency_limit` (concurrency.productionLimit), `n8n_pruning_max_age` / `_max_count` (pruning). The chart reads these top-level only; there is no `config.executions`. |
