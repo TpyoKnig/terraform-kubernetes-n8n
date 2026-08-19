@@ -1443,6 +1443,85 @@ run "attesting_keda_still_leaves_the_webhook_processor_an_autoscaler" {
   }
 }
 
+# ── A worker floor of zero deletes the pool ───────────────────────────────────
+# The input was documented as accepting 0 because "KEDA scales a ScaledObject
+# to zero natively". KEDA does, but this value is also
+# queueMode.workerReplicaCount, and chart 1.10.0 gates both the worker
+# Deployment and the worker ScaledObject on `gt (int workerReplicaCount) 0`.
+# So 0 rendered no Deployment, no ScaledObject and no HPA: the editor works,
+# webhooks answer, the queue fills, and no execution ever runs.
+run "a_worker_floor_of_zero_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_min_replicas = 0
+  }
+
+  expect_failures = [var.n8n_worker_keda_min_replicas]
+}
+
+# Rejected on the KEDA path too, which is the one the old justification was
+# written for. The ScaledObject the reasoning depended on is gated on the same
+# number, so attesting KEDA does not rescue it.
+run "a_worker_floor_of_zero_is_rejected_even_with_keda" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_min_replicas = 0
+    k8s_keda_installed           = true
+  }
+
+  expect_failures = [var.n8n_worker_keda_min_replicas]
+}
+
+run "the_worker_floor_keeps_a_pool_that_can_be_scaled" {
+  command = plan
+
+  assert {
+    condition     = var.n8n_worker_keda_min_replicas >= 1
+    error_message = "The default worker floor must render a worker Deployment, or the chart gates it away along with anything that could scale it back."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.queueMode.workerReplicaCount >= 1
+    error_message = "queueMode.workerReplicaCount is what the chart gates the worker Deployment and ScaledObject on; below 1 it renders neither."
+  }
+}
+
+# n8n_webhook_hpa_enabled exists to let a caller attach their own policy, and
+# on the KEDA path it did not: the chart ignores hpa.webhookProcessor.enabled
+# whenever keda.enabled is true, and this resource was gated on the KEDA
+# attestation alone. Turning the input off removed nothing, so a caller's own
+# VPA or custom-metrics HPA ended up fighting this one over the same
+# Deployment.
+run "disabling_the_webhook_hpa_removes_it_on_the_keda_path_too" {
+  command = plan
+
+  variables {
+    k8s_keda_installed      = true
+    n8n_webhook_hpa_enabled = false
+  }
+
+  assert {
+    condition     = length(kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook_processor) == 0
+    error_message = "n8n_webhook_hpa_enabled = false must remove the supplementary HPA on the KEDA path. Leaving it renders a controller the caller asked not to have, competing with whatever they attached instead."
+  }
+
+  # The chart must not quietly render one either, or disabling the input just
+  # moves which controller owns the Deployment.
+  assert {
+    condition     = local.k8s_values_final.hpa.webhookProcessor.enabled == false
+    error_message = "hpa.webhookProcessor.enabled must follow the same input, so that off means off on both sides."
+  }
+
+  # Replica count is a separate concern: the chart renders spec.replicas
+  # unconditionally, so the pool holds its floor rather than dropping to zero.
+  assert {
+    condition     = local.k8s_values_final.webhookProcessor.replicaCount == var.n8n_webhook_hpa_min_replicas
+    error_message = "With no autoscaler the webhook pool must still hold n8n_webhook_hpa_min_replicas; disabling autoscaling should remove what changes the count, not the count itself."
+  }
+}
+
 run "without_keda_the_chart_owns_the_webhook_hpa_alone" {
   command = plan
 
