@@ -1,0 +1,45 @@
+# Copy this file to terraform.tfvars and fill in your values.
+
+# Hostname the n8n editor UI and webhooks are served on. A DNS record for this
+# name has to reach the cluster's ingress. Creating it is yours to do: there is
+# no Route 53 equivalent on a self-hosted cluster, and how the name gets there
+# depends entirely on your setup: a tunnel, a public LoadBalancer, split-horizon
+# DNS on the LAN, a reverse proxy in front. examples/homelab-cloudflare is one
+# worked version (a Cloudflare Tunnel), not the assumed one.
+ui_host = "n8n.example.com"
+
+# Set true only if the KEDA operator is already installed cluster-wide. Workers
+# then scale on Redis queue depth instead of CPU.
+# keda_installed = false
+
+# Path to the kubeconfig the kubernetes and helm providers authenticate with.
+# Defaults to the standard kubeconfig location; override for other clusters.
+# kubeconfig_path = "~/.kube/config"
+
+# Namespace to deploy into. Created by the module.
+# namespace = "n8n"
+
+# cert-manager ClusterIssuer that signs the ingress certificate. Must already
+# exist in the cluster, this example does not install cert-manager.
+# cluster_issuer = "letsencrypt-prod"
+
+# StorageClass for the CNPG and Valkey PVCs. Empty uses the cluster default.
+# Set explicitly if your default is not one you want a database on.
+# storage_class = "longhorn"
+
+# Publish the CNPG rw endpoint and/or the main pod's /metrics on LoadBalancer
+# addresses, for tooling outside the cluster (a Grafana that queries n8n's
+# tables, a Prometheus that cannot use in-cluster discovery). Needs an IP
+# allocator. Neither has auth in front of it, trusted networks only. Unset by
+# default, and no Service is created then.
+# postgres_lan_ip = "192.168.1.50"
+# metrics_lan_ip  = "192.168.1.51"
+
+# ── Shared storage (optional) ─────────────────────────────────────────────────
+# Queue mode runs main, worker and webhook-processor pods and they share no
+# filesystem, so anything one writes to local disk is invisible to the others.
+# Set an RWX class and binary data moves to a volume all three mount. Leave it
+# unset and binary data stays in Postgres, which is n8n's default here.
+# shared_storage_class = "nfs-csi"
+# shared_storage_size  = "20Gi"
+# shared_mount_path    = "/opt/n8n-shared"

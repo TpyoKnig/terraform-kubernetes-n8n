@@ -44,6 +44,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   carry (session advisory locks, `LISTEN`/`NOTIFY`, an interactive `psql`)
   has somewhere to go. Null on the external backend.
 
+- `examples/homelab-pgbouncer`, the base homelab deployment with the pooler
+  enabled, including measured throughput and sizing guidance: what one worker
+  is worth, how to size a worker tier from a target rate, why per-node CPU and
+  not the cluster total is the limit that binds, and how to measure your own
+  workflow without the load generator becoming the thing you measured.
+
 ### Changed
 
 - `backing_services.postgres_host` resolves to the pooler Service when
