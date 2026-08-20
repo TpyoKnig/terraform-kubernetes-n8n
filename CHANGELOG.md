@@ -21,13 +21,21 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `check.cnpg_plugins_need_the_cnpg_backend` warns when it is set on the
   external path, where nothing renders a Cluster to carry it.
 
-- `check.cnpg_backup_needs_barman_in_the_image` warns when the in-tree
-  `cnpg_backup` is paired with a `minimal` or `standard` image. That path
-  archives WAL by running barman-cloud binaries inside the operand image, and
-  upstream ships those only in the deprecated bare-tag `system` images, so on
-  any qualified tag, the new default included, archiving fails on every
-  attempt and reports it only in the Cluster's status conditions. The tag
-  string is the one plan-time signal there is.
+- `check.cnpg_backup_needs_barman_in_the_image` warns when a `cnpg_backup`
+  carrying `barmanObjectStore` is paired with a `minimal` or `standard` image.
+  That path archives WAL by running barman-cloud binaries inside the operand
+  image, and upstream ships those only in the deprecated bare-tag `system`
+  images, so on any qualified tag, the new default included, archiving fails
+  on every attempt and reports it only in the Cluster's status conditions.
+  The tag string is the one plan-time signal there is. A backup stanza
+  carrying only volumeSnapshot settings runs no barman-cloud and draws no
+  warning on any image.
+
+- `check.cnpg_backup_and_a_wal_archiving_plugin_conflict` warns when
+  `cnpg_backup` carries `barmanObjectStore` while a `cnpg_plugins` entry
+  declares `isWALArchiver = true`: both claim the WAL archive command, and
+  which one the operator ends up running is not a choice the caller gets to
+  make.
 
 - `check.an_ingress_in_front_means_at_least_one_proxy_hop` warns when
   `n8n_proxy_hops = 0` while an Ingress is being rendered. Zero is a valid

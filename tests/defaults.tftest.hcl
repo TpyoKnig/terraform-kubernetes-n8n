@@ -2089,6 +2089,20 @@ run "cnpg_plugins_reject_an_entry_with_an_empty_name" {
   expect_failures = [var.cnpg_plugins]
 }
 
+# And the type companion: a bare number satisfies a length-of-tostring check
+# and then renders as a numeric name the CNPG schema rejects at apply, so the
+# validation compares against tostring() instead, which Terraform's == makes
+# hold only for an actual string.
+run "cnpg_plugins_reject_a_numeric_name" {
+  command = plan
+
+  variables {
+    cnpg_plugins = [{ name = 123 }]
+  }
+
+  expect_failures = [var.cnpg_plugins]
+}
+
 run "cnpg_plugins_on_the_external_backend_are_warned_about" {
   command = plan
 
@@ -2138,6 +2152,78 @@ run "cnpg_backup_on_a_system_image_draws_no_barman_warning" {
   assert {
     condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.backup.barmanObjectStore.destinationPath == "s3://n8n-backups/"
     error_message = "A bare-tag system image carries the barman-cloud binaries, so the in-tree backup on it is a working configuration and must pass without a warning."
+  }
+}
+
+# The barman warning is about barmanObjectStore, not about spec.backup as a
+# whole: a backup stanza carrying only volumeSnapshot settings runs no
+# barman-cloud, so it is fine on the minimal default and must stay quiet.
+run "cnpg_backup_of_snapshots_only_draws_no_barman_warning" {
+  command = plan
+
+  variables {
+    cnpg_backup = {
+      volumeSnapshot = {
+        className = "csi-snapclass"
+      }
+    }
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.backup.volumeSnapshot.className == "csi-snapclass"
+    error_message = "A snapshots-only backup stanza must pass through and draw no barman warning: nothing in it runs inside the operand image."
+  }
+}
+
+# Both halves of the archive command claimed at once: barmanObjectStore in
+# spec.backup and a plugin declaring isWALArchiver. The image is pinned to a
+# system tag so the image-pairing check stays quiet and the only expected
+# failure is the conflict itself.
+run "cnpg_backup_with_a_wal_archiving_plugin_is_warned_about" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16"
+
+    cnpg_backup = {
+      barmanObjectStore = {
+        destinationPath = "s3://n8n-backups/"
+      }
+    }
+
+    cnpg_plugins = [
+      {
+        name          = "barman-cloud.cloudnative-pg.io"
+        isWALArchiver = true
+        parameters    = { barmanObjectName = "n8n-backup-store" }
+      }
+    ]
+  }
+
+  expect_failures = [check.cnpg_backup_and_a_wal_archiving_plugin_conflict]
+}
+
+# The same pairing without the archiver claim conflicts with nothing: a
+# plugin that is not a WAL archiver shares the cluster with the in-tree
+# backup fine.
+run "cnpg_backup_with_a_non_archiving_plugin_draws_no_conflict" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16"
+
+    cnpg_backup = {
+      barmanObjectStore = {
+        destinationPath = "s3://n8n-backups/"
+      }
+    }
+
+    cnpg_plugins = [{ name = "some-other-plugin.example.io" }]
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.plugins[0].name == "some-other-plugin.example.io"
+    error_message = "A plugin without isWALArchiver claims nothing the in-tree backup owns, so the combination must plan clean."
   }
 }
 
