@@ -191,10 +191,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   upstream tags (`16.10-minimal-trixie` and the like) as well as the bare
   `16` and `16.10`, and rejects an empty string, a leading `v`, a tag carrying
   a registry or digest, a dot that does not sit between two alphanumerics, and
-  anything past the 128 characters the reference grammar allows a tag. Each of
-  those renders an `imageName` that fails on the pod rather than in the plan,
-  as a pull error or, past the length limit, as a reference the runtime cannot
-  parse at all. The dot rule is narrower than the reference grammar, which
+  anything past the 128 characters the reference grammar allows a tag. Before
+  this validation, each of those rendered an `imageName` that failed on the
+  pod, as a pull error or, past the length limit, as a reference the runtime
+  cannot parse at all; they are now plan errors instead. The dot rule is narrower than the reference grammar, which
   would accept those spellings and leave them to 404; the tags upstream
   publishes are a known set, so the typo is worth catching at plan. The description now says what the default
   rolling tag actually does: a newly created instance pulls whatever minor the
