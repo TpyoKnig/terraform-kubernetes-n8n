@@ -9,6 +9,26 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `cnpg_plugins` writes the CloudNativePG Cluster's `spec.plugins`, the CNPG-I
+  declaration list the Barman Cloud Plugin is configured through. Null by
+  default. A verbatim passthrough for the same reason `cnpg_backup` is one:
+  this is the surface CNPG's backup story is actively moving onto, and a typed
+  input would freeze one snapshot of it. The plugin's own installation and its
+  `ObjectStore` resource stay with the caller; `docs/operations.md` has the
+  worked example of both. Needs CloudNativePG 1.26 or newer for the Barman
+  Cloud Plugin; an operator too old to know `spec.plugins` prunes the field
+  silently, the same failure shape `cnpg_pdb_enabled` documents.
+  `check.cnpg_plugins_need_the_cnpg_backend` warns when it is set on the
+  external path, where nothing renders a Cluster to carry it.
+
+- `check.cnpg_backup_needs_barman_in_the_image` warns when the in-tree
+  `cnpg_backup` is paired with a `minimal` or `standard` image. That path
+  archives WAL by running barman-cloud binaries inside the operand image, and
+  upstream ships those only in the deprecated bare-tag `system` images, so on
+  any qualified tag, the new default included, archiving fails on every
+  attempt and reports it only in the Cluster's status conditions. The tag
+  string is the one plan-time signal there is.
+
 - `check.an_ingress_in_front_means_at_least_one_proxy_hop` warns when
   `n8n_proxy_hops = 0` while an Ingress is being rendered. Zero is a valid
   answer only when nothing proxies to the pods; behind an Ingress the
@@ -183,6 +203,24 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   longer or shorter.
 
 ### Changed
+
+- **`cnpg_postgres_image_tag` now defaults to `18-minimal-trixie`**, replacing
+  the bare `16`. Two moves in one, both deliberate. The spelling moves off the
+  deprecated bare rolling tags, which upstream removes when the bullseye
+  images reach end of life, onto the supported `MM-TYPE-OS` form; the rolling
+  behaviour within the major is unchanged. And the major moves to
+  PostgreSQL 18, the major current n8n supports.
+
+  **Existing clusters on the old default must pin before taking this module
+  version.** Set `cnpg_postgres_image_tag = "16"` (or whatever you run) first,
+  then plan the major upgrade as its own change. Letting the new default reach
+  a running cluster is not a spelling fix: a major bump is an offline in-place
+  `pg_upgrade` under current CloudNativePG, and this one also crosses from
+  bullseye to trixie, which the in-place path does not support, as well as
+  from the `system` image type to `minimal`, which drops the barman-cloud
+  binaries the in-tree `cnpg_backup` path needs. The blue/green route (a
+  second Cluster, dump/restore or logical replication) is the safe one for
+  that combination; either way, take a backup first.
 
 - `n8n_worker_keda_min_replicas` now requires at least 1. **Breaking for a
   configuration that was already producing no workers.**

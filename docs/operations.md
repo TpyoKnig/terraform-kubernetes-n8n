@@ -391,13 +391,64 @@ of it.
 
 **It reaches the in-tree path only.** CloudNativePG deprecated
 `spec.backup.barmanObjectStore` in 1.26 in favour of the Barman Cloud Plugin,
-and the plugin is not configured here: it wants an entry under the Cluster's
-`spec.plugins` and a separate `ObjectStore` resource, neither of which this
-module renders. On 1.26 and later the in-tree form still works and is still
-what this input writes, so nothing breaks today, but a cluster that has moved
-to the plugin cannot be configured through `cnpg_backup` at all. Check what
-your operator is with `kubectl get deployment -n cnpg-system -o
+which is configured through the Cluster's `spec.plugins` (the `cnpg_plugins`
+input, below) plus a separate `ObjectStore` resource that stays yours to
+create. On 1.26 and later the in-tree form still works and is still what this
+input writes, **but only against an image carrying the barman-cloud
+binaries**, and upstream ships those only in the deprecated bare-tag `system`
+images. The module's default image is now a `minimal` one, which cannot serve
+this input: a plan-time check warns about the pairing. Check what your
+operator is with `kubectl get deployment -n cnpg-system -o
 jsonpath='{..image}'`.
+
+### `cnpg_plugins`
+
+The plugin route, and the one with a future. Install the
+[Barman Cloud Plugin](https://cloudnative-pg.io/plugin-barman-cloud/) in the
+operator's namespace (CloudNativePG 1.26 or newer), create an `ObjectStore`
+resource and its credentials Secret in the module's namespace, and declare the
+plugin on the Cluster:
+
+```hcl
+cnpg_plugins = [
+  {
+    name          = "barman-cloud.cloudnative-pg.io"
+    isWALArchiver = true
+    parameters    = { barmanObjectName = "n8n-backup-store" }
+  }
+]
+```
+
+```hcl
+resource "kubectl_manifest" "n8n_backup_store" {
+  yaml_body = yamlencode({
+    apiVersion = "barmancloud.cnpg.io/v1"
+    kind       = "ObjectStore"
+    metadata   = { name = "n8n-backup-store", namespace = module.n8n.namespace }
+    spec = {
+      configuration = {
+        destinationPath = "s3://n8n-backups/"
+        endpointURL     = "https://minio.example.com"
+        s3Credentials = {
+          accessKeyId     = { name = "minio-creds", key = "ACCESS_KEY_ID" }
+          secretAccessKey = { name = "minio-creds", key = "SECRET_ACCESS_KEY" }
+        }
+        wal = { compression = "gzip" }
+      }
+      retentionPolicy = "30d" # here, not on the Cluster, under the plugin
+    }
+  })
+
+  # Same setting as the module's own CNPG resources, for the same reason:
+  # the operator manages fields on this object after creation.
+  server_side_apply = true
+}
+```
+
+Do not set `cnpg_backup` and a WAL-archiving plugin on the same cluster: both
+claim the archive command. The base-backup half moves too: a `Backup` or
+`ScheduledBackup` on a plugin cluster needs `method = "plugin"` and a
+`pluginConfiguration` block, as the example further down notes.
 
 In-tree form. Note that `retentionPolicy` is deprecated on the same schedule
 as `barmanObjectStore`, not separately from it: the whole in-tree stanza moves

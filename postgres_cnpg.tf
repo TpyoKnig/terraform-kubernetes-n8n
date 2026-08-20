@@ -84,6 +84,14 @@ resource "kubectl_manifest" "cnpg_cluster" {
       # wrong on the other half of the installed base. See var.cnpg_backup and
       # docs/operations.md for the two shapes and a worked example.
       var.cnpg_backup == null ? {} : { backup = var.cnpg_backup },
+
+      # CNPG-I plugin declarations, passed through verbatim for the same
+      # reason cnpg_backup is: this is the surface CNPG's backup story is
+      # actively moving onto, and a typed input would freeze one snapshot of
+      # it. The Barman Cloud Plugin's ObjectStore resource and the plugin's
+      # own installation stay with the caller; the module renders only what
+      # the Cluster spec itself carries.
+      var.cnpg_plugins == null ? {} : { plugins = var.cnpg_plugins },
     )
   })
 
@@ -211,5 +219,30 @@ check "cnpg_backup_needs_the_cnpg_backend" {
   assert {
     condition     = var.cnpg_backup != null ? local.cnpg_enabled : true
     error_message = "cnpg_backup is set but postgres_backend is \"${var.postgres_backend}\", so this module renders no CloudNativePG Cluster and the value reaches nothing. Backing up an external database is the operator's own business, whatever runs it. Set postgres_backend = \"cnpg\" to use this input, or clear it to silence this warning."
+  }
+}
+
+# The same shape of silence as cnpg_backup on the external path, for the same
+# reason: the caller has declared a plugin, nothing renders a Cluster to carry
+# it, and no error says so.
+check "cnpg_plugins_need_the_cnpg_backend" {
+  assert {
+    condition     = var.cnpg_plugins != null ? local.cnpg_enabled : true
+    error_message = "cnpg_plugins is set but postgres_backend is \"${var.postgres_backend}\", so this module renders no CloudNativePG Cluster and the value reaches nothing. Set postgres_backend = \"cnpg\" to use this input, or clear it to silence this warning."
+  }
+}
+
+# The in-tree spec.backup.barmanObjectStore path works by running barman-cloud
+# binaries inside the operand image, and upstream ships those only in the
+# deprecated bare-tag `system` images. The minimal and standard images, which
+# is what every qualified tag names and what the default tag now is, do not
+# carry them: WAL archiving fails on every attempt, continuously, and the
+# Cluster reports it only in its status conditions. The tag string is the one
+# plan-time signal there is, so warn on the pairing rather than let the
+# configuration read as done.
+check "cnpg_backup_needs_barman_in_the_image" {
+  assert {
+    condition     = local.cnpg_enabled && var.cnpg_backup != null ? !can(regex("-(minimal|standard)(-|$)", var.cnpg_postgres_image_tag)) : true
+    error_message = "cnpg_backup writes the in-tree spec.backup, which archives WAL by running barman-cloud binaries inside the Postgres image, and cnpg_postgres_image_tag = \"${var.cnpg_postgres_image_tag}\" names a minimal or standard image that does not carry them. Archiving will fail on every attempt, visible only in the Cluster's status conditions. Either use the Barman Cloud Plugin instead (cnpg_plugins, plus its ObjectStore resource), or pin a deprecated bare-tag system image such as \"16\" for as long as upstream still publishes it."
   }
 }
