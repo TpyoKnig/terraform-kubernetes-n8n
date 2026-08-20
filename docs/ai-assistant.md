@@ -68,7 +68,10 @@ kubectl -n n8n create secret generic ai-assistant-secrets \
   --from-literal=brave-api-key='...'
 ```
 
-Then:
+Then (the `sandbox-api` Service name below assumes the sandbox chart was
+installed with `fullnameOverride=sandbox`, as `examples/homelab-ai-assistant`'s
+README does; without the override the chart names it
+`<release>-n8n-sandbox-service-api`):
 
 ```hcl
 module "n8n" {

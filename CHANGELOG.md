@@ -16,7 +16,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   operator, because its Helm chart is not published to a chart repository yet.
   The README walks through standing it up with `runner.isolation: privileged`,
   the config verified end to end on Talos and the other immutable-rootfs
-  distributions that cannot install the chart's default sysbox isolation.
+  distributions that cannot install the chart's default sysbox isolation. The
+  install command pins `fullnameOverride=sandbox`: the example builds
+  `N8N_SANDBOX_SERVICE_URL` as `<release>-api`, and without the override the
+  chart's fullname helper concatenates release and chart name, so the Service
+  renders as `sandbox-n8n-sandbox-service-api` and n8n points at a name that
+  does not exist.
 
 ### Fixed
 

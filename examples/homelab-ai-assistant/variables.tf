@@ -108,7 +108,7 @@ variable "sandbox_namespace" {
 }
 
 variable "sandbox_release_name" {
-  description = "Helm release name the n8n-sandbox-service chart was installed under. The chart derives its API Service name from this (\"<release>-api\" unless nameOverride collides with it, e.g. release \"sandbox\" against chart name \"n8n-sandbox-service\" renders plain \"sandbox-api\"), which is what N8N_SANDBOX_SERVICE_URL has to name. Get this wrong and n8n reaches for a Service that does not exist: the assistant loads normally and every code execution request times out."
+  description = "Helm release name the n8n-sandbox-service chart was installed under, which must also be the chart's fullnameOverride (the README's install command sets both to \"sandbox\"). N8N_SANDBOX_SERVICE_URL is built as \"<release>-api\", and that is the API Service's name only when fullnameOverride pins the fullname to the release name; without the override the chart concatenates release and chart name and the Service renders as \"<release>-n8n-sandbox-service-api\" instead. Get the pair wrong and n8n reaches for a Service that does not exist: the assistant loads normally and every code execution request times out."
   type        = string
   default     = "sandbox"
   nullable    = false

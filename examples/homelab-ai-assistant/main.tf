@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: MIT
 
 locals {
-  # "<release>-api.<namespace>.svc.cluster.local" is the chart's own naming:
-  # see n8n-sandbox-service's _helpers.tpl "fullname" / "apiName" templates.
-  # With the defaults here (release "sandbox", chart "n8n-sandbox-service")
-  # that renders "sandbox-api", not "sandbox-n8n-sandbox-service-api": the
-  # template drops the chart name whenever the chart name already contains the
-  # release name.
+  # "<release>-api" is the chart's apiName template applied to a fullname the
+  # README's install command pins with fullnameOverride=<release>. Without that
+  # override the chart's standard fullname helper concatenates release and
+  # chart name (release "sandbox" does not contain "n8n-sandbox-service", so
+  # nothing is dropped) and the Service renders as
+  # "sandbox-n8n-sandbox-service-api" - a name this URL would never match.
+  # The README and this local are one contract: install with
+  # fullnameOverride equal to sandbox_release_name, or n8n points at a Service
+  # that does not exist and every code execution times out.
   sandbox_service_url = "http://${var.sandbox_release_name}-api.${var.sandbox_namespace}.svc.cluster.local:8080"
 }
 
