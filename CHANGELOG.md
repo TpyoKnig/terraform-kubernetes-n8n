@@ -279,7 +279,8 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   gated the module-owned `n8n-secrets` Secret to zero, exactly as documented,
   but `secretRefs.existingSecret` stayed hardcoded to `"n8n-secrets"` instead
   of following the caller's Secret name, so the chart was pointed at a Secret
-  nothing created: every pod sat in `CreateContainerConfigError`, and the
+  nothing created: unless the caller's Secret happened to be named
+  `n8n-secrets` itself, every pod sat in `CreateContainerConfigError`, and the
   Secret the caller actually wrote was never read. The input had no test on
   either path; three runs now cover the wiring, the default, and the
   renamed-key rejection.
