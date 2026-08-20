@@ -53,6 +53,36 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   main restart on every apply that changes the main pod, where previously they
   appeared not to be. They were not really up, they were doubled.
 
+- `cnpg_pdb_enabled` controls the CloudNativePG Cluster's `spec.enablePDB`, and
+  **defaults to off for a single-instance cluster**, which is this module's
+  default.
+
+  CloudNativePG creates its own PodDisruptionBudget over the Postgres primary
+  unless told not to. At `cnpg_instances = 1` that object is `minAvailable: 1`
+  over a single pod, so allowed disruptions is 0 and the node hosting Postgres
+  can never be drained, exactly the failure `n8n_main_pdb_enabled` addresses
+  one layer up. Disabling the chart's PDB and leaving this one still leaves a
+  node that a Talos upgrade stalls on.
+
+  Found by deploying to a real cluster, not by reading values: the object is
+  created by the operator in response to the Cluster CR, so nothing in the
+  module's rendered output mentions it.
+
+  Needs CloudNativePG 1.23 or later, where `spec.enablePDB` was added. Older
+  operators prune it as an unknown field and keep creating the budget, with
+  nothing reporting that the setting went nowhere.
+
+  The default follows the instance count rather than being a flat false,
+  because the two cases differ. With replicas the budget does what a budget is
+  for, stopping a second Postgres node from being drained while the first is
+  still catching up, and CNPG still permits evicting replicas. With one
+  instance there is no second copy to protect, so it can only withhold
+  availability, never preserve it.
+
+  `check.cnpg_pdb_blocks_the_postgres_node_drain` warns when the input is
+  forced true at a single instance, matching
+  `check.main_pdb_blocks_the_main_pod_node_drain` one layer up.
+
 - `n8n_main_pdb_enabled` governs whether the chart renders its
   PodDisruptionBudget over the main pod, and **defaults to false, which
   overrides the chart's own default of true.**
@@ -98,6 +128,35 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   allowlist as configured rather than against 443 alone, so a collector on the
   database or Redis port, an explicit loopback sidecar address, and an
   `https://` URL with a bracketed IPv6 host all pass without a warning.
+
+- `cnpg_backup` writes the CloudNativePG Cluster's `spec.backup`, turning on
+  continuous WAL archiving to an object store. Null by default, which is what
+  the Cluster has always been: a database whose only copy is its PVC.
+
+  Passed through verbatim rather than typed, which is a deliberate exception to
+  how every other input here works: the field's own shape has changed under
+  CloudNativePG and a typed surface would have frozen one version of it.
+
+  It reaches the in-tree path only. CloudNativePG deprecated
+  `spec.backup.barmanObjectStore` in 1.26 in favour of the Barman Cloud Plugin,
+  which is configured through the Cluster's `spec.plugins` and a separate
+  `ObjectStore` resource, neither of which this module renders. The in-tree
+  form still works on 1.26 and later, so nothing breaks, but a cluster that has
+  moved to the plugin cannot be configured through this input.
+  `docs/operations.md` carries a worked example, a `ScheduledBackup` (WAL
+  archiving alone is not a backup) with a note about the `method` the plugin
+  path needs, and a note that restore means standing up a second Cluster.
+
+  `check.cnpg_backup_needs_the_cnpg_backend` warns when the input is set on the
+  external backend, where it reaches nothing: the destination and credentials
+  Secret are written, the configuration reads as done, and no archiving
+  happens.
+
+  `prevent_destroy` was considered and is not offered: Terraform requires a
+  literal in a `lifecycle` block, so it cannot be made conditional, and
+  hardcoding it would make `terraform destroy` impossible for every consumer.
+  The `StorageClass` reclaim policy is the lever that works, and the docs now
+  say so.
 
 - `n8n_proxy_hops` sets `N8N_PROXY_HOPS` on every pod type, replacing a
   hardcoded literal that only existed on one routing path.
