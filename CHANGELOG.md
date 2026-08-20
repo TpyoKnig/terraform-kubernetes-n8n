@@ -7,6 +7,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.0], The single-main rollout and the backup story
+
+Single-main rollouts made real (`n8n_main_strategy`, Recreate by default),
+node drains unblocked (both PodDisruptionBudgets off where they could only
+refuse), a backup story for CNPG (`cnpg_backup`, `cnpg_plugins`,
+PostgreSQL 18), the chart's NetworkPolicy as a typed input, and a fix sweep
+(#35-#53) for inputs that never reached the chart. Minor rather than patch,
+because the defaults moved: the n8n image tag is now pinned, the main rolls
+by Recreate, and a fresh CNPG cluster runs PostgreSQL 18 — each a change an
+existing deployment must read about before taking. Every headline claim in
+this release has since been validated live against a real cluster; the
+comments and descriptions cite what was observed.
+
 ### Added
 
 - `cnpg_plugins` writes the CloudNativePG Cluster's `spec.plugins`, the CNPG-I
@@ -1126,7 +1139,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.2.1...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.0
 [0.2.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.1
 [0.2.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.0
 [0.1.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.1.0
