@@ -738,9 +738,13 @@ locals {
   # (replicaCount = 1, hpa.main.enabled = false) was true except during the
   # rollout that changes it.
   #
-  # Both accepted values render zero overlap. RollingUpdate carries the
-  # explicit maxSurge = 0 that makes it so; without that key it is the default
-  # above wearing a different name.
+  # Only Recreate renders zero overlap. RollingUpdate's maxSurge = 0 bounds
+  # how many pods may exist, but a Terminating pod stops counting the moment
+  # its ReplicaSet is scaled to zero while the process inside it keeps
+  # running, so the controller still creates the incoming main while the
+  # outgoing one finishes draining (see check.rolling_update_still_overlaps_two_mains
+  # and n8n_main_strategy's own validation message). Live-cluster
+  # measurement observed a ~9.5s overlap window under RollingUpdate.
   #
   # merge() rather than a ternary returning two whole objects: Terraform
   # unifies a conditional's branches to one type, and an object carrying
