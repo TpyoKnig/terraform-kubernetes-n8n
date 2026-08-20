@@ -18,6 +18,18 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   the config verified end to end on Talos and the other immutable-rootfs
   distributions that cannot install the chart's default sysbox isolation.
 
+### Fixed
+
+- `n8n_task_runners_enabled` now emits `N8N_RUNNERS_ENABLED=true` into
+  `config.extraEnv`. The chart's `taskRunners.enabled` renders the
+  `n8nio/runners` sidecar, its auth-token Secret, `N8N_RUNNERS_MODE` and the
+  broker listen address, but no template in 1.10.0 or 1.11.0 emits
+  `N8N_RUNNERS_ENABLED`, and n8n's own default is false. The broker therefore
+  never listened on 5679, the sidecar sat on "Waiting for task broker to be
+  ready..." with zero registrations, and Code nodes ran inside n8n's own
+  process. Observed live: executions succeed, the pod is 2/2 Ready, and the
+  isolation the sidecar exists for is silently absent.
+
 ### Changed
 
 - `docs/ai-assistant.md`'s Sandbox section replaced: it previously pointed

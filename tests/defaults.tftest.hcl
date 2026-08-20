@@ -711,6 +711,27 @@ run "task_runner_timeouts_are_gated_on_task_runners" {
   }
 }
 
+# The chart's taskRunners.enabled renders the sidecar but never emits
+# N8N_RUNNERS_ENABLED, and n8n's own default is false: the broker never
+# starts, the sidecar never registers, and Code nodes silently run in n8n's
+# own process while the pod reports 2/2 Ready. The module has to emit the
+# variable itself.
+run "enabling_task_runners_starts_the_broker_not_just_the_sidecar" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled = true
+  }
+
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv :
+      e if e.name == "N8N_RUNNERS_ENABLED" && e.value == "true"
+    ]) == 1
+    error_message = "N8N_RUNNERS_ENABLED=true must be rendered into config.extraEnv when task runners are enabled; the chart never emits it and n8n's default is false, so without it the sidecar renders but the task broker never starts."
+  }
+}
+
 # The idle-shutdown timeout has to reach the task-runner SIDECAR, and
 # config.extraEnv reaches the n8n containers only. Emitting it there meant the
 # input silently did nothing: callers set 0 and the sidecar stayed on the

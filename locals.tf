@@ -1214,7 +1214,17 @@ locals {
         # the sidecar on the chart default no matter what the caller asked for.
         # It is set via taskRunners.launcher.autoShutdownTimeout instead — see
         # k8s_values_task_runners below.
+        # N8N_RUNNERS_ENABLED is what starts n8n's task broker; the chart never
+        # emits it. taskRunners.enabled renders the n8nio/runners sidecar, the
+        # auth-token Secret, N8N_RUNNERS_MODE and the broker listen address
+        # (verified against 1.10.0 and 1.11.0: no template contains the name),
+        # but n8n's own default for the variable is false, so the broker never
+        # listens on 5679, the sidecar launcher waits forever on "Waiting for
+        # task broker to be ready...", and Code nodes run inside n8n's own
+        # process. Nothing fails: the pod is 2/2 Ready and executions succeed,
+        # minus the isolation the sidecar exists to provide.
         var.n8n_task_runners_enabled ? [
+          { name = "N8N_RUNNERS_ENABLED", value = "true" },
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
         ] : [],
 
