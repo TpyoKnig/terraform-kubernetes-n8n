@@ -445,8 +445,9 @@ resource "kubectl_manifest" "n8n_backup_store" {
 }
 ```
 
-Do not set `cnpg_backup` and a WAL-archiving plugin on the same cluster: both
-claim the archive command. The base-backup half moves too: a `Backup` or
+Do not set a `cnpg_backup` carrying `barmanObjectStore` and a WAL-archiving
+plugin on the same cluster: both claim the archive command, and a plan-time
+check warns about the combination. The base-backup half moves too: a `Backup` or
 `ScheduledBackup` on a plugin cluster needs `method = "plugin"` and a
 `pluginConfiguration` block, as the example further down notes.
 

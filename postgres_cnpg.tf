@@ -239,10 +239,24 @@ check "cnpg_plugins_need_the_cnpg_backend" {
 # carry them: WAL archiving fails on every attempt, continuously, and the
 # Cluster reports it only in its status conditions. The tag string is the one
 # plan-time signal there is, so warn on the pairing rather than let the
-# configuration read as done.
+# configuration read as done. Gated on barmanObjectStore being present, not on
+# cnpg_backup alone: a backup stanza carrying only volumeSnapshot settings
+# runs no barman-cloud and is fine on any image type.
 check "cnpg_backup_needs_barman_in_the_image" {
   assert {
-    condition     = local.cnpg_enabled && var.cnpg_backup != null ? !can(regex("-(minimal|standard)(-|$)", var.cnpg_postgres_image_tag)) : true
-    error_message = "cnpg_backup writes the in-tree spec.backup, which archives WAL by running barman-cloud binaries inside the Postgres image, and cnpg_postgres_image_tag = \"${var.cnpg_postgres_image_tag}\" names a minimal or standard image that does not carry them. Archiving will fail on every attempt, visible only in the Cluster's status conditions. Either use the Barman Cloud Plugin instead (cnpg_plugins, plus its ObjectStore resource), or pin a deprecated bare-tag system image such as \"16\" for as long as upstream still publishes it."
+    condition     = local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) ? !can(regex("-(minimal|standard)(-|$)", var.cnpg_postgres_image_tag)) : true
+    error_message = "cnpg_backup carries barmanObjectStore, the in-tree form that archives WAL by running barman-cloud binaries inside the Postgres image, and cnpg_postgres_image_tag = \"${var.cnpg_postgres_image_tag}\" names a minimal or standard image that does not carry them. Archiving will fail on every attempt, visible only in the Cluster's status conditions. Either use the Barman Cloud Plugin instead (cnpg_plugins, plus its ObjectStore resource), or pin a deprecated bare-tag system image such as \"16\" for as long as upstream still publishes it."
+  }
+}
+
+# The other half of the same collision, checked rather than only documented:
+# barmanObjectStore in spec.backup and a plugin declaring isWALArchiver both
+# claim the WAL archive command, and which one the operator ends up running
+# is not a choice the caller gets to make. Nothing at apply time refuses the
+# combination either; it just resolves somehow.
+check "cnpg_backup_and_a_wal_archiving_plugin_conflict" {
+  assert {
+    condition     = !(local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) && (var.cnpg_plugins == null ? false : try(anytrue([for p in var.cnpg_plugins : try(p.isWALArchiver == true, false)]), false)))
+    error_message = "cnpg_backup carries barmanObjectStore and cnpg_plugins declares a plugin with isWALArchiver = true; both claim the WAL archive command, and which one wins is not yours to choose. Keep exactly one: clear barmanObjectStore from cnpg_backup to archive through the plugin, or drop the plugin's isWALArchiver to stay on the in-tree path."
   }
 }
