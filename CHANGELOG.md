@@ -7,6 +7,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Removed
+
+- `N8N_RUNNERS_ENABLED` is no longer emitted, and the `n8n_runners_enabled`
+  input that 0.3.1 added is gone with it. Neither was meant to ship: both came
+  out of upgrade testing against a live deployment, on the reading that the
+  variable was the missing piece behind an idle task-runner sidecar. It was
+  not. The variable is deprecated in n8n 2.x and never started the task
+  broker - what decides that is whether the pod executes tasks at all, so the
+  main offloads to workers and starts no broker while the worker starts one.
+  Setting it buys a deprecation warning in every pod's startup log and nothing
+  else. `n8n_task_runners_enabled` goes back to what it was in 0.3.0: it
+  renders the sidecar and the request timeout, and stops there.
+
 ## [0.3.1], The AI Assistant example and the broker that never started
 
 The `homelab-ai-assistant` example (n8n's AI Assistant and Agents module
