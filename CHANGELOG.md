@@ -7,6 +7,69 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.1], The AI Assistant example and the broker that never started
+
+The `homelab-ai-assistant` example (n8n's AI Assistant and Agents module
+wired to an in-cluster `n8n-sandbox-service`, the `runner.isolation:
+privileged` path that works on Talos and other immutable-rootfs
+distributions), a rewrite of `docs/ai-assistant.md`'s stale Sandbox
+section, and one production fix: `n8n_task_runners_enabled` rendered the
+runner sidecar without emitting `N8N_RUNNERS_ENABLED`, so the task
+broker never started and Code nodes silently ran in n8n's own process.
+Upgrading a deployment with task runners enabled rolls main, worker and
+webhook-processor (the env list changes), and code execution moves into
+the sidecar - where it was documented to be all along.
+
+### Added
+
+- `n8n_runners_enabled` starts n8n's task broker without the sidecar, for
+  n8n's internal launcher (a child process of n8n, JavaScript only) or for
+  task runners operated outside this module. Default false: the sidecar path
+  does not need it, because `n8n_task_runners_enabled` implies the broker (see
+  Fixed below), so on a default deployment this toggle adds nothing and stays
+  off until broker-without-sidecar is a deliberate choice. Either toggle is
+  the only door to the variable - the `N8N_RUNNERS_` prefix reservation on
+  `n8n_extra_env` and `n8n_extra_env_from_secret` rejects
+  `N8N_RUNNERS_ENABLED` at plan time, now pinned by tests for both inputs.
+
+- `examples/homelab-ai-assistant`, the base deployment with n8n's AI Assistant
+  and Agents module turned on and wired to a `n8n-sandbox-service` code
+  sandbox. Documents (and tests) the n8n-side wiring only; the sandbox itself
+  is a caller prerequisite, same as the ingress controller or the CNPG
+  operator, because its Helm chart is not published to a chart repository yet.
+  The README walks through standing it up with `runner.isolation: privileged`,
+  the config verified end to end on Talos and the other immutable-rootfs
+  distributions that cannot install the chart's default sysbox isolation. The
+  install command pins `fullnameOverride=sandbox`: the example builds
+  `N8N_SANDBOX_SERVICE_URL` as `<release>-api`, and without the override the
+  chart's fullname helper concatenates release and chart name, so the Service
+  renders as `sandbox-n8n-sandbox-service-api` and n8n points at a name that
+  does not exist.
+
+### Fixed
+
+- `n8n_task_runners_enabled` now emits `N8N_RUNNERS_ENABLED=true` into
+  `config.extraEnv`. The chart's `taskRunners.enabled` renders the
+  `n8nio/runners` sidecar, its auth-token Secret, `N8N_RUNNERS_MODE` and the
+  broker listen address, but no template in 1.10.0 or 1.11.0 emits
+  `N8N_RUNNERS_ENABLED`, and n8n's own default is false. The broker therefore
+  never listened on 5679, the sidecar sat on "Waiting for task broker to be
+  ready..." with zero registrations, and Code nodes ran inside n8n's own
+  process. Observed live: executions succeed, the pod is 2/2 Ready, and the
+  isolation the sidecar exists for is silently absent. The sidecar toggle now
+  implies the broker (an OR with `n8n_runners_enabled`, not a second knob to
+  forget), a test pins the emission, and the existing disabled-path test
+  proves both toggles off emits nothing.
+
+### Changed
+
+- `docs/ai-assistant.md`'s Sandbox section replaced: it previously pointed
+  Talos readers at a hand-rolled Docker-in-Docker translation of the sandbox's
+  `compose.yaml` topology. That path is superseded by `n8n-sandbox-service`
+  chart 0.4.0's own `runner.isolation: privileged`, upstream as of
+  [n8n-io/n8n-sandbox-service#126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)
+  and verified working on the same cluster the hand-rolled version was.
+
 ## [0.3.0], The single-main rollout and the backup story
 
 Single-main rollouts made real (`n8n_main_strategy`, Recreate by default),
@@ -1139,7 +1202,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.3.1...HEAD
+[0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
 [0.3.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.0
 [0.2.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.1
 [0.2.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.0

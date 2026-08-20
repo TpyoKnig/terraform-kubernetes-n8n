@@ -68,7 +68,10 @@ kubectl -n n8n create secret generic ai-assistant-secrets \
   --from-literal=brave-api-key='...'
 ```
 
-Then:
+Then (the `sandbox-api` Service name below assumes the sandbox chart was
+installed with `fullnameOverride=sandbox`, as `examples/homelab-ai-assistant`'s
+README does; without the override the chart names it
+`<release>-n8n-sandbox-service-api`):
 
 ```hcl
 module "n8n" {
@@ -123,17 +126,32 @@ has reported success, so the symptom is pods in `CreateContainerConfigError`.
   execution leaves the cluster.
 - **`n8n-sandbox`** points at
   [`n8n-io/n8n-sandbox-service`](https://github.com/n8n-io/n8n-sandbox-service)
-  running in your own cluster. Its Helm chart requires
-  `runtimeClassName: sysbox-runc` on the nodes, so the node runtime is the real
-  prerequisite, not the chart.
+  running in your own cluster.
 
-Sysbox installs by writing to the host's containerd configuration, which rules
-it out on an immutable-rootfs distribution such as Talos or Flatcar. The
-service's `compose.yaml` topology, which uses privileged Docker-in-Docker
-rather than sysbox, has no such requirement and translates to plain manifests.
-That trades isolation for portability: a privileged container can see the
-node's cgroup tree, so it is a defensible choice for a namespace running your
-own AI-generated code and not for a shared or multi-tenant cluster.
+The chart's default runner isolation is `sysbox`, under a `sysbox-runc`
+RuntimeClass. Sysbox installs by writing to the host's containerd
+configuration and restarting kubelet, targeting Ubuntu-style mutable
+containerd config, which an immutable-rootfs distribution such as Talos,
+Bottlerocket, Flatcar or Fedora CoreOS has no supported way to accept.
+
+As of chart 0.4.0 (upstream
+[n8n-io/n8n-sandbox-service#126](https://github.com/n8n-io/n8n-sandbox-service/pull/126))
+`runner.isolation: privileged` is a first-class alternative: the same
+Docker-in-Docker runner, running with `privileged: true` instead of under
+sysbox, which any node can schedule. The render refuses to proceed until you
+set `runner.acknowledgePrivileged = true`; an escape from the runner container
+reaches the node, so the trade-off is intentionally not a silent default. This
+superseded an earlier hand-rolled translation of the service's
+`compose.yaml` topology into plain manifests, which existed only because
+chart 0.3.x had no privileged option at all - the manifests are no longer
+needed now that the chart covers the same case, and the chart's own
+validation, TLS wiring and upgrade path beat maintaining a fork.
+
+`examples/homelab-ai-assistant` works the full path end to end: the namespace's
+required Pod Security Admission level, the cert-manager self-signed CA chain
+`tls.mode: certManager` needs, and the exact `helm upgrade --install` this
+example doesn't run for you (the chart is not published to a Helm repository
+yet, so nothing in this repository can pin a version against it declaratively).
 
 Whichever way it runs, the sandbox needs to be reachable from the n8n pods at
 `N8N_SANDBOX_SERVICE_URL`. If the namespaces enforce `NetworkPolicy`, that path
