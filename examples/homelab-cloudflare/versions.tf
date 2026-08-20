@@ -22,7 +22,7 @@ terraform {
     }
     kubectl = {
       source  = "gavinbunney/kubectl"
-      version = ">= 1.14"
+      version = "~> 1.14"
     }
     # Only used when cloudflare_zone_id is set (dns.tf). Pinned below 4.52.7 to
     # match examples/cloudflare: that release broke api_token when the value

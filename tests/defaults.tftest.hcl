@@ -3499,6 +3499,89 @@ run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
   expect_failures = [var.cnpg_max_connections]
 }
 
+# Upstream's supported tags name the image type and distribution, and the bare
+# major it defaults to here is the deprecated spelling. Rejecting the supported
+# form would leave the module on the tags that are going away.
+run "cnpg_postgres_image_tag_accepts_a_qualified_upstream_tag" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10-minimal-trixie"
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.imageName == "ghcr.io/cloudnative-pg/postgresql:16.10-minimal-trixie"
+    error_message = "The tag is interpolated into imageName verbatim, whatever shape it is."
+  }
+}
+
+# A registry or a digest in this input produces an imageName that resolves to
+# something other than what it reads as, which is a pull failure at run time
+# rather than a plan error.
+run "cnpg_postgres_image_tag_rejects_a_digest" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+
+  expect_failures = [var.cnpg_postgres_image_tag]
+}
+
+# A dot is a separator between suffix segments here, never a segment of its
+# own. Both spellings below are well-formed image references that a registry
+# would accept the shape of and then fail to resolve, which surfaces as
+# ImagePullBackOff on the Postgres pod rather than as anything at plan time.
+# The validation is deliberately narrower than the reference grammar so that
+# the typo stops here instead.
+run "cnpg_postgres_image_tag_rejects_a_stray_dot" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10-."
+  }
+
+  expect_failures = [var.cnpg_postgres_image_tag]
+}
+
+run "cnpg_postgres_image_tag_rejects_a_doubled_dot" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10-minimal..trixie"
+  }
+
+  expect_failures = [var.cnpg_postgres_image_tag]
+}
+
+# 128 characters is the limit the reference grammar puts on a tag. A longer one
+# is not a pull that fails but a reference that never parses: the pod reports
+# InvalidImageName, no registry is contacted, and nothing points back here.
+run "cnpg_postgres_image_tag_rejects_one_past_the_length_limit" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10-${join("", [for i in range(123) : "a"])}"
+  }
+
+  expect_failures = [var.cnpg_postgres_image_tag]
+}
+
+# The same tag one character shorter is accepted, so the guard is a boundary
+# rather than a ceiling that also catches what it should let through.
+run "cnpg_postgres_image_tag_accepts_the_longest_legal_tag" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16.10-${join("", [for i in range(122) : "a"])}"
+  }
+
+  assert {
+    condition     = length(var.cnpg_postgres_image_tag) == 128
+    error_message = "This run exists to pin the boundary at exactly 128 characters; if the string is not that long it is testing nothing."
+  }
+}
+
 # ── Binary data mode ──────────────────────────────────────────────────────────
 
 # The output used to be the string "filesystem" regardless of configuration,

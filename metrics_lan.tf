@@ -1,12 +1,19 @@
 # Copyright (c) 2026 TpyoKnig
 # SPDX-License-Identifier: MIT
 
-# ── Optional LAN-exposed Service for the n8n main pod's /metrics endpoint ─────
+# ── Optional LAN-exposed Service for the n8n main pod ─────────────────────────
 # Off by default. Lets an off-cluster Prometheus (e.g. a compose stack on a
 # bastion) scrape metrics without k8s-API-proxy discovery or in-cluster
 # Prometheus Operator. The n8n release otherwise sits behind the cluster's
 # ingress controller, which does not route /metrics; this Service goes straight
 # to the main pod instead.
+#
+# It publishes the port, not the path. n8n serves /metrics on its ordinary HTTP
+# port, the same 5678 the editor and the REST API answer on, so anything that
+# can reach this address can reach the application, not just its metrics. A
+# Service selects by port and has no notion of a path, so narrowing it would
+# take an HTTP proxy in front. Named for what it is used for and documented for
+# what it exposes.
 
 resource "kubernetes_service_v1" "n8n_main_metrics_lan" {
   count = coalesce(var.metrics_lan_expose.enabled, false) ? 1 : 0

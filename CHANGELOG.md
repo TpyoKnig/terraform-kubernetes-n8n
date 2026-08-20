@@ -178,6 +178,62 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Narrowed the `gavinbunney/kubectl` constraint from `>= 1.14` to `~> 1.14` in
+  every root, the only unbounded provider constraint in the repo. It applies
+  every custom resource the module applies itself (the CNPG `Cluster` and
+  `Pooler`, and the `ClusterIssuer` in `modules/tls-letsencrypt`), so a future
+  2.0 arriving on an unrelated apply is not a risk worth carrying. The worker
+  `ScaledObject` is a custom resource too, but the chart renders it, so the
+  Helm release owns that one and this constraint has no bearing on it. Lock
+  files refreshed.
+
+- `cnpg_postgres_image_tag` gains a validation, which accepts the qualified
+  upstream tags (`16.10-minimal-trixie` and the like) as well as the bare
+  `16` and `16.10`, and rejects an empty string, a leading `v`, a tag carrying
+  a registry or digest, a dot that does not sit between two alphanumerics, and
+  anything past the 128 characters the reference grammar allows a tag. Before
+  this validation, each of those rendered an `imageName` that failed on the
+  pod, as a pull error or, past the length limit, as a reference the runtime
+  cannot parse at all; they are now plan errors instead. The dot rule is narrower than the reference grammar, which
+  would accept those spellings and leave them to 404; the tags upstream
+  publishes are a known set, so the typo is worth catching at plan. The description now says what the default
+  rolling tag actually does: a newly created instance pulls whatever minor the
+  tag points at, but a running cluster does not roll, because the tag string
+  does not change and CloudNativePG has no new image reference to act on. To
+  take a minor deliberately, bump the tag or drive it from an ImageCatalog. Nor
+  is even a recreated instance guaranteed to move: a rolling tag resolves at
+  pull time and the default pull policy for a non-latest tag is IfNotPresent,
+  so an instance recreated on a node that already cached this tag keeps the
+  minor that node cached. It also records that the bare spellings are
+  deprecated upstream in favour of the ones naming the image type and
+  distribution, and that CNPG's in-place major upgrade is supported only
+  between images on the same operating system distribution.
+
+- Corrected comments and descriptions that misdescribed the code: the values
+  assembly banner claimed the chart 1.11.0 schema while the pin is 1.10.0;
+  `postgres_cnpg.tf` cited `existing_eks_cluster_prerequisites_confirmed`, an
+  input belonging to this module's AWS sibling that has never existed here; the
+  `n8n_additional_domains` ceiling was justified by an ACM quota on a platform
+  with no ACM; `metrics_lan_expose` was described as exposing `/metrics`
+  when a Service selects a port, so it publishes the editor and REST API on
+  5678 alongside it, in `docs/operations.md` as well as in the input's own
+  description; and `k8s_keda_installed` said that attesting KEDA it does not
+  have leaves the `ScaledObject` unreconciled, which holds only where the CRDs
+  outlived the operator - with the CRDs gone the Helm release fails on an
+  unknown kind. `kubernetes_secret.n8n` now says why three of its four
+  keys are not secret, and why that does not make the object safe to read.
+  The "Out of scope" list in the README classified the same failure on the
+  wrong axis, and named three of the six prerequisites it lists.
+
+- Removed `random_password.task_runner_token`, which was generated once when
+  the resource was first created, persisted in state from then on, and
+  referenced by nothing. Its comment described it
+  as the shared secret between the task broker and the runner sidecars, which
+  sent anyone debugging a runner authentication problem to a value that had
+  never reached a pod. The chart mints that token itself and looks up the
+  existing Secret first, so it survives an upgrade rather than rotating, and
+  the broker and runner are containers in the same pod and cannot skew.
+
 - `n8n_webhook_hpa_enabled = false` now removes the webhook processor's
   autoscaler on the KEDA path as well. The input's documented purpose is to let
   a caller attach their own policy, and off the KEDA path it worked, because

@@ -43,8 +43,15 @@ terraform {
     # defers that to apply. This is the module's default for every custom
     # resource, not a one-off for CNPG: see AGENTS.md.
     kubectl = {
-      source  = "gavinbunney/kubectl"
-      version = ">= 1.14"
+      source = "gavinbunney/kubectl"
+      # Pessimistic like the other four, rather than the open ">= 1.14" this
+      # carried. An unbounded constraint is an invitation for a future 2.0 to
+      # arrive on an unrelated apply, and every custom resource this module
+      # applies itself goes through it: the CNPG Cluster, the Pooler, and the
+      # ClusterIssuer in modules/tls-letsencrypt. (The worker ScaledObject is a
+      # custom resource too, but the chart renders it, so the Helm release owns
+      # that one and this constraint has no bearing on it.)
+      version = "~> 1.14"
     }
     time = {
       source  = "hashicorp/time"

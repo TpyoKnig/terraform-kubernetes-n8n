@@ -59,10 +59,44 @@ resource "kubectl_manifest" "cnpg_cluster" {
   # allowlist unnecessary.
   server_side_apply = true
 
-  # CRD must exist before this applies. The module does not install the CNPG
-  # operator; that is a cluster-wide prerequisite the caller confirms via
-  # existing_eks_cluster_prerequisites_confirmed (analogously to the
-  # BYO-cluster path).
+  # The Cluster CRD must exist before this applies. The module does not install
+  # the CloudNativePG operator, for the reason AGENTS.md gives for every
+  # cluster-wide operator: it is a singleton serving every workload on the
+  # cluster, and a module that installed one would own upgrading and destroying
+  # it on behalf of workloads it cannot see.
+  #
+  # Unlike KEDA there is no attestation input for it either, and the ways it
+  # can be missing are worth telling apart, because only one of them is quiet.
+  #
+  #   - Nothing installed. The CRD is gone with the operator, so this apply
+  #     fails outright with the API server naming the unknown kind. The error
+  #     already says what is wrong.
+  #   - Operator scaled down or crash-looping with its webhook configurations
+  #     still registered. CNPG's admission webhooks fail closed, so the API
+  #     server rejects this manifest with a webhook call failure rather than
+  #     applying it. Loud, if cryptic.
+  #   - CRD present and no webhook configuration to answer for it: an operator
+  #     uninstalled leaving its CRDs behind, or a partial install. Here the
+  #     manifest applies cleanly, nothing reconciles it, and the apply reports
+  #     success. This is the KEDA-shaped failure, and this module does not
+  #     detect it.
+  #
+  # In that last case a Cluster being created for the first time gets no
+  # Postgres pods and no Service; a Cluster the operator had already reconciled
+  # keeps its running pods and Service and simply stops having changes acted
+  # on. The tell is the absence of a controller: no CNPG controller pod running
+  # in whichever namespace the operator was installed into, cnpg-system by
+  # convention rather than by rule. Check that directly rather than reading the
+  # Cluster's status, because `status` is a persisted field on the resource and
+  # nothing clears it when the operator goes: a cluster that was healthy when
+  # the operator was removed still reports `readyInstances` equal to
+  # `spec.instances` while nothing is reconciling it. A short or absent
+  # `readyInstances` narrows it down on a Cluster that never came up, but its
+  # being correct proves nothing.
+  #
+  # (An earlier version of this comment cited
+  # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this
+  # module's AWS sibling and has never existed here.)
   depends_on = [kubernetes_namespace.n8n]
 }
 

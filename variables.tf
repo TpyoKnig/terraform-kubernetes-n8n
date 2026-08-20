@@ -60,11 +60,21 @@ variable "n8n_additional_domains" {
     error_message = "n8n_additional_domains must not contain duplicates."
   }
 
-  # ACM's default quota is 10 names per certificate, the primary domain
-  # included, so 9 is the most that can be added here.
+  # The ceiling is inherited from this module's AWS sibling, where ACM's
+  # default quota of 10 names per certificate made 9 the most that could be
+  # added. Nothing on this platform enforces that number: Let's Encrypt allows
+  # 100 names per certificate and cert-manager imposes no limit of its own, so
+  # the real constraint is whichever issuer you named in
+  # k8s_ingress_cluster_issuer.
+  #
+  # Kept anyway, as a typo guard rather than a quota. Ten hostnames on one n8n
+  # deployment is already unusual, and every name here lands on one Certificate
+  # whose issuance is all-or-nothing: a single name whose DNS is wrong fails
+  # the whole SAN set, so a long list turns one mistake into a total outage.
+  # Raise it deliberately if you genuinely need more.
   validation {
     condition     = length(var.n8n_additional_domains) <= 9
-    error_message = "At most 9 additional domains are supported (ACM allows 10 names per certificate including n8n_domain)."
+    error_message = "At most 9 additional domains are supported, so 10 hostnames in total. This is a deliberate ceiling rather than a platform limit: Let's Encrypt allows 100 names per certificate. Every name here shares one Certificate, and issuance is all-or-nothing, so one name with wrong DNS fails the whole set."
   }
 }
 
@@ -92,7 +102,7 @@ variable "n8n_encryption_key" {
 }
 
 variable "n8n_encryption_key_secret_ref" {
-  description = "Existing Kubernetes Secret carrying N8N_ENCRYPTION_KEY, instead of supplying the value through n8n_encryption_key. Different in shape from the other three secret-reference inputs below: the chart's secretRefs.existingSecret (n8n.tf) names a single Secret that n8n.coreSecretsEnv reads FOUR keys from, N8N_ENCRYPTION_KEY, N8N_HOST, N8N_PORT and N8N_PROTOCOL, so setting this input points the chart at your Secret for all four, not just the encryption key, and your Secret must carry every one of them: N8N_HOST is var.n8n_domain, N8N_PORT is \"5678\", N8N_PROTOCOL is \"http\". See README.md -> \"Where credentials live\" for a worked ExternalSecret example with a template block supplying those three literals alongside the fetched key. key defaults to \"N8N_ENCRYPTION_KEY\" and exists only for shape parity with the other three secret-reference inputs: the chart hardcodes the key name it reads on this path, so this module rejects any other value at plan time rather than silently ignoring it. Setting this input also gates kubernetes_secret.n8n to zero, since secretRefs.existingSecret replaces that whole Secret rather than one key inside it. The task runner auth token is unaffected, since it is never in a Secret at all: it reaches the chart as a literal Helm value regardless of this input. Setting this alongside n8n_encryption_key is rejected at plan time. The module does not verify that the referenced Secret exists or carries the required keys: a missing key surfaces only as a pod stuck in CreateContainerConfigError, not as a Terraform error."
+  description = "Existing Kubernetes Secret carrying N8N_ENCRYPTION_KEY, instead of supplying the value through n8n_encryption_key. Different in shape from the other three secret-reference inputs below: the chart's secretRefs.existingSecret (n8n.tf) names a single Secret that n8n.coreSecretsEnv reads FOUR keys from, N8N_ENCRYPTION_KEY, N8N_HOST, N8N_PORT and N8N_PROTOCOL, so setting this input points the chart at your Secret for all four, not just the encryption key, and your Secret must carry every one of them: N8N_HOST is var.n8n_domain, N8N_PORT is \"5678\", N8N_PROTOCOL is \"http\". An ExternalSecret feeding this needs a template block supplying those three literals alongside the fetched key. key defaults to \"N8N_ENCRYPTION_KEY\" and exists only for shape parity with the other three secret-reference inputs: the chart hardcodes the key name it reads on this path, so this module rejects any other value at plan time rather than silently ignoring it. Setting this input also gates kubernetes_secret.n8n to zero, since secretRefs.existingSecret replaces that whole Secret rather than one key inside it. The task runner auth token is unaffected, and is not this module's to supply either way: the chart mints it into a Secret of its own and looks that Secret up before minting, so it survives a helm upgrade rather than rotating. Setting this alongside n8n_encryption_key is rejected at plan time. The module does not verify that the referenced Secret exists or carries the required keys: a missing key surfaces only as a pod stuck in CreateContainerConfigError, not as a Terraform error."
   type = object({
     name = string
     key  = optional(string)
@@ -858,10 +868,47 @@ variable "cnpg_storage_class" {
 }
 
 variable "cnpg_postgres_image_tag" {
-  description = "Postgres image tag for CNPG (ghcr.io/cloudnative-pg/postgresql:<tag>). Only used when postgres_backend = \"cnpg\"."
+  description = "Postgres image tag for CNPG (ghcr.io/cloudnative-pg/postgresql:<tag>). Only used when postgres_backend = \"cnpg\". Defaults to the major version alone, which is a rolling tag: whatever minor it points at is what a newly created instance pulls. Note what that does and does not do. It does not roll a running cluster, because the tag string does not change and CloudNativePG has no new image reference to act on; the newer minor arrives whenever an instance is next recreated for some other reason. Nor is even that guaranteed, since a rolling tag resolves at pull time and the default pull policy for a non-latest tag is IfNotPresent: an instance recreated on a node that already cached this tag keeps the minor that node cached, so two instances of the same cluster can sit on different minors. To take a minor deliberately, bump this to the version you want, which does change the Cluster spec and does trigger CNPG's controlled rolling restart, or drive it from an operator ImageCatalog instead. Leaving this unpinned while n8n_image_tag is pinned is deliberate: a PostgreSQL minor is security and bug fixes only and is data and wire compatible with the rest of its major, while an n8n upgrade runs one-way schema migrations. Upstream also publishes tags carrying the image type and distribution, `16.10-minimal-trixie` and the like, and documents those as the supported form; the bare `16` and `16.10` spellings are deprecated and are to be removed when the bullseye images reach end of life, so a qualified tag is the more durable choice even though the default here is still the bare major. Changing the MAJOR version is a different matter entirely, and not one this module guards. Current CloudNativePG treats a higher major declared here as a request for an offline in-place upgrade: it shuts down every pod in the cluster, replicas included, runs pg_upgrade in a job, and brings the cluster back on the new major. The database is unavailable for the whole of it, so this is not an edit to make casually from tfvars. If the job fails, reverting this input to the previous major lets the operator drop the failed job and restart on the original version, and no data is modified in the attempt. It is also conditional: CNPG supports the in-place path only between images built on the same operating system distribution, so a bump that also crosses from bullseye to bookworm or trixie is not this upgrade whatever the version numbers say, and the extensions on both sides being compatible is your responsibility rather than the operator's. Take a backup first and rehearse it somewhere that does not matter. Operators old enough to lack the in-place path, anyone crossing distributions, and anyone who cannot take the downtime, need the blue/green route instead: a second Cluster and either a dump/restore or logical replication."
   type        = string
   default     = "16"
   nullable    = false
+
+  validation {
+    # A version, optionally followed by the image type, distribution and build
+    # timestamp the upstream tags carry: "16", "16.10", "16-minimal-trixie",
+    # "16.10-standard-bookworm", "16.10-202511051200-minimal-trixie". The
+    # suffixes are deliberately not enumerated, because the set of types and
+    # distributions changes without this module having any say in it.
+    #
+    # What this does reject is the shapes that quietly resolve to something
+    # else: an empty string (which renders a trailing colon and no tag, an
+    # invalid reference rather than a floating one), a leading "v", and a tag
+    # carrying a registry or a digest.
+    #
+    # Each suffix segment has to start with an alphanumeric, which is what
+    # keeps "16.10-." and "16.10-minimal..trixie" out. That is a house rule
+    # rather than the reference grammar. The OCI production for a tag is
+    # [a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}, which admits both of those, and
+    # underscores besides, as well-formed references that simply have nothing
+    # behind them upstream. n8n_image_tag validates against that real grammar,
+    # because any string at all can be a legitimate tag on a custom n8n build.
+    # Here the set of tags upstream publishes is narrow and known, so the
+    # tighter rule turns a typo into a plan error instead of a pod sat on
+    # ImagePullBackOff. The cost is that it would also reject a legal tag in
+    # some shape upstream has not used yet; widen it if that day comes.
+    condition     = can(regex("^[0-9]+(\\.[0-9]+)?(-[0-9A-Za-z]+(\\.[0-9A-Za-z]+)*)*$", var.cnpg_postgres_image_tag))
+    error_message = "cnpg_postgres_image_tag must start with a PostgreSQL major (\"16\") or major.minor (\"16.10\"), optionally followed by the image type and distribution (\"16.10-minimal-trixie\"). No leading \"v\", no digest, no empty string, and no dot that does not sit between two alphanumerics. That last one is stricter than a registry would be, deliberately: the tag is interpolated straight into the Cluster's imageName, where anything upstream does not publish surfaces as a pod that cannot pull rather than as a plan error."
+  }
+
+  validation {
+    # The image reference grammar caps a tag at 128 characters, and the runtime
+    # parses the reference before it contacts anything, so a longer one is not
+    # a pull that fails, it is a reference that never parses: the pod reports
+    # InvalidImageName and no registry is ever asked. Nothing in that names the
+    # input that produced it.
+    condition     = length(var.cnpg_postgres_image_tag) <= 128
+    error_message = "cnpg_postgres_image_tag must be 128 characters or fewer, which is the limit the image reference grammar sets on a tag. A longer one does not fail as a pull error: the container runtime cannot parse the reference at all, and the pod reports InvalidImageName."
+  }
 }
 
 variable "cnpg_lan_expose" {
@@ -1123,7 +1170,7 @@ variable "valkey_storage_class" {
 }
 
 variable "metrics_lan_expose" {
-  description = "Expose n8n-main port 5678 on a LoadBalancer address so a Prometheus outside the cluster can scrape /metrics without k8s-API-proxy setup. Requires n8n_metrics_enabled = true to serve useful data. Requesting a specific address is allocator-specific, exactly as for cnpg_lan_expose: ip renders the io.cilium/lb-ipam-ips annotation that only Cilium LB-IPAM reads, and annotations carries whatever key another allocator honours. n8n's metrics endpoint is unauthenticated by design, so this belongs on a trusted network or not at all."
+  description = "Expose the n8n main pod's HTTP port (5678) on a LoadBalancer address so a Prometheus outside the cluster can scrape /metrics without k8s-API-proxy setup. Requires n8n_metrics_enabled = true for /metrics to serve anything useful. Note what is actually exposed: n8n serves metrics on its ordinary HTTP port, the same one the editor and the REST API answer on, so this Service publishes the whole application to that network and not only the metrics path. There is no way to expose one path here, because the split would have to happen in an HTTP proxy and a Service routes by port. Requesting a specific address is allocator-specific, exactly as for cnpg_lan_expose: ip renders the io.cilium/lb-ipam-ips annotation that only Cilium LB-IPAM reads, and annotations carries whatever key another allocator honours. Both the metrics endpoint and the editor behind it are unauthenticated at this layer, so this belongs on a trusted network or not at all."
   # ponytail: this reads like an Observability input, but it lives here next to
   # cnpg_lan_expose, its structural twin, so the two LAN-exposure objects
   # can be compared without jumping banners.
@@ -2009,7 +2056,7 @@ variable "k8s_capacity_check_enabled" {
 # ── KEDA: worker pods ─────────────────────────────────────────────────────────
 
 variable "k8s_keda_installed" {
-  description = "Attests that the KEDA operator is already installed cluster-wide, which lets the module scale workers on Redis queue depth instead of CPU. Default false: the chart's CPU-based worker HPA scales workers, which lags a burst because queued executions do not raise worker CPU until a worker picks them up. Set true and the chart renders a KEDA ScaledObject bounded by the same n8n_worker_keda_* inputs, and its CPU worker HPA is disabled so the two never both own the worker Deployment. This is an attestation rather than a lookup on purpose: a data source probing for the KEDA CRD resolves at refresh time, which would make the whole scaling branch unknown at plan and defeat the mocked test suite. The module does not install KEDA: it installs no cluster-wide operator it does not own. If this is true and KEDA is absent, the ScaledObject applies and never reconciles: workers stay pinned at their floor. tests/scripts/smoke-test.sh asserts the ScaledObject's Ready condition for exactly that reason."
+  description = "Attests that the KEDA operator is already installed cluster-wide, which lets the module scale workers on Redis queue depth instead of CPU. Default false: the chart's CPU-based worker HPA scales workers, which lags a burst because queued executions do not raise worker CPU until a worker picks them up. Set true and the chart renders a KEDA ScaledObject bounded by the same n8n_worker_keda_* inputs, and its CPU worker HPA is disabled so the two never both own the worker Deployment. This is an attestation rather than a lookup on purpose: a data source probing for the KEDA CRD resolves at refresh time, which would make the whole scaling branch unknown at plan and defeat the mocked test suite. The module does not install KEDA: it installs no cluster-wide operator it does not own. If this is true and KEDA is absent, what happens depends on what is left of it: with the CRDs gone the Helm release fails on an unknown kind, and with the CRDs still installed but nothing serving them the ScaledObject applies, reports success, and never reconciles, leaving workers pinned at their floor. tests/scripts/smoke-test.sh asserts the ScaledObject's Ready condition for exactly that reason."
   type        = bool
   default     = false
   nullable    = false

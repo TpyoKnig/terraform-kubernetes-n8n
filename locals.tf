@@ -360,7 +360,7 @@ locals {
   k8s_redis_secret_name         = local.valkey_enabled ? local.valkey_secret_name : (var.redis_auth_token_secret_ref == null ? "n8n-redis-secret" : var.redis_auth_token_secret_ref.name)
   k8s_redis_secret_password_key = local.valkey_enabled ? "redis-password" : (local.redis_auth_token_secret_ref_key != null ? local.redis_auth_token_secret_ref_key : "password")
 
-  # ── k8s-backend Helm values assembly (chart 1.11.0 schema) ─────────────────
+  # ── k8s-backend Helm values assembly (chart 1.10.0 schema) ─────────────────
   # Ported from the fold-in of platforms/kubernetes/locals.tf. Every fragment
   # below is merged into local.k8s_values_final and only referenced from
   # helm_release.n8n (n8n.tf), so these
