@@ -7,6 +7,26 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `examples/homelab-ai-assistant`, the base deployment with n8n's AI Assistant
+  and Agents module turned on and wired to a `n8n-sandbox-service` code
+  sandbox. Documents (and tests) the n8n-side wiring only; the sandbox itself
+  is a caller prerequisite, same as the ingress controller or the CNPG
+  operator, because its Helm chart is not published to a chart repository yet.
+  The README walks through standing it up with `runner.isolation: privileged`,
+  the config verified end to end on Talos and the other immutable-rootfs
+  distributions that cannot install the chart's default sysbox isolation.
+
+### Changed
+
+- `docs/ai-assistant.md`'s Sandbox section replaced: it previously pointed
+  Talos readers at a hand-rolled Docker-in-Docker translation of the sandbox's
+  `compose.yaml` topology. That path is superseded by `n8n-sandbox-service`
+  chart 0.4.0's own `runner.isolation: privileged`, upstream as of
+  [n8n-io/n8n-sandbox-service#126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)
+  and verified working on the same cluster the hand-rolled version was.
+
 ## [0.3.0], The single-main rollout and the backup story
 
 Single-main rollouts made real (`n8n_main_strategy`, Recreate by default),

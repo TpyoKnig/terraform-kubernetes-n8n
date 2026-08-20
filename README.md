@@ -222,6 +222,7 @@ would need leader election, which n8n gates behind a licence.
 | [`homelab-godaddy`](./examples/homelab-godaddy/) | The same, for a GoDaddy zone: a plain A record to a routable ingress address. Use when your ingress is publicly reachable; use the Cloudflare one when it is not. |
 | [`homelab-split-ingress`](./examples/homelab-split-ingress/) | Editor and production webhooks on separate hostnames, with caller-owned `Ingress` objects, so an identity-aware proxy can front the editor without breaking webhook delivery. |
 | [`homelab-cloudflare-split-ingress`](./examples/homelab-cloudflare-split-ingress/) | The split topology behind a Cloudflare Tunnel: a proxied DNS record per hostname, the proxy-hop count the tunnel adds, and a `ReadWriteMany` volume shared across the main, worker and webhook-processor pods so binary data survives the split. |
+| [`homelab-ai-assistant`](./examples/homelab-ai-assistant/) | The base deployment with n8n's AI Assistant and Agents module turned on, wired to a `n8n-sandbox-service` code-execution sandbox running in-cluster via `runner.isolation: privileged` - the config that works on Talos and other immutable-rootfs distributions where the chart's default sysbox isolation cannot install. |
 
 No sizing-tier examples on purpose. On this platform the tiers differ by a handful of values the table above already gives you.
 
