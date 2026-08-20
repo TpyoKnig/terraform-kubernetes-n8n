@@ -237,6 +237,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- `n8n_encryption_key_secret_ref` now reaches the chart. Setting it always
+  gated the module-owned `n8n-secrets` Secret to zero, exactly as documented,
+  but `secretRefs.existingSecret` stayed hardcoded to `"n8n-secrets"` instead
+  of following the caller's Secret name, so the chart was pointed at a Secret
+  nothing created: every pod sat in `CreateContainerConfigError`, and the
+  Secret the caller actually wrote was never read. The input had no test on
+  either path; three runs now cover the wiring, the default, and the
+  renamed-key rejection.
+
 - Narrowed the `gavinbunney/kubectl` constraint from `>= 1.14` to `~> 1.14` in
   every root, the only unbounded provider constraint in the repo. It applies
   every custom resource the module applies itself (the CNPG `Cluster` and
