@@ -7,6 +7,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.1], The AI Assistant example and the broker that never started
+
+The `homelab-ai-assistant` example (n8n's AI Assistant and Agents module
+wired to an in-cluster `n8n-sandbox-service`, the `runner.isolation:
+privileged` path that works on Talos and other immutable-rootfs
+distributions), a rewrite of `docs/ai-assistant.md`'s stale Sandbox
+section, and one production fix: `n8n_task_runners_enabled` rendered the
+runner sidecar without emitting `N8N_RUNNERS_ENABLED`, so the task
+broker never started and Code nodes silently ran in n8n's own process.
+Upgrading a deployment with task runners enabled rolls main, worker and
+webhook-processor (the env list changes), and code execution moves into
+the sidecar - where it was documented to be all along.
+
 ### Added
 
 - `n8n_runners_enabled` starts n8n's task broker without the sidecar, for
@@ -1189,7 +1202,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.3.1...HEAD
+[0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
 [0.3.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.0
 [0.2.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.1
 [0.2.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.0

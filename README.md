@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.0"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.1"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -240,11 +240,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.3.0` is the current release: single-main rollouts made real (`n8n_main_strategy`, Recreate by default), node drains unblocked (both PodDisruptionBudgets default off where they could only refuse), a CNPG backup story (`cnpg_backup`, `cnpg_plugins`, PostgreSQL 18 by default), the chart's NetworkPolicy as a typed input, and the #35–#53 fix sweep for inputs that never reached the chart. Three defaults moved — the n8n image tag is now pinned, the main rolls by Recreate, and a fresh CNPG cluster runs PostgreSQL 18 — so read the changelog's migration notes before taking it: an existing cluster created on the old Postgres default must pin `cnpg_postgres_image_tag = "16"` first, and a deployment that relied on the floating `stable` tag now upgrades n8n only when you bump the pin. Older tags stay where they are and keep working as exact pins.
+`0.3.1` is the current release: the `homelab-ai-assistant` example (n8n's AI Assistant and Agents module wired to an in-cluster `n8n-sandbox-service` on the `runner.isolation: privileged` path that works on Talos), a rewrite of `docs/ai-assistant.md`'s stale Sandbox section, and a fix for task runners — `n8n_task_runners_enabled` rendered the runner sidecar without emitting `N8N_RUNNERS_ENABLED`, so the task broker never started and Code nodes silently ran in n8n's own process. Upgrading a deployment with task runners enabled rolls main, worker and webhook-processor, and code execution moves into the sidecar. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
 
 Still pre-1.0, so a minor bump may break the input surface. `~> 0.3` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
