@@ -107,14 +107,14 @@ variable "keda_installed" {
 }
 
 variable "proxy_hops" {
-  description = "How many proxies append to X-Forwarded-For between the client and an n8n pod (N8N_PROXY_HOPS). The default of 1 counts ingress-nginx alone, which is what this example assumes and what the module itself uses when it owns the Ingress. Count your own chain and raise it: a Cloudflare Tunnel, a CDN, a WAF or an outer reverse proxy each add one, so fronting this example with Cloudflare makes it 2. A wrong count is as bad as none: too low and n8n reads a proxy address as the client, too high and it reads a value the client could have forged. Every rate limit, audit log line and IP-based restriction depends on it."
+  description = "How many proxies append to X-Forwarded-For between the client and an n8n pod (N8N_PROXY_HOPS). The default of 1 counts ingress-nginx alone, which is what this example assumes and what the module itself uses when it owns the Ingress. Count your own chain and raise it: a Cloudflare Tunnel, a CDN, a WAF or an outer reverse proxy each add one, so fronting this example with Cloudflare makes it 2. A wrong count is as bad as none: too low and n8n reads a proxy address as the client, too high and it reads a value the client could have forged. Every rate limit and IP-based restriction keyed on the client address depends on it, and n8n logs no per-request source IP that would reveal a wrong count."
   type        = number
   default     = 1
   nullable    = false
 
   validation {
     condition     = var.proxy_hops >= 1 && var.proxy_hops <= 10 && floor(var.proxy_hops) == var.proxy_hops
-    error_message = "proxy_hops must be a whole number between 1 and 10. At least 1 because this example creates its own Ingresses, so ingress-nginx is always in the chain and there is always a hop to count: 0 would tell n8n to treat the controller's own address as the client, which silently defeats every IP allowlist, rate limit and audit log line. At most 10 because the module's n8n_proxy_hops caps there, and a chain that long is a typo rather than a topology; without the same bound here the value would pass this variable and fail inside the module, naming an input you did not set."
+    error_message = "proxy_hops must be a whole number between 1 and 10. At least 1 because this example creates its own Ingresses, so ingress-nginx is always in the chain and there is always a hop to count: 0 would tell n8n to treat the controller's own address as the client, which silently defeats every IP allowlist and rate limit keyed on the client address. At most 10 because the module's n8n_proxy_hops caps there, and a chain that long is a typo rather than a topology; without the same bound here the value would pass this variable and fail inside the module, naming an input you did not set."
   }
 }
 

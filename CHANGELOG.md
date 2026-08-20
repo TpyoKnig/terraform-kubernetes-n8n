@@ -42,7 +42,8 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   answer only when nothing proxies to the pods; behind an Ingress the
   connecting address is always the controller's, so trusting no
   `X-Forwarded-For` entry makes every request look like it came from one host
-  and quietly defeats IP allowlists, rate limits and audit logging.
+  and quietly defeats IP allowlists and anything else keyed on the client
+  address — invisibly, since n8n logs no per-request source IP.
 
   The check reads whether an Ingress is really rendered rather than
   `create_ingress` alone, because `n8n_extra_helm_values` is merged last and
@@ -193,8 +194,8 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   at all when `create_ingress = false`. A caller running their own routing is
   behind a proxy just the same, so on that path n8n trusted no
   `X-Forwarded-For` entry and attributed every request to the ingress
-  controller's own address, which quietly flattens every rate limit, audit log
-  line and IP-based restriction to a single source. Both split-ingress examples
+  controller's own address, which quietly flattens every rate limit and
+  IP-based restriction keyed on the client address to a single source. Both split-ingress examples
   had worked around it by setting the name through `n8n_extra_env`, which is
   the escape hatch doing a typed input's job.
 
