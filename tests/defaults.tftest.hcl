@@ -1899,6 +1899,11 @@ run "cnpg_backup_reaches_the_cluster_spec" {
   command = plan
 
   variables {
+    # A system image, so check.cnpg_backup_needs_barman_in_the_image stays
+    # quiet: this run tests the passthrough, not the image pairing, which has
+    # runs of its own below.
+    cnpg_postgres_image_tag = "16"
+
     cnpg_backup = {
       retentionPolicy = "30d"
       barmanObjectStore = {
@@ -1954,6 +1959,138 @@ run "cnpg_backup_on_the_external_backend_is_warned_about" {
   }
 
   expect_failures = [check.cnpg_backup_needs_the_cnpg_backend]
+}
+
+# ── CNPG-I plugins ────────────────────────────────────────────────────────────
+# The passthrough to spec.plugins, wired the same way cnpg_backup is and
+# covered the same way: present when set, absent when not, malformed shapes
+# named at plan, and silence on the external path warned about.
+run "the_cnpg_cluster_writes_no_plugins_stanza_by_default" {
+  command = plan
+
+  assert {
+    condition     = !contains(keys(yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec), "plugins")
+    error_message = "With cnpg_plugins unset, the Cluster spec must carry no plugins key at all: an empty stanza claims plugins and names none."
+  }
+}
+
+run "cnpg_plugins_reach_the_cluster_spec" {
+  command = plan
+
+  variables {
+    cnpg_plugins = [
+      {
+        name          = "barman-cloud.cloudnative-pg.io"
+        isWALArchiver = true
+        parameters    = { barmanObjectName = "n8n-backup-store" }
+      }
+    ]
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.plugins[0].name == "barman-cloud.cloudnative-pg.io"
+    error_message = "cnpg_plugins must be passed through to spec.plugins verbatim; the first entry's name did not survive the trip."
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.plugins[0].isWALArchiver == true
+    error_message = "The passthrough must not reshape entries: isWALArchiver is what makes the plugin the archive command's owner, and dropping it silently changes who archives."
+  }
+}
+
+run "cnpg_plugins_reject_an_empty_list" {
+  command = plan
+
+  variables {
+    cnpg_plugins = []
+  }
+
+  expect_failures = [var.cnpg_plugins]
+}
+
+run "cnpg_plugins_reject_an_entry_without_a_name" {
+  command = plan
+
+  variables {
+    cnpg_plugins = [{ isWALArchiver = true }]
+  }
+
+  expect_failures = [var.cnpg_plugins]
+}
+
+# The truth-test companion to the run above: a name that is present but empty
+# dispatches to nothing just as surely, and it is the case a can()-wrapped
+# alltrue would wave through, because can() tests only that the expression
+# evaluates.
+run "cnpg_plugins_reject_an_entry_with_an_empty_name" {
+  command = plan
+
+  variables {
+    cnpg_plugins = [{ name = "" }]
+  }
+
+  expect_failures = [var.cnpg_plugins]
+}
+
+run "cnpg_plugins_on_the_external_backend_are_warned_about" {
+  command = plan
+
+  variables {
+    postgres_backend = "external"
+    db_host          = "postgres.example.com"
+    db_password      = "not-a-real-password"
+
+    cnpg_plugins = [{ name = "barman-cloud.cloudnative-pg.io" }]
+  }
+
+  expect_failures = [check.cnpg_plugins_need_the_cnpg_backend]
+}
+
+# ── Barman binaries and the image type ───────────────────────────────────────
+# The in-tree spec.backup path runs barman-cloud binaries inside the operand
+# image, and only the deprecated bare-tag system images still carry them. The
+# default tag now names a minimal image, so the pairing that silently archives
+# nothing is one default away and worth a warning with both names in it.
+run "cnpg_backup_on_a_minimal_image_is_warned_about" {
+  command = plan
+
+  variables {
+    cnpg_backup = {
+      barmanObjectStore = {
+        destinationPath = "s3://n8n-backups/"
+      }
+    }
+  }
+
+  expect_failures = [check.cnpg_backup_needs_barman_in_the_image]
+}
+
+run "cnpg_backup_on_a_system_image_draws_no_barman_warning" {
+  command = plan
+
+  variables {
+    cnpg_postgres_image_tag = "16"
+
+    cnpg_backup = {
+      barmanObjectStore = {
+        destinationPath = "s3://n8n-backups/"
+      }
+    }
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.backup.barmanObjectStore.destinationPath == "s3://n8n-backups/"
+    error_message = "A bare-tag system image carries the barman-cloud binaries, so the in-tree backup on it is a working configuration and must pass without a warning."
+  }
+}
+
+run "the_default_image_tag_is_a_supported_upstream_spelling" {
+  command = plan
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.imageName == "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie"
+    error_message = "The default tag must be the qualified rolling major (18-minimal-trixie), not the deprecated bare spelling; got ${yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.imageName}."
+  }
 }
 
 
