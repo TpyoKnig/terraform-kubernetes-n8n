@@ -94,8 +94,26 @@ resource "kubernetes_namespace" "n8n" {
     }
   }
 
+  # Deleting a namespace does not return until every object inside it has
+  # finalized, and this namespace holds the slowest kind: a CloudNativePG
+  # Cluster tearing down, and PVCs whose provisioner has to detach and reclaim
+  # real volumes. Measured on a five-node Talos cluster with Longhorn, a
+  # default deployment took several minutes to finish, comfortably past the 2m
+  # this used to allow.
+  #
+  # The failure that bought was a `terraform destroy` reporting "context
+  # deadline exceeded" for a deletion that then completed on its own a few
+  # minutes later. The namespace stayed in state, so the destroy looked broken
+  # while the cluster was already clean, and the fix was to run it again and
+  # watch it succeed against a namespace that no longer existed.
+  #
+  # Ten minutes is not a promise the delete takes that long; the resource
+  # returns as soon as the namespace is gone. It is the point past which a
+  # namespace is genuinely wedged, usually on an unreachable APIService
+  # blocking discovery, rather than merely slow, and where failing is more
+  # useful than waiting.
   timeouts {
-    delete = "2m"
+    delete = "10m"
   }
 
 }
