@@ -102,7 +102,7 @@ The module doesn't verify any of this up front, and what a missing piece looks l
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "~> 0.2"
+  version = "~> 0.3"
 
   n8n_domain = "n8n.example.com"
 
@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.1"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.0"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -239,11 +239,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.2.1` is the current release: the PgBouncer pooler for the CNPG backend, binary data onto a shared volume, and the #23–#32 wiring-audit fixes for inputs that were silently discarded before reaching the chart. Upgrading rolls pods where the fixed values change the rendered chart: the executions settings start applying (see the changelog for per-input compatibility values), and — from `0.1.0` — any deployment with task runners enabled rolls main, worker and webhook-processor, because the idle-shutdown fix moved a value out of `config.extraEnv` that every n8n container carried. Older tags stay where they are and keep working as exact pins.
+`0.3.0` is the current release: single-main rollouts made real (`n8n_main_strategy`, Recreate by default), node drains unblocked (both PodDisruptionBudgets default off where they could only refuse), a CNPG backup story (`cnpg_backup`, `cnpg_plugins`, PostgreSQL 18 by default), the chart's NetworkPolicy as a typed input, and the #35–#53 fix sweep for inputs that never reached the chart. Three defaults moved — the n8n image tag is now pinned, the main rolls by Recreate, and a fresh CNPG cluster runs PostgreSQL 18 — so read the changelog's migration notes before taking it: an existing cluster created on the old Postgres default must pin `cnpg_postgres_image_tag = "16"` first, and a deployment that relied on the floating `stable` tag now upgrades n8n only when you bump the pin. Older tags stay where they are and keep working as exact pins.
 
-Still pre-1.0, so a minor bump may break the input surface. `~> 0.2` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
+Still pre-1.0, so a minor bump may break the input surface. `~> 0.3` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.2.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
