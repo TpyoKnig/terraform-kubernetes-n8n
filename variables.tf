@@ -102,7 +102,7 @@ variable "n8n_encryption_key" {
 }
 
 variable "n8n_encryption_key_secret_ref" {
-  description = "Existing Kubernetes Secret carrying N8N_ENCRYPTION_KEY, instead of supplying the value through n8n_encryption_key. Different in shape from the other three secret-reference inputs below: the chart's secretRefs.existingSecret (n8n.tf) names a single Secret that n8n.coreSecretsEnv reads FOUR keys from, N8N_ENCRYPTION_KEY, N8N_HOST, N8N_PORT and N8N_PROTOCOL, so setting this input points the chart at your Secret for all four, not just the encryption key, and your Secret must carry every one of them: N8N_HOST is var.n8n_domain, N8N_PORT is \"5678\", N8N_PROTOCOL is \"http\". See README.md -> \"Where credentials live\" for a worked ExternalSecret example with a template block supplying those three literals alongside the fetched key. key defaults to \"N8N_ENCRYPTION_KEY\" and exists only for shape parity with the other three secret-reference inputs: the chart hardcodes the key name it reads on this path, so this module rejects any other value at plan time rather than silently ignoring it. Setting this input also gates kubernetes_secret.n8n to zero, since secretRefs.existingSecret replaces that whole Secret rather than one key inside it. The task runner auth token is unaffected, and is not this module's to supply either way: the chart mints it into a Secret of its own and looks that Secret up before minting, so it survives a helm upgrade rather than rotating. Setting this alongside n8n_encryption_key is rejected at plan time. The module does not verify that the referenced Secret exists or carries the required keys: a missing key surfaces only as a pod stuck in CreateContainerConfigError, not as a Terraform error."
+  description = "Existing Kubernetes Secret carrying N8N_ENCRYPTION_KEY, instead of supplying the value through n8n_encryption_key. Different in shape from the other three secret-reference inputs below: the chart's secretRefs.existingSecret (n8n.tf) names a single Secret that n8n.coreSecretsEnv reads FOUR keys from, N8N_ENCRYPTION_KEY, N8N_HOST, N8N_PORT and N8N_PROTOCOL, so setting this input points the chart at your Secret for all four, not just the encryption key, and your Secret must carry every one of them: N8N_HOST is var.n8n_domain, N8N_PORT is \"5678\", N8N_PROTOCOL is \"http\". An ExternalSecret feeding this needs a template block supplying those three literals alongside the fetched key. key defaults to \"N8N_ENCRYPTION_KEY\" and exists only for shape parity with the other three secret-reference inputs: the chart hardcodes the key name it reads on this path, so this module rejects any other value at plan time rather than silently ignoring it. Setting this input also gates kubernetes_secret.n8n to zero, since secretRefs.existingSecret replaces that whole Secret rather than one key inside it. The task runner auth token is unaffected, and is not this module's to supply either way: the chart mints it into a Secret of its own and looks that Secret up before minting, so it survives a helm upgrade rather than rotating. Setting this alongside n8n_encryption_key is rejected at plan time. The module does not verify that the referenced Secret exists or carries the required keys: a missing key surfaces only as a pod stuck in CreateContainerConfigError, not as a Terraform error."
   type = object({
     name = string
     key  = optional(string)
@@ -884,8 +884,30 @@ variable "cnpg_postgres_image_tag" {
     # else: an empty string (which renders a trailing colon and no tag, an
     # invalid reference rather than a floating one), a leading "v", and a tag
     # carrying a registry or a digest.
-    condition     = can(regex("^[0-9]+(\\.[0-9]+)?(-[0-9A-Za-z.]+)*$", var.cnpg_postgres_image_tag))
-    error_message = "cnpg_postgres_image_tag must start with a PostgreSQL major (\"16\") or major.minor (\"16.10\"), optionally followed by the image type and distribution (\"16.10-minimal-trixie\"). No leading \"v\", no digest, and no empty string: the tag is interpolated straight into the Cluster's imageName, so anything else surfaces as a pod that cannot pull rather than as a plan error."
+    #
+    # Each suffix segment has to start with an alphanumeric, which is what
+    # keeps "16.10-." and "16.10-minimal..trixie" out. That is a house rule
+    # rather than the reference grammar. The OCI production for a tag is
+    # [a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}, which admits both of those, and
+    # underscores besides, as well-formed references that simply have nothing
+    # behind them upstream. n8n_image_tag validates against that real grammar,
+    # because any string at all can be a legitimate tag on a custom n8n build.
+    # Here the set of tags upstream publishes is narrow and known, so the
+    # tighter rule turns a typo into a plan error instead of a pod sat on
+    # ImagePullBackOff. The cost is that it would also reject a legal tag in
+    # some shape upstream has not used yet; widen it if that day comes.
+    condition     = can(regex("^[0-9]+(\\.[0-9]+)?(-[0-9A-Za-z]+(\\.[0-9A-Za-z]+)*)*$", var.cnpg_postgres_image_tag))
+    error_message = "cnpg_postgres_image_tag must start with a PostgreSQL major (\"16\") or major.minor (\"16.10\"), optionally followed by the image type and distribution (\"16.10-minimal-trixie\"). No leading \"v\", no digest, no empty string, and no dot that does not sit between two alphanumerics. That last one is stricter than a registry would be, deliberately: the tag is interpolated straight into the Cluster's imageName, where anything upstream does not publish surfaces as a pod that cannot pull rather than as a plan error."
+  }
+
+  validation {
+    # The image reference grammar caps a tag at 128 characters, and the runtime
+    # parses the reference before it contacts anything, so a longer one is not
+    # a pull that fails, it is a reference that never parses: the pod reports
+    # InvalidImageName and no registry is ever asked. Nothing in that names the
+    # input that produced it.
+    condition     = length(var.cnpg_postgres_image_tag) <= 128
+    error_message = "cnpg_postgres_image_tag must be 128 characters or fewer, which is the limit the image reference grammar sets on a tag. A longer one does not fail as a pull error: the container runtime cannot parse the reference at all, and the pod reports InvalidImageName."
   }
 }
 
@@ -2034,7 +2056,7 @@ variable "k8s_capacity_check_enabled" {
 # ── KEDA: worker pods ─────────────────────────────────────────────────────────
 
 variable "k8s_keda_installed" {
-  description = "Attests that the KEDA operator is already installed cluster-wide, which lets the module scale workers on Redis queue depth instead of CPU. Default false: the chart's CPU-based worker HPA scales workers, which lags a burst because queued executions do not raise worker CPU until a worker picks them up. Set true and the chart renders a KEDA ScaledObject bounded by the same n8n_worker_keda_* inputs, and its CPU worker HPA is disabled so the two never both own the worker Deployment. This is an attestation rather than a lookup on purpose: a data source probing for the KEDA CRD resolves at refresh time, which would make the whole scaling branch unknown at plan and defeat the mocked test suite. The module does not install KEDA: it installs no cluster-wide operator it does not own. If this is true and KEDA is absent, the ScaledObject applies and never reconciles: workers stay pinned at their floor. tests/scripts/smoke-test.sh asserts the ScaledObject's Ready condition for exactly that reason."
+  description = "Attests that the KEDA operator is already installed cluster-wide, which lets the module scale workers on Redis queue depth instead of CPU. Default false: the chart's CPU-based worker HPA scales workers, which lags a burst because queued executions do not raise worker CPU until a worker picks them up. Set true and the chart renders a KEDA ScaledObject bounded by the same n8n_worker_keda_* inputs, and its CPU worker HPA is disabled so the two never both own the worker Deployment. This is an attestation rather than a lookup on purpose: a data source probing for the KEDA CRD resolves at refresh time, which would make the whole scaling branch unknown at plan and defeat the mocked test suite. The module does not install KEDA: it installs no cluster-wide operator it does not own. If this is true and KEDA is absent, what happens depends on what is left of it: with the CRDs gone the Helm release fails on an unknown kind, and with the CRDs still installed but nothing serving them the ScaledObject applies, reports success, and never reconciles, leaving workers pinned at their floor. tests/scripts/smoke-test.sh asserts the ScaledObject's Ready condition for exactly that reason."
   type        = bool
   default     = false
   nullable    = false

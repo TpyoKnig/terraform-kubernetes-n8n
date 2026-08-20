@@ -480,13 +480,18 @@ datasource or a migration tool can reach PostgreSQL without
 `kubectl port-forward`. It selects on `cnpg.io/instanceRole = primary`, so
 it follows a failover.
 
-`metrics_lan_expose` publishes the main pod's `/metrics` endpoint (pair it
-with `n8n_metrics_enabled = true`) for a Prometheus running off-cluster.
+`metrics_lan_expose` is for a Prometheus running off-cluster (pair it with
+`n8n_metrics_enabled = true`), but read what it exposes before you enable it.
+n8n serves `/metrics` on its ordinary HTTP port, 5678, the same port the
+editor and the REST API answer on, and a Service routes by port rather than
+by path. So this publishes the whole application to that network, not the
+metrics path alone. Narrowing it to one path would take an HTTP proxy in
+front; there is nothing to set here that does it.
 
-Neither puts authentication in front of the Service. PostgreSQL still
-demands its password and n8n's metrics endpoint is unauthenticated by
-design: keep both on a trusted VLAN, or leave them off and use
-`kubectl port-forward`.
+Neither Service has authentication in front of it. PostgreSQL at least still
+demands its password. The metrics endpoint does not, and neither does
+anything else on 5678 that n8n has not been configured to protect. Keep both
+on a trusted VLAN, or leave them off and use `kubectl port-forward`.
 
 ## Task runners
 

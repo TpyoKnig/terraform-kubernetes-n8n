@@ -179,15 +179,24 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Fixed
 
 - Narrowed the `gavinbunney/kubectl` constraint from `>= 1.14` to `~> 1.14` in
-  every root, the only unbounded provider constraint in the repo. It owns every
-  custom resource the module writes (the CNPG `Cluster` and `Pooler`, and the
-  `ClusterIssuer` in `modules/tls-letsencrypt`), so a future 2.0 arriving on an
-  unrelated apply is not a risk worth carrying. Lock files refreshed.
+  every root, the only unbounded provider constraint in the repo. It applies
+  every custom resource the module applies itself (the CNPG `Cluster` and
+  `Pooler`, and the `ClusterIssuer` in `modules/tls-letsencrypt`), so a future
+  2.0 arriving on an unrelated apply is not a risk worth carrying. The worker
+  `ScaledObject` is a custom resource too, but the chart renders it, so the
+  Helm release owns that one and this constraint has no bearing on it. Lock
+  files refreshed.
 
 - `cnpg_postgres_image_tag` gains a validation, which accepts the qualified
   upstream tags (`16.10-minimal-trixie` and the like) as well as the bare
-  `16` and `16.10`, and rejects an empty string, a leading `v`, and a tag
-  carrying a registry or digest. The description now says what the default
+  `16` and `16.10`, and rejects an empty string, a leading `v`, a tag carrying
+  a registry or digest, a dot that does not sit between two alphanumerics, and
+  anything past the 128 characters the reference grammar allows a tag. Each of
+  those renders an `imageName` that fails on the pod rather than in the plan,
+  as a pull error or, past the length limit, as a reference the runtime cannot
+  parse at all. The dot rule is narrower than the reference grammar, which
+  would accept those spellings and leave them to 404; the tags upstream
+  publishes are a known set, so the typo is worth catching at plan. The description now says what the default
   rolling tag actually does: a newly created instance pulls whatever minor the
   tag points at, but a running cluster does not roll, because the tag string
   does not change and CloudNativePG has no new image reference to act on. To
@@ -205,10 +214,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `postgres_cnpg.tf` cited `existing_eks_cluster_prerequisites_confirmed`, an
   input belonging to this module's AWS sibling that has never existed here; the
   `n8n_additional_domains` ceiling was justified by an ACM quota on a platform
-  with no ACM; and `metrics_lan_expose` was described as exposing `/metrics`
+  with no ACM; `metrics_lan_expose` was described as exposing `/metrics`
   when a Service selects a port, so it publishes the editor and REST API on
-  5678 alongside it. `kubernetes_secret.n8n` now says why three of its four
+  5678 alongside it, in `docs/operations.md` as well as in the input's own
+  description; and `k8s_keda_installed` said that attesting KEDA it does not
+  have leaves the `ScaledObject` unreconciled, which holds only where the CRDs
+  outlived the operator - with the CRDs gone the Helm release fails on an
+  unknown kind. `kubernetes_secret.n8n` now says why three of its four
   keys are not secret, and why that does not make the object safe to read.
+  The "Out of scope" list in the README classified the same failure on the
+  wrong axis, and named three of the six prerequisites it lists.
 
 - Removed `random_password.task_runner_token`, which was generated once when
   the resource was first created, persisted in state from then on, and
