@@ -9,6 +9,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `n8n_runners_enabled` starts n8n's task broker without the sidecar, for
+  n8n's internal launcher (a child process of n8n, JavaScript only) or for
+  task runners operated outside this module. Default false: the sidecar path
+  does not need it, because `n8n_task_runners_enabled` implies the broker (see
+  Fixed below), so on a default deployment this toggle adds nothing and stays
+  off until broker-without-sidecar is a deliberate choice. Either toggle is
+  the only door to the variable - the `N8N_RUNNERS_` prefix reservation on
+  `n8n_extra_env` and `n8n_extra_env_from_secret` rejects
+  `N8N_RUNNERS_ENABLED` at plan time, now pinned by tests for both inputs.
+
 - `examples/homelab-ai-assistant`, the base deployment with n8n's AI Assistant
   and Agents module turned on and wired to a `n8n-sandbox-service` code
   sandbox. Documents (and tests) the n8n-side wiring only; the sandbox itself
@@ -33,7 +43,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   never listened on 5679, the sidecar sat on "Waiting for task broker to be
   ready..." with zero registrations, and Code nodes ran inside n8n's own
   process. Observed live: executions succeed, the pod is 2/2 Ready, and the
-  isolation the sidecar exists for is silently absent.
+  isolation the sidecar exists for is silently absent. The sidecar toggle now
+  implies the broker (an OR with `n8n_runners_enabled`, not a second knob to
+  forget), a test pins the emission, and the existing disabled-path test
+  proves both toggles off emits nothing.
 
 ### Changed
 

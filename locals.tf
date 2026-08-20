@@ -1223,8 +1223,17 @@ locals {
         # task broker to be ready...", and Code nodes run inside n8n's own
         # process. Nothing fails: the pod is 2/2 Ready and executions succeed,
         # minus the isolation the sidecar exists to provide.
-        var.n8n_task_runners_enabled ? [
+        #
+        # An OR, not two emissions: the sidecar implies the broker (a sidecar
+        # without one is exactly the dead state above), and n8n_runners_enabled
+        # turns the broker on alone, for n8n's internal launcher or runners
+        # operated outside this module. Omitted when both are off, which is
+        # n8n's own default. The N8N_RUNNERS_ prefix reservation on the two
+        # extra-env inputs keeps these toggles the only door to this name.
+        var.n8n_task_runners_enabled || var.n8n_runners_enabled ? [
           { name = "N8N_RUNNERS_ENABLED", value = "true" },
+        ] : [],
+        var.n8n_task_runners_enabled ? [
           { name = "N8N_RUNNERS_TASK_REQUEST_TIMEOUT", value = tostring(var.n8n_task_runner_request_timeout) },
         ] : [],
 
