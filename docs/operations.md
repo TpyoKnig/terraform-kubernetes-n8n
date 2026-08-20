@@ -443,6 +443,11 @@ resource "kubectl_manifest" "n8n_pg_backup" {
       # a ScheduledBackup left on the default there produces nothing.
     }
   })
+
+  # Same setting as the module's own CNPG resources, for the same reason:
+  # the operator manages fields on this object after creation, and a
+  # client-side apply would fight it for ownership on every later apply.
+  server_side_apply = true
 }
 ```
 
