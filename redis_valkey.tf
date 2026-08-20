@@ -94,10 +94,12 @@ resource "helm_release" "valkey" {
   # re-use a name that is still in use" and needs a manual `helm uninstall`
   # before it can proceed. atomic purges the failed install instead, leaving
   # nothing to collide with. The n8n release was given it after exactly that
-  # happened; this one was left behind, and it is the more awkward half to
-  # recover by hand, because the queue is what the n8n release then waits on
-  # and a wedged Valkey presents as an n8n rollout timing out rather than as
-  # anything naming Valkey.
+  # happened; this one was left behind. helm_release.n8n sits behind an
+  # explicit depends_on on this release, so a wedged Valkey does at least fail
+  # loudly under its own name: the apply that strands it reports this
+  # release's timeout, and every later one fails on the occupied release name
+  # before the n8n release is attempted. What the stranding costs is that no
+  # apply can proceed at all until someone runs the manual uninstall.
   #
   # cleanup_on_fail is upgrade-only: "allow deletion of new resources created
   # in this upgrade when upgrade fails", in the provider's own words. Helm's
@@ -109,12 +111,14 @@ resource "helm_release" "valkey" {
   # What atomic costs, since it is the one carrying the weight: it also rolls
   # a failed or timed-out upgrade back to the previous revision rather than
   # leaving it half-applied. That is the behaviour worth having on a queue, but
-  # it is a trade rather than a cure. If the rollback itself does not finish
-  # inside the same timeout, Helm leaves the release in pending-rollback and
-  # later applies fail with "another operation (install/upgrade/rollback) is in
-  # progress" until someone runs `helm rollback` by hand. helm_release.n8n has
-  # carried that same exposure since it got the pair, so this adds no new kind
-  # of failure, only the same one on a second release.
+  # it is a trade rather than a cure. A rollback that itself fails or times
+  # out is recorded by Helm as a failed revision: `helm history` shows the
+  # sequence, and a manual `helm rollback` recovers it. The stuck
+  # pending-rollback state, whose later applies fail with "another operation
+  # (install/upgrade/rollback) is in progress", arises only when the process
+  # is killed mid-rollback, not from the timeout. helm_release.n8n has carried
+  # that same exposure since it got the pair, so this adds no new kind of
+  # failure, only the same one on a second release.
   atomic          = true
   cleanup_on_fail = true
 }

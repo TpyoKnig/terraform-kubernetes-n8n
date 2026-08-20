@@ -250,10 +250,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `atomic` is the one that fixes the stranding. Without it a Valkey install
   that exceeds its timeout stays in the cluster while Terraform records no
   state for it, and every later apply fails with "cannot re-use a name that is
-  still in use" until someone runs `helm uninstall` by hand. It is the more
-  awkward half to diagnose, because the n8n release then waits on a queue that
-  never arrives and reports its own timeout rather than anything naming
-  Valkey.
+  still in use" until someone runs `helm uninstall` by hand. The failure at
+  least carries Valkey's name throughout: `helm_release.n8n` sits behind an
+  explicit `depends_on` on this release, so the stranding apply reports the
+  Valkey timeout itself and every later one fails on the occupied release name
+  before the n8n release is attempted. What the stranding costs is that no
+  apply can proceed at all until the manual uninstall.
 
   `cleanup_on_fail` is upgrade-only ("allow deletion of new resources created
   in this upgrade when upgrade fails"); Helm's install action has no such
@@ -263,10 +265,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
   `atomic` also changes how a failed *upgrade* behaves: it is rolled back to
   the previous revision rather than left half-applied. That is a trade rather
-  than a cure. A rollback that does not itself finish inside the timeout leaves
-  the release in `pending-rollback`, and later applies fail with "another
-  operation (install/upgrade/rollback) is in progress" until someone runs
-  `helm rollback` by hand. `helm_release.n8n` has had that exposure since it
+  than a cure. A rollback that itself fails or times out is recorded by Helm
+  as a failed revision: `helm history` shows the sequence and a manual
+  `helm rollback` recovers it. The stuck `pending-rollback` state, whose later
+  applies fail with "another operation (install/upgrade/rollback) is in
+  progress", arises only when the process is killed mid-rollback, not from
+  the timeout. `helm_release.n8n` has had that exposure since it
   got the pair, so this is the same failure on a second release rather than a
   new one.
 
