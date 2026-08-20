@@ -1580,6 +1580,14 @@ locals {
   # the same canonical locals the workload reads, so the scaling client and the
   # execution client cannot drift apart.
   #
+  # Confirmed live against an external Valkey on a non-default port with
+  # password auth: the rendered trigger address follows redis_port, no
+  # enableTLS key appears when transit encryption is off, passwordFromEnv
+  # names an env var that really exists on the worker container, the
+  # ScaledObject reports Ready with real queue-depth numbers even at rest,
+  # and a burst of queued webhooks scaled the workers from their floor of 1
+  # to the configured max of 3.
+  #
   # No TriggerAuthentication resource is needed here: the chart already
   # exposes keda.worker.triggers, so passwordFromEnv resolves the AUTH token from
   # QUEUE_BULL_REDIS_PASSWORD on the worker pod that the chart already sets. The

@@ -90,7 +90,11 @@ resource "kubectl_manifest" "cnpg_cluster" {
       # actively moving onto, and a typed input would freeze one snapshot of
       # it. The Barman Cloud Plugin's ObjectStore resource and the plugin's
       # own installation stay with the caller; the module renders only what
-      # the Cluster spec itself carries.
+      # the Cluster spec itself carries. The whole path has been exercised
+      # end to end against a real 1.30.0 operator: the list renders verbatim
+      # on the Cluster, ContinuousArchiving goes True through the plugin, and
+      # a `method: plugin` Backup completes into the bucket, all following
+      # the docs/operations.md worked example with no deviation.
       var.cnpg_plugins == null ? {} : { plugins = var.cnpg_plugins },
     )
   })
@@ -242,6 +246,16 @@ check "cnpg_plugins_need_the_cnpg_backend" {
 # configuration read as done. Gated on barmanObjectStore being present, not on
 # cnpg_backup alone: a backup stanza carrying only volumeSnapshot settings
 # runs no barman-cloud and is fine on any image type.
+#
+# The first two halves of that story have been watched happen on a real
+# cluster: ContinuousArchiving goes True on a bare-tag system image with the
+# base backup and WAL segments landing in the bucket, and the default minimal
+# tag fails every attempt with `"barman-cloud-check-wal-archive": executable
+# file not found in $PATH`, reported in exactly that status condition and
+# nowhere else while the database itself runs fine. The volumeSnapshot-only
+# case is the one that same live pass caught the old over-broad condition
+# mis-firing on — which is why the gate reads barmanObjectStore rather than
+# cnpg_backup alone; its warning-free plan is pinned by the mocked suite.
 check "cnpg_backup_needs_barman_in_the_image" {
   assert {
     condition     = local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) ? !can(regex("-(minimal|standard)(-|$)", var.cnpg_postgres_image_tag)) : true

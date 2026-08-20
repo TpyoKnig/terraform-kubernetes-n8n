@@ -101,6 +101,13 @@ resource "helm_release" "valkey" {
   # before the n8n release is attempted. What the stranding costs is that no
   # apply can proceed at all until someone runs the manual uninstall.
   #
+  # The install-side fix has since been watched doing its job on a real
+  # cluster: a deliberately failed install (a StorageClass that does not
+  # exist, so the PVC sat Pending into the timeout) ended with Helm reporting
+  # the release "uninstalled due to atomic being set", an empty
+  # `helm list -a`, and the corrected apply creating the release in seconds
+  # with no name collision.
+  #
   # cleanup_on_fail is upgrade-only: "allow deletion of new resources created
   # in this upgrade when upgrade fails", in the provider's own words. Helm's
   # install action has no such option at all. It does nothing for the failure

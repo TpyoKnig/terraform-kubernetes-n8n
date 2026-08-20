@@ -445,6 +445,11 @@ resource "kubectl_manifest" "n8n_backup_store" {
 }
 ```
 
+This example is not aspirational: it has been applied verbatim against a real
+1.30.0 operator, and `spec.plugins` rendered as written, `ContinuousArchiving`
+went `True` through the plugin, and a `method: plugin` `Backup` completed into
+the bucket.
+
 Do not set a `cnpg_backup` carrying `barmanObjectStore` and a WAL-archiving
 plugin on the same cluster: both claim the archive command, and a plan-time
 check warns about the combination. The base-backup half moves too: a `Backup` or
