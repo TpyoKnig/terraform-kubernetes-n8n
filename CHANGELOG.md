@@ -234,6 +234,46 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   existing Secret first, so it survives an upgrade rather than rotating, and
   the broker and runner are containers in the same pod and cannot skew.
 
+- Raised the namespace delete timeout from 2 minutes to 10. Deleting a
+  namespace blocks until everything inside it finalizes, and this one holds a
+  CloudNativePG Cluster tearing down plus PVCs whose provisioner has to detach
+  and reclaim real volumes. On a five-node Talos cluster with Longhorn that
+  took several minutes, so `terraform destroy` reported "context deadline
+  exceeded" for a deletion that completed on its own shortly afterwards. The
+  namespace stayed in state, leaving a destroy that looked broken against a
+  cluster that was already clean, recoverable only by running it again and
+  watching it succeed against a namespace that no longer existed.
+
+- `helm_release.valkey` now sets `atomic` and `cleanup_on_fail`, which
+  `helm_release.n8n` has carried since a timed-out install stranded it.
+
+  `atomic` is the one that fixes the stranding. Without it a Valkey install
+  that exceeds its timeout stays in the cluster while Terraform records no
+  state for it, and every later apply fails with "cannot re-use a name that is
+  still in use" until someone runs `helm uninstall` by hand. The failure at
+  least carries Valkey's name throughout: `helm_release.n8n` sits behind an
+  explicit `depends_on` on this release, so the stranding apply reports the
+  Valkey timeout itself and every later one fails on the occupied release name
+  before the n8n release is attempted. What the stranding costs is that no
+  apply can proceed at all until the manual uninstall.
+
+  `cleanup_on_fail` is upgrade-only ("allow deletion of new resources created
+  in this upgrade when upgrade fails"); Helm's install action has no such
+  option. It does nothing for the failure above and is set so that a failed
+  upgrade does not leave behind objects belonging to a revision that was then
+  rolled back.
+
+  `atomic` also changes how a failed *upgrade* behaves: it is rolled back to
+  the previous revision rather than left half-applied. That is a trade rather
+  than a cure. A rollback that itself fails or times out is recorded by Helm
+  as a failed revision: `helm history` shows the sequence and a manual
+  `helm rollback` recovers it. The stuck `pending-rollback` state, whose later
+  applies fail with "another operation (install/upgrade/rollback) is in
+  progress", arises only when the process is killed mid-rollback, not from
+  the timeout. `helm_release.n8n` has had that exposure since it
+  got the pair, so this is the same failure on a second release rather than a
+  new one.
+
 - `n8n_webhook_hpa_enabled = false` now removes the webhook processor's
   autoscaler on the KEDA path as well. The input's documented purpose is to let
   a caller attach their own policy, and off the KEDA path it worked, because

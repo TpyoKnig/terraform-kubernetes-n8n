@@ -82,4 +82,43 @@ resource "helm_release" "valkey" {
 
   timeout = 600
   wait    = true
+
+  # The same pair helm_release.n8n carries, and for the same reason. The two
+  # flags cover different operations, and only one of them addresses the
+  # failure this release actually hit, so they are worth telling apart rather
+  # than treating as a pair that does one thing.
+  #
+  # atomic is the install-side fix, and does all of the work here. Without it
+  # an install that exceeds the timeout leaves the release in the cluster while
+  # Terraform records no state for it, so every later apply fails with "cannot
+  # re-use a name that is still in use" and needs a manual `helm uninstall`
+  # before it can proceed. atomic purges the failed install instead, leaving
+  # nothing to collide with. The n8n release was given it after exactly that
+  # happened; this one was left behind. helm_release.n8n sits behind an
+  # explicit depends_on on this release, so a wedged Valkey does at least fail
+  # loudly under its own name: the apply that strands it reports this
+  # release's timeout, and every later one fails on the occupied release name
+  # before the n8n release is attempted. What the stranding costs is that no
+  # apply can proceed at all until someone runs the manual uninstall.
+  #
+  # cleanup_on_fail is upgrade-only: "allow deletion of new resources created
+  # in this upgrade when upgrade fails", in the provider's own words. Helm's
+  # install action has no such option at all. It does nothing for the failure
+  # above, and is set because a failed upgrade should not leave behind objects
+  # belonging to a revision that was rolled back. Dropping atomic and keeping
+  # this one would restore the original wedge in full.
+  #
+  # What atomic costs, since it is the one carrying the weight: it also rolls
+  # a failed or timed-out upgrade back to the previous revision rather than
+  # leaving it half-applied. That is the behaviour worth having on a queue, but
+  # it is a trade rather than a cure. A rollback that itself fails or times
+  # out is recorded by Helm as a failed revision: `helm history` shows the
+  # sequence, and a manual `helm rollback` recovers it. The stuck
+  # pending-rollback state, whose later applies fail with "another operation
+  # (install/upgrade/rollback) is in progress", arises only when the process
+  # is killed mid-rollback, not from the timeout. helm_release.n8n has carried
+  # that same exposure since it got the pair, so this adds no new kind of
+  # failure, only the same one on a second release.
+  atomic          = true
+  cleanup_on_fail = true
 }
