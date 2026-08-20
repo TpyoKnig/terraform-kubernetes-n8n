@@ -321,7 +321,8 @@ run "webhook_url_reaches_the_pods_on_the_kubernetes_backend" {
 # Secret, while locals.tf hardcoded "n8n-secrets". With the module Secret
 # count-gated to zero on this path, the chart was pointed at a Secret nothing
 # created, and every pod sat in CreateContainerConfigError while the Secret
-# the caller wrote was never read.
+# the caller wrote was never read, unless it was itself named "n8n-secrets"
+# and the hardcoded string happened to resolve to it.
 run "the_encryption_key_secret_ref_reaches_the_chart" {
   command = plan
 

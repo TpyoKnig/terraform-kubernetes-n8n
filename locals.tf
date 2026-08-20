@@ -387,7 +387,9 @@ locals {
   # module Secret is count-gated to zero, so the name here has to follow the
   # gate: pointing the chart at "n8n-secrets" while not creating it left every
   # pod stuck in CreateContainerConfigError on a Secret that did not exist,
-  # while the Secret the caller actually wrote was never read.
+  # while the Secret the caller actually wrote was never read. The one caller
+  # the bug spared was one whose own Secret was itself named "n8n-secrets",
+  # where the hardcoded name happened to resolve to the right object.
   k8s_values_secret_refs = {
     secretRefs = {
       existingSecret = var.n8n_encryption_key_secret_ref != null ? var.n8n_encryption_key_secret_ref.name : "n8n-secrets"
