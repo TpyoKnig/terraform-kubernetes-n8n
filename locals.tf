@@ -380,12 +380,17 @@ locals {
     )
   }
 
-  # secretRefs.existingSecret points the chart at the module-owned Secret in
-  # n8n.tf (kubernetes_secret.n8n) so N8N_ENCRYPTION_KEY / N8N_HOST / N8N_PORT
-  # / N8N_PROTOCOL reach the pods.
+  # secretRefs.existingSecret names the one Secret the chart's coreSecretsEnv
+  # helper reads N8N_ENCRYPTION_KEY / N8N_HOST / N8N_PORT / N8N_PROTOCOL from:
+  # the module-owned Secret in n8n.tf (kubernetes_secret.n8n), or the caller's
+  # own Secret when n8n_encryption_key_secret_ref names one. On that path the
+  # module Secret is count-gated to zero, so the name here has to follow the
+  # gate: pointing the chart at "n8n-secrets" while not creating it left every
+  # pod stuck in CreateContainerConfigError on a Secret that did not exist,
+  # while the Secret the caller actually wrote was never read.
   k8s_values_secret_refs = {
     secretRefs = {
-      existingSecret = "n8n-secrets"
+      existingSecret = var.n8n_encryption_key_secret_ref != null ? var.n8n_encryption_key_secret_ref.name : "n8n-secrets"
     }
   }
 

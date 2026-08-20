@@ -316,6 +316,63 @@ run "webhook_url_reaches_the_pods_on_the_kubernetes_backend" {
   }
 }
 
+# The wiring this asserts was documented long before it existed: the variable
+# description promised secretRefs.existingSecret would follow the caller's
+# Secret, while locals.tf hardcoded "n8n-secrets". With the module Secret
+# count-gated to zero on this path, the chart was pointed at a Secret nothing
+# created, and every pod sat in CreateContainerConfigError while the Secret
+# the caller wrote was never read.
+run "the_encryption_key_secret_ref_reaches_the_chart" {
+  command = plan
+
+  variables {
+    n8n_encryption_key_secret_ref = { name = "caller-n8n-secrets" }
+  }
+
+  assert {
+    condition     = local.k8s_values_secret_refs.secretRefs.existingSecret == "caller-n8n-secrets"
+    error_message = "secretRefs.existingSecret must name the caller's Secret when n8n_encryption_key_secret_ref is set; got ${local.k8s_values_secret_refs.secretRefs.existingSecret}."
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n) == 0
+    error_message = "The module Secret must not be created when the caller supplies their own: the chart reads all four keys from one Secret, and two Secrets means one of them is dead."
+  }
+
+  assert {
+    condition     = length(random_id.n8n_encryption_key) == 0
+    error_message = "No encryption key may be generated when the caller's Secret carries it: a module-held value that differs from the served one is worse than none."
+  }
+}
+
+# The default path, pinned so the conditional above cannot drift: with no ref,
+# the chart reads the module-owned Secret and that Secret exists.
+run "the_default_path_serves_the_module_secret" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_secret_refs.secretRefs.existingSecret == "n8n-secrets"
+    error_message = "With no n8n_encryption_key_secret_ref, secretRefs.existingSecret must stay on the module-owned Secret; got ${local.k8s_values_secret_refs.secretRefs.existingSecret}."
+  }
+
+  assert {
+    condition     = length(kubernetes_secret.n8n) == 1
+    error_message = "The module Secret must exist on the default path: it is the Secret the chart is pointed at."
+  }
+}
+
+# The chart hardcodes the key name it reads on this path, so any other key is
+# rejected at plan rather than accepted and ignored.
+run "the_encryption_key_secret_ref_rejects_a_renamed_key" {
+  command = plan
+
+  variables {
+    n8n_encryption_key_secret_ref = { name = "caller-n8n-secrets", key = "ENCRYPTION_KEY" }
+  }
+
+  expect_failures = [var.n8n_encryption_key_secret_ref]
+}
+
 run "webhook_url_can_name_a_different_host_than_the_editor" {
   command = plan
 
