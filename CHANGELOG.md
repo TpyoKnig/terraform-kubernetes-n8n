@@ -7,6 +7,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Removed
+
+- `N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input 0.3.1 added. The
+  variable is deprecated in n8n 2.x and inert: setting it logs a deprecation
+  warning and nothing else. `n8n_task_runners_enabled` renders the sidecar and
+  the request timeout, as it did in 0.3.0.
+
 ## [0.3.1], The AI Assistant example and the broker that never started
 
 The `homelab-ai-assistant` example (n8n's AI Assistant and Agents module

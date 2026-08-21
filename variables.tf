@@ -697,16 +697,9 @@ variable "n8n_prestop_sleep" {
 # ── Task runners ──────────────────────────────────────────────────────────────
 
 variable "n8n_task_runners_enabled" {
-  description = "Enable task runner sidecars for isolated JavaScript and Python code execution. Implies the task broker: setting this renders N8N_RUNNERS_ENABLED=true on every n8n container regardless of n8n_runners_enabled, because a sidecar without the broker is the silent failure this module once shipped - the runner renders, registers with nothing, and Code nodes run in n8n's own process while the pod reports Ready."
+  description = "Enable task runner sidecars for isolated JavaScript and Python code execution"
   type        = bool
   default     = true
-  nullable    = false
-}
-
-variable "n8n_runners_enabled" {
-  description = "Emit N8N_RUNNERS_ENABLED=true without the sidecar, starting n8n's task broker on its own. Only meaningful when n8n_task_runners_enabled = false: n8n then runs Code nodes through its internal launcher (a child process of n8n itself, JavaScript only - the base image ships no Python), or serves task runners you operate outside this module. The sidecar path does not need this - n8n_task_runners_enabled already implies the broker - which is why the default is false: on its own this variable adds nothing to a default deployment, so it stays off until a caller wants broker-without-sidecar deliberately. When both are false the variable is omitted and n8n's own default (off) applies. N8N_RUNNERS_ENABLED cannot be set through n8n_extra_env or n8n_extra_env_from_secret; the N8N_RUNNERS_ prefix is reserved there precisely so this toggle is the only door."
-  type        = bool
-  default     = false
   nullable    = false
 }
 
