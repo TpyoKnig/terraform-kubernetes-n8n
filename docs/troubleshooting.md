@@ -426,18 +426,24 @@ original worker keeps running at its configured `--concurrency`.
 module's old default of `100` before the default changed, see CHANGELOG).
 n8n 2.44.5's `worker.ts` reads `N8N_CONCURRENCY_PRODUCTION_LIMIT` before the
 worker's own `--concurrency` flag, and uses the flag only when that env var
-is `-1`. Any other value overrides `n8n_worker_concurrency` on **every**
-worker instance-wide: the whole pool is capped at that one number of
-in-flight production executions, regardless of replica count. A single
-worker already running at the limit leaves every other replica with nothing
-to pick up.
+is `-1`. Any other value overrides `n8n_worker_concurrency` with that same
+number on every worker independently, not as a shared pool-wide cap: each
+worker's own Bull consumer pulls jobs off the queue up to its own ceiling,
+with no coordination between workers. A high per-worker ceiling (100) lets
+whichever worker is already running absorb far more of a burst than
+`n8n_worker_keda_jobs_per_replica` expects before queue depth ever crosses
+the threshold that would make KEDA add capacity worth using: by the time a
+new replica is `Running` and `Ready`, the one worker that was already
+pulling jobs may have already claimed most or all of what arrived.
 
 ### Fix
 
 Set `n8n_execution_concurrency_limit = -1` (the module's current default) so
-each worker is bounded only by its own `n8n_worker_concurrency`, and total
-pool capacity becomes `replicas x n8n_worker_concurrency`. See
-[operations.md → How worker concurrency and scale-out interact](./operations.md#how-worker-concurrency-and-scale-out-interact).
+each worker is bounded only by its own `n8n_worker_concurrency`, which is
+small enough (10 by default) that no single worker can absorb a large burst
+alone, and total pool capacity becomes `replicas x n8n_worker_concurrency`.
+See [operations.md → How worker concurrency and scale-out
+interact](./operations.md#how-worker-concurrency-and-scale-out-interact).
 
 ## `terraform plan` fails with `Get "http://localhost/...": connect: connection refused`
 
@@ -555,11 +561,15 @@ the trace never covers the time a job spent waiting in the queue.
 ### Fix
 
 Measure the wait where it exists, not from inside n8n. Watch the Bull queue
-directly:
+directly. The in-cluster Valkey backend requires the `default` user's
+password from the `<release>-redis-auth` Secret (chart's `auth.enabled`),
+so an unauthenticated `valkey-cli` gets `NOAUTH`:
 
 ```bash
+password=$(kubectl get secret -n <namespace> <release>-redis-auth \
+  -o jsonpath='{.data.default}' | base64 -d)
 kubectl exec -n <namespace> <valkey-pod> -- \
-  valkey-cli LLEN bull:jobs:wait
+  valkey-cli -a "$password" --no-auth-warning LLEN bull:jobs:wait
 ```
 
 A depth that grows while workers are busy is queue wait, and the levers are
@@ -592,8 +602,9 @@ before the deployment self-recovered.
 
 Raise `n8n_redis_timeout_threshold` to ride out an outage of that length;
 60000 (60 seconds) was measured surviving a 48-second outage, while 30000
-was measured failing a 25-second one by 1.1 seconds (see the variable's
-own description for the full budget math). The default stays `null`:
+was measured failing a 25-second one (see the variable's own description
+for why the margin is slimmer against this failure mode than the budget
+formula implies). The default stays `null`:
 raising it module-wide means a real, longer outage leaves pods retrying
 against a dead endpoint instead of restarting, which is worse for callers
 who never hit this single-replica-Valkey case. Set it deliberately once

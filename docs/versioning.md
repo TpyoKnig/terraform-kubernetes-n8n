@@ -36,7 +36,7 @@ about any of them.
 | `valkey_chart_version` default | `variables.tf` | Minor-required |
 | `cnpg_postgres_image_tag` default | `variables.tf` | Not a pin to bump: `"18-minimal-trixie"` is a floating major tag by design (the variable's own description), and `ghcr.io/cloudnative-pg/postgresql` republishes it against the newest `18.x` minor on every image build. See "What this policy deliberately does not force" |
 | `TF_VERSION`, `TF_FLOOR_VERSION`, `TFLINT_VERSION`, `CHECKOV_VERSION`, `TERRAFORM_DOCS_VERSION` | `.github/workflows/terraform-tests.yml` | Verification-required (`CHECKOV_VERSION` doubles as the pin `tests/scripts/check-checkov.sh` enforces locally; `TF_FLOOR_VERSION` doubles as the pin `tests/scripts/check-terraform-floor.sh` enforces against every `required_version` above) |
-| `docs/helm-chart-coverage.md`'s declared chart version | `docs/helm-chart-coverage.md` | Must equal `n8n_chart_version`'s default; the doc states this itself and is read manually, not CI-gated by a script in this repo |
+| `docs/helm-chart-coverage.md`'s declared chart version | `docs/helm-chart-coverage.md` | Must equal `n8n_chart_version`'s default; checked by `tests/scripts/check-helm-chart-coverage.sh` (`task chart-coverage`), a local script this repo's CI does not run |
 
 ## Bump tiers
 

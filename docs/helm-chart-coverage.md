@@ -8,7 +8,7 @@ through the escape hatch.
 Measured against chart **1.17.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
 source at [n8n-io/n8n-hosting](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n)),
 which is the version `n8n_chart_version` pins by default. The chart offers 48
-top-level keys. This module writes 26 of them.
+top-level keys. This module writes 25 of them.
 
 Everything below was measured, not recalled: the values tree was rendered with
 `terraform console` and diffed against the chart's own `values.yaml` at tag

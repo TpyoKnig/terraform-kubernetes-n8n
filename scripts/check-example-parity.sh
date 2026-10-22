@@ -39,7 +39,7 @@
 # on. Run by hand or via `task example-parity`.
 #
 # Usage: scripts/check-example-parity.sh
-# Requires: bash, grep. No terraform, no network.
+# Requires: bash, grep, sed, sort, dirname. No terraform, no network.
 
 set -euo pipefail
 
@@ -147,19 +147,27 @@ for example in "${EXAMPLES[@]}"; do
     fail=1
   done <<<"$example_vars"
 
-  # Every ALLOWED_DIFFS entry for this example must still match a variable
-  # on at least one side, so a rename or removal cannot leave a stale
-  # exemption that silently widens what this script accepts.
+  # Every ALLOWED_DIFFS entry for this example must still name a variable
+  # present on exactly one side, which is the divergence the exemption
+  # claims to permit. Matching on both sides no longer describes a
+  # divergence at all (a rename could make the pattern match on both without
+  # tripping this), and matching on neither means the variable is gone from
+  # both. Either way the exemption has outlived what it was written for.
   for entry in "${ALLOWED_DIFFS[@]}"; do
     [[ "${entry%%:*}" == "$example" ]] || continue
     pattern="${entry#*:}"
-    matched=0
+    in_baseline=0
+    in_example=0
     while IFS= read -r var; do
       # shellcheck disable=SC2053
-      [[ -n "$var" && "$var" == $pattern ]] && { matched=1; break; }
-    done <<<"$(printf '%s\n%s\n' "$baseline_vars" "$example_vars")"
-    if [[ "$matched" -eq 0 ]]; then
-      echo "check-example-parity: ALLOWED_DIFFS names \"$pattern\" for examples/$example, but no such variable exists there or in examples/$BASELINE; remove the stale exemption" >&2
+      [[ -n "$var" && "$var" == $pattern ]] && { in_baseline=1; break; }
+    done <<<"$baseline_vars"
+    while IFS= read -r var; do
+      # shellcheck disable=SC2053
+      [[ -n "$var" && "$var" == $pattern ]] && { in_example=1; break; }
+    done <<<"$example_vars"
+    if [[ "$in_baseline" -eq "$in_example" ]]; then
+      echo "check-example-parity: ALLOWED_DIFFS names \"$pattern\" for examples/$example, but it now matches on both sides (no longer a divergence) or on neither (removed); remove the stale exemption" >&2
       fail=1
     fi
   done

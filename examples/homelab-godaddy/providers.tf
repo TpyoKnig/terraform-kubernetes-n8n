@@ -30,15 +30,31 @@ provider "godaddy-dns" {
   # no-DNS path, where the caller leaves godaddy_domain null because their
   # records are managed elsewhere.
   #
-  # So on that path the plugin is handed placeholders purely to let it
-  # configure. dns.tf creates no record without a domain, so neither value is
-  # ever sent anywhere.
+  # An explicit godaddy_api_key/godaddy_api_secret always wins, even with
+  # godaddy_domain null: toggling the domain off while a record from an
+  # earlier apply is still in state schedules a destroy of that record
+  # (dns.tf's count drops to 0), and the provider needs real credentials to
+  # send that delete. Feeding it placeholders there, as an earlier version of
+  # this file did, makes GoDaddy reject the call and strands the record in
+  # state.
   #
-  # Gated on the domain rather than defaulting the variables, which would look
-  # simpler and would break the lines above: explicit values take precedence
-  # over GODADDY_API_KEY and GODADDY_API_SECRET, so placeholder defaults would
-  # shadow the environment variables the comment tells callers to prefer. Null
-  # is what lets the plugin fall back to them.
-  api_key    = var.godaddy_domain == null ? "placeholder_unused_no_dns_record_managed" : var.godaddy_api_key
-  api_secret = var.godaddy_domain == null ? "placeholder_unused_no_dns_record_managed" : var.godaddy_api_secret
+  # Only when neither explicit value is set AND the domain is null do the
+  # placeholders apply, purely so the plugin can configure at all on the
+  # genuine no-DNS path; dns.tf creates no record there, so the placeholders
+  # are never sent to GoDaddy. A caller who relies on GODADDY_API_KEY /
+  # GODADDY_API_SECRET instead of the typed variables still hits those
+  # placeholders on a destroy with the domain already null, because the env
+  # vars are invisible here: pass the credentials through terraform.tfvars
+  # for that one apply, or `terraform state rm` the record.
+  #
+  # Null (rather than a placeholder default) on the explicit-value branch is
+  # what lets the plugin fall back to GODADDY_API_KEY / GODADDY_API_SECRET:
+  # explicit values take precedence over the environment variables, so
+  # defaulting the variables to placeholders would shadow them.
+  api_key = var.godaddy_api_key != null ? var.godaddy_api_key : (
+    var.godaddy_domain == null ? "placeholder_unused_no_dns_record_managed" : null
+  )
+  api_secret = var.godaddy_api_secret != null ? var.godaddy_api_secret : (
+    var.godaddy_domain == null ? "placeholder_unused_no_dns_record_managed" : null
+  )
 }

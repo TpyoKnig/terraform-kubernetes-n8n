@@ -74,20 +74,28 @@ condition.
 
 ### How worker concurrency and scale-out interact
 
-Effective per-worker concurrency equals `n8n_worker_concurrency` only while
-`n8n_execution_concurrency_limit` stays at its default of `-1`. Any other
+`n8n_worker_concurrency` is a per-process ceiling: each worker's own Bull
+consumer independently pulls up to that many concurrent jobs off the shared
+queue, so total pool capacity is `replicas x n8n_worker_concurrency`, scaling
+with however many workers KEDA has running. It takes effect only while
+`n8n_execution_concurrency_limit` stays at its default of `-1`; any other
 value renders `N8N_CONCURRENCY_PRODUCTION_LIMIT` and overrides
-`n8n_worker_concurrency` on every worker instance-wide (n8n 2.44.5's
-`worker.ts`), capping total in-flight production executions across the whole
-pool at that one number no matter how many replicas KEDA adds: new workers
-come up but receive no jobs once the pool is already at the limit.
+`n8n_worker_concurrency` with that number on every worker independently (n8n
+2.44.5's `worker.ts`), so it is still a per-worker ceiling, not a shared
+pool-wide one, and total capacity becomes `replicas x
+n8n_execution_concurrency_limit` instead.
 
-At the default, total in-flight capacity is `replicas x n8n_worker_concurrency`,
-which is what lets the queue-depth triggers above actually spread a burst:
-KEDA adds a replica once `bull:jobs:wait` / `bull:jobs:active` cross
-`n8n_worker_keda_jobs_per_replica`, and the new worker has concurrency
-headroom to take jobs immediately instead of sitting behind a pool already
-saturated.
+A high per-worker ceiling is the trap, not a pool-wide cap: Bull's own job
+pull is greedy and has no cross-worker coordination, so whichever worker is
+already running when a burst arrives keeps pulling jobs up to its own
+ceiling before KEDA has scaled anything. At this module's old default of
+`100`, a single already-running worker could absorb an entire burst well
+under 100 jobs by itself, queue depth never crossed
+`n8n_worker_keda_jobs_per_replica`, and replicas KEDA added afterward found
+nothing left to pull. At the current default (`n8n_worker_concurrency`, 10),
+the same worker can only take 10 at a time, so a large burst keeps
+`bull:jobs:wait` elevated long enough for KEDA to add replicas, each of
+which also takes up to 10 and so actually shares the load.
 
 Scale-down is governed by Kubernetes' own HPA stabilization window, 300
 seconds by default, not by the `ScaledObject`'s `cooldownPeriod`:

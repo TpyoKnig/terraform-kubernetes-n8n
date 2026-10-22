@@ -64,4 +64,4 @@ ui_host = "n8n.example.com"
 
 # In-cluster SearXNG for the assistant's web search (optional). Check the
 # Service name from an n8n pod first; it is not always "searxng".
-# searxng_url = "http://searxng.searxng.svc.cluster.local:8080"
+# searxng_url = "http://searxng-http.searxng.svc.cluster.local:8080"

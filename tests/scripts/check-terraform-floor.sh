@@ -17,11 +17,11 @@
 # Deliberately compared at major.minor, not pinned to the exact X.Y.0 patch
 # the terraform-aws-n8n sibling's equivalent script requires: this repo tests
 # the floor with whatever Terraform binary CI's setup-terraform action
-# resolves for TF_FLOOR_VERSION (currently 1.11.4, not a published 1.11.0),
-# and every required_version here is declared at `">= X.Y"` granularity, with
-# no finer-grained floor to miss by testing a later patch. A real behavior
-# change gated on an exact patch release would need the stricter form; this
-# repo has not needed one.
+# resolves for TF_FLOOR_VERSION (currently 1.11.4, the newest 1.11.x patch;
+# 1.11.0 through 1.11.3 are not separately tested), and every required_version
+# here is declared at `">= X.Y"` granularity, with no finer-grained floor to
+# miss by testing a later patch. A real behavior change gated on an exact
+# patch release would need the stricter form; this repo has not needed one.
 #
 # This module's submodules do not legitimately diverge from the root floor
 # (unlike some siblings' submodules): every versions.tf in this repo,

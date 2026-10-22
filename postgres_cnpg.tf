@@ -52,6 +52,75 @@ locals {
     length(local.cnpg_pooler_resources_requests) > 0 ? { requests = local.cnpg_pooler_resources_requests } : {},
     length(local.cnpg_pooler_resources_limits) > 0 ? { limits = local.cnpg_pooler_resources_limits } : {},
   ) : null
+
+  # Normalized to a common unit so a request can be compared against its
+  # limit below: millicores for CPU, bytes for memory, using the same
+  # suffix-multiplier maps redis_valkey.tf defines (locals are
+  # module-scoped, not file-scoped). Both variables' own regex validation
+  # has already rejected anything but the shapes handled here.
+  cnpg_cpu_request_millicores = var.cnpg_cpu_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_cpu_request)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_cpu_request), 1000)
+  )
+  cnpg_cpu_limit_millicores = var.cnpg_cpu_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_cpu_limit)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_cpu_limit), 1000)
+  )
+  cnpg_memory_request_bytes = var.cnpg_memory_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_memory_request)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_memory_request), 1)
+  )
+  cnpg_memory_limit_bytes = var.cnpg_memory_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_memory_limit)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_memory_limit), 1)
+  )
+
+  cnpg_pooler_cpu_request_millicores = var.cnpg_pooler_cpu_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_cpu_request)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_pooler_cpu_request), 1000)
+  )
+  cnpg_pooler_cpu_limit_millicores = var.cnpg_pooler_cpu_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_cpu_limit)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_pooler_cpu_limit), 1000)
+  )
+  cnpg_pooler_memory_request_bytes = var.cnpg_pooler_memory_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_memory_request)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_pooler_memory_request), 1)
+  )
+  cnpg_pooler_memory_limit_bytes = var.cnpg_pooler_memory_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_memory_limit)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_pooler_memory_limit), 1)
+  )
+
+  # Whether cnpg_plugins declares at least one plugin with isWALArchiver =
+  # true, the CNPG-I signal that a plugin claims the WAL archive command
+  # (and is therefore a backup route, not just any entry on the list).
+  # Shared between the collision check below and the no-backup-configured
+  # check further down, which previously only tested cnpg_plugins != null.
+  cnpg_has_wal_archiving_plugin = var.cnpg_plugins == null ? false : try(anytrue([for p in var.cnpg_plugins : try(p.isWALArchiver == true, false)]), false)
+}
+
+check "cnpg_resource_request_not_above_limit" {
+  assert {
+    # guard ? true : body, per AGENTS.md: this module's floor (>= 1.11) does
+    # not short-circuit ||, so the comparison on the right must never run
+    # while either side is null.
+    condition = alltrue([
+      (local.cnpg_cpu_request_millicores == null || local.cnpg_cpu_limit_millicores == null) ? true : (
+        local.cnpg_cpu_request_millicores <= local.cnpg_cpu_limit_millicores
+      ),
+      (local.cnpg_memory_request_bytes == null || local.cnpg_memory_limit_bytes == null) ? true : (
+        local.cnpg_memory_request_bytes <= local.cnpg_memory_limit_bytes
+      ),
+      (local.cnpg_pooler_cpu_request_millicores == null || local.cnpg_pooler_cpu_limit_millicores == null) ? true : (
+        local.cnpg_pooler_cpu_request_millicores <= local.cnpg_pooler_cpu_limit_millicores
+      ),
+      (local.cnpg_pooler_memory_request_bytes == null || local.cnpg_pooler_memory_limit_bytes == null) ? true : (
+        local.cnpg_pooler_memory_request_bytes <= local.cnpg_pooler_memory_limit_bytes
+      ),
+    ])
+    error_message = "One of cnpg_cpu_request/cnpg_cpu_limit, cnpg_memory_request/cnpg_memory_limit, cnpg_pooler_cpu_request/cnpg_pooler_cpu_limit or cnpg_pooler_memory_request/cnpg_pooler_memory_limit sets a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so the Cluster or Pooler fails to reconcile at apply time rather than anything this module's own plan surfaces. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
+  }
 }
 
 resource "kubectl_manifest" "cnpg_cluster" {
@@ -462,7 +531,7 @@ check "cnpg_backup_needs_barman_in_the_image" {
 # combination either; it just resolves somehow.
 check "cnpg_backup_and_a_wal_archiving_plugin_conflict" {
   assert {
-    condition     = !(local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) && (var.cnpg_plugins == null ? false : try(anytrue([for p in var.cnpg_plugins : try(p.isWALArchiver == true, false)]), false)))
+    condition     = !(local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) && local.cnpg_has_wal_archiving_plugin)
     error_message = "cnpg_backup carries barmanObjectStore and cnpg_plugins declares a plugin with isWALArchiver = true; both claim the WAL archive command, and which one wins is not yours to choose. Keep exactly one: clear barmanObjectStore from cnpg_backup to archive through the plugin, or drop the plugin's isWALArchiver to stay on the in-tree path."
   }
 }
@@ -547,9 +616,17 @@ check "postgres_pool_size_fits_known_max_connections" {
 # read once while a warning in the plan is read every time. Silenced by
 # fixing the thing (either backup input) or by cnpg_backup_acknowledged,
 # which records that the trade was deliberate.
+#
+# cnpg_plugins is checked for a declared WAL archiver specifically, not just
+# non-null: the CNPG-I plugin interface covers more than backups, so a
+# plugin list with none of its entries carrying isWALArchiver = true leaves
+# a cluster exactly as unbacked as an empty one, and silently passing it
+# here would be the worse failure mode cubic flagged.
 check "cnpg_has_no_backup_configured" {
   assert {
-    condition     = local.cnpg_enabled && var.cnpg_backup_acknowledged == null ? !(var.cnpg_backup == null && var.cnpg_plugins == null) : true
-    error_message = "postgres_backend = \"cnpg\" with neither cnpg_backup nor cnpg_plugins set, so this deployment has no backups. The database's only copy is its PVC, and between you and every workflow, credential and execution it holds are a `terraform destroy` and a StorageClass whose reclaim policy is probably Delete. Losing the node or the volume loses the instance. Set cnpg_backup for the in-tree barmanObjectStore path, or cnpg_plugins for the Barman Cloud Plugin, which is where CloudNativePG's backup surface is moving; docs/operations.md has a worked example of both, including the Backup or ScheduledBackup resource that takes the base backup and stays yours to create. If the volumes are snapshotted by something outside this module, or this is a scratch deployment where losing the database costs nothing, set cnpg_backup_acknowledged to true or false to silence this without configuring either backup input."
+    condition = local.cnpg_enabled && var.cnpg_backup_acknowledged == null ? !(
+      var.cnpg_backup == null && !local.cnpg_has_wal_archiving_plugin
+    ) : true
+    error_message = "postgres_backend = \"cnpg\" with neither cnpg_backup nor a WAL-archiving entry in cnpg_plugins (isWALArchiver = true) set, so this deployment has no backups. The database's only copy is its PVC, and between you and every workflow, credential and execution it holds are a `terraform destroy` and a StorageClass whose reclaim policy is probably Delete. Losing the node or the volume loses the instance. Set cnpg_backup for the in-tree barmanObjectStore path, or cnpg_plugins for the Barman Cloud Plugin, which is where CloudNativePG's backup surface is moving; docs/operations.md has a worked example of both, including the Backup or ScheduledBackup resource that takes the base backup and stays yours to create. If the volumes are snapshotted by something outside this module, or this is a scratch deployment where losing the database costs nothing, set cnpg_backup_acknowledged to true or false to silence this without configuring either backup input."
   }
 }

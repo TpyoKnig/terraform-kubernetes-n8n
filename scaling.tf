@@ -51,16 +51,21 @@ locals {
 
   # The in-cluster backends are constant demand rather than autoscaled, but
   # they schedule out of the same allocatable CPU the ceilings above compete
-  # for. Counted only while the corresponding sizing input is actually set
-  # (F-072): all three default null, which renders no resources block at all
-  # (see postgres_cnpg.tf / redis_valkey.tf), so an unset backend contributes
+  # for. Counted only while a sizing input is actually set (F-072): all three
+  # default null, which renders no resources block at all (see
+  # postgres_cnpg.tf / redis_valkey.tf), so a fully unset backend contributes
   # nothing here either, matching the rendered reality rather than assuming a
-  # size nobody asked for. Zero on the external paths too, where the demand is
-  # not this cluster's problem.
+  # size nobody asked for. Zero on the external paths too, where the demand
+  # is not this cluster's problem.
+  #
+  # Falls back to the limit when only `*_cpu_limit` is set: the Kubernetes
+  # API defaults an omitted request to the limit, so that is what actually
+  # gets scheduled, and counting 0 there would undercount both this peak
+  # figure and the capacity-diagnostic warning below it.
   n8n_backend_cpu_requests = {
-    postgres = (local.cnpg_enabled && var.cnpg_cpu_request != null) ? var.cnpg_cpu_request : null
-    pooler   = (local.cnpg_pooler_enabled && var.cnpg_pooler_cpu_request != null) ? var.cnpg_pooler_cpu_request : null
-    valkey   = (local.valkey_enabled && var.valkey_cpu_request != null) ? var.valkey_cpu_request : null
+    postgres = local.cnpg_enabled && (var.cnpg_cpu_request != null || var.cnpg_cpu_limit != null) ? coalesce(var.cnpg_cpu_request, var.cnpg_cpu_limit) : null
+    pooler   = local.cnpg_pooler_enabled && (var.cnpg_pooler_cpu_request != null || var.cnpg_pooler_cpu_limit != null) ? coalesce(var.cnpg_pooler_cpu_request, var.cnpg_pooler_cpu_limit) : null
+    valkey   = local.valkey_enabled && (var.valkey_cpu_request != null || var.valkey_cpu_limit != null) ? coalesce(var.valkey_cpu_request, var.valkey_cpu_limit) : null
   }
 
   n8n_backend_cpu_request_millis = {

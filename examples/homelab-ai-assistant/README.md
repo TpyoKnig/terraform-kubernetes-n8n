@@ -129,7 +129,7 @@ kubectl -n n8n exec deploy/n8n-main -c n8n-main -- \
   wget -q -O - 'http://searxng-http.searxng.svc.cluster.local:8080/search?q=n8n&format=json'
 ```
 
-That must print JSON results; if it errors on `format=json`, SearXNG is missing `json` in its `search.formats`. Even once the variable is set, n8n asks an owner to approve web search in an "Add web search" dialog the first time the assistant wants the web, and the example cannot answer that for you. Brave Search is the alternative, through a `brave-api-key` in `ai-assistant-secrets`; see [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
+That must print JSON results; if it errors on `format=json`, SearXNG is missing `json` in its `search.formats`. Even once the variable is set, n8n asks an owner to approve web search in an "Add web search" dialog the first time the assistant wants the web, and the example cannot answer that for you. Brave Search is the alternative: storing a `brave-api-key` in `ai-assistant-secrets` alone does nothing here, since `main.tf` does not wire it into `n8n_extra_env_from_secret`; add an `INSTANCE_AI_BRAVE_SEARCH_API_KEY` entry there too, per the worked example in [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
 
 Verified live on n8n 2.44.4 with SearXNG: asking "Search the web for the latest stable n8n release" ran the assistant's `research` tool with `action: web-search` and the answer matched the GitHub release.
 
@@ -246,7 +246,7 @@ See [`homelab`](../homelab/)'s table first; it all still applies. Specific to th
 
 | Name | Description |
 | ---- | ----------- |
-| <a name="output_ai_assistant"></a> [ai\_assistant](#output\_ai\_assistant) | The model and sandbox URL n8n was wired to. Exists so sandbox\_namespace / sandbox\_release\_name typos surface as a visible plan/apply output instead of only as a code-execution timeout discovered in the browser; the value here is what N8N\_SANDBOX\_SERVICE\_URL and N8N\_INSTANCE\_AI\_MODEL actually render to, whatever this example's Helm release itself resolves to under a real apply. |
+| <a name="output_ai_assistant"></a> [ai\_assistant](#output\_ai\_assistant) | The model, sandbox URL and SearXNG URL n8n was wired to. Exists so sandbox\_namespace / sandbox\_release\_name typos surface as a visible plan/apply output instead of only as a code-execution timeout discovered in the browser; the value here is what N8N\_SANDBOX\_SERVICE\_URL, N8N\_INSTANCE\_AI\_MODEL and N8N\_INSTANCE\_AI\_SEARXNG\_URL actually render to, whatever this example's Helm release itself resolves to under a real apply. |
 | <a name="output_backing_services"></a> [backing\_services](#output\_backing\_services) | Which backend provides Postgres and Redis for this deployment, and the in-cluster endpoints for each. |
 | <a name="output_kubectl_config_command"></a> [kubectl\_config\_command](#output\_kubectl\_config\_command) | Command that points kubectl at the cluster this example deployed to. Consumed by tests/scripts/smoke-test.sh. |
 | <a name="output_n8n_url"></a> [n8n\_url](#output\_n8n\_url) | URL to access n8n once the ingress controller has published the host. Consumed by tests/scripts/smoke-test.sh. |

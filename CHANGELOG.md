@@ -363,11 +363,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   behavior change. n8n 2.44.5's `worker.ts` reads
   `N8N_CONCURRENCY_PRODUCTION_LIMIT` before the worker's own `--concurrency`
   flag and only falls back to the flag when that env var is `-1`; with the
-  old default of `100`, every worker ran at concurrency 100 regardless of
-  `n8n_worker_concurrency` (default `10`), so a KEDA-scaled burst filled one
-  worker to its instance-wide cap while every other replica sat idle with
-  nothing to do. Confirmed live: a 40-job burst ran entirely on one worker
-  under the old default with added replicas receiving zero jobs; with
+  old default of `100`, every worker independently ran at its own
+  concurrency ceiling of 100 regardless of `n8n_worker_concurrency` (default
+  `10`), with no coordination between workers. A high per-worker ceiling let
+  whichever worker was already running absorb a burst well before queue
+  depth ever crossed the threshold that would make KEDA add useful capacity.
+  Confirmed live: a 40-job burst ran entirely on one worker under the old
+  default with added replicas receiving zero jobs; with
   `n8n_execution_concurrency_limit = -1` a 1000-job burst spread evenly
   across 6 workers. **Effect on an existing deployment:** on the next
   `apply`, effective per-worker concurrency drops from 100 to

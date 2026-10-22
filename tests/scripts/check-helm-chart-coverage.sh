@@ -87,9 +87,16 @@ fi
 # coverage row or "not configurable" entry backing it.
 contract_section="$(sed -n '/^## Coverage by chart section/,$p' "$DOC_FILE")"
 
+# Further scoped to backtick-quoted spans within that section: every genuine
+# coverage row and "not configurable" entry backtick-quotes the chart key, so
+# a key that only turns up inside prose (e.g. a section whose body happens to
+# contain the word "tests", which is also a top-level chart key) no longer
+# satisfies the check without a real row or list entry behind it.
+backticked_terms="$(grep -oE '`[^`]*`' <<<"$contract_section" || true)"
+
 missing=()
 for key in "${chart_keys[@]}"; do
-  if ! grep -qE "(^|[^A-Za-z0-9_-])${key}([^A-Za-z0-9_-]|$)" <<<"$contract_section"; then
+  if ! grep -qE "(^|[^A-Za-z0-9_-])${key}([^A-Za-z0-9_-]|$)" <<<"$backticked_terms"; then
     missing+=("$key")
   fi
 done

@@ -56,7 +56,7 @@ cloudflare_tunnel_id = "00000000-0000-0000-0000-000000000000"
 # otel_endpoint at a different collector you run, or set it to null to turn
 # tracing off entirely; /metrics stays on regardless, since it is scraped
 # rather than pushed and needs no collector.
-# otel_endpoint = "http://otel-collector.observability.svc.cluster.local:4318"
+# otel_endpoint = "http://alloy-otlp.monitoring.svc.cluster.local:4318"
 # otel_endpoint = null
 
 # ── Shared storage (optional) ─────────────────────────────────────────────────

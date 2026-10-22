@@ -19,7 +19,7 @@ You already run `cloudflared` in the cluster (or on a host that can reach ingres
 
 The tunnel's own ingress rules are likewise yours: this example assumes the tunnel already routes to the ingress controller.
 
-**The `ClusterIssuer`, and here that matters more than usual.** `cluster_issuer` names an issuer that has to exist already. The repository's own [`../../modules/tls-letsencrypt`](../../modules/tls-letsencrypt/) will not do for this example: it solves HTTP-01, which needs Let's Encrypt to reach your hostname from the public internet on port 80, and a tunnel-only cluster has no such path. Nothing fails loudly. cert-manager keeps retrying, the ingress controller goes on serving its own self-signed certificate, and the only symptom is a browser warning. Use a DNS-01 issuer instead: with the zone already at Cloudflare, a `ClusterIssuer` with the `cloudflare` DNS-01 solver and a token carrying `Zone:DNS:Edit` is the natural fit, and is the same token this example already needs.
+**The `ClusterIssuer`, and here that matters more than usual.** `cluster_issuer` names an issuer that has to exist already. The repository's own [`../../modules/tls-letsencrypt`](../../modules/tls-letsencrypt/) will not do for this example: it solves HTTP-01, which needs Let's Encrypt to reach your hostname from the public internet on port 80, and a tunnel-only cluster has no such path. Nothing fails loudly. cert-manager keeps retrying, the ingress controller goes on serving its own self-signed certificate, and the only symptom is a browser warning. Use a DNS-01 issuer instead: with the zone already at Cloudflare, a `ClusterIssuer` with the `cloudflare` DNS-01 solver needs a token carrying both `Zone:DNS:Edit` and `Zone:Zone:Read` (the latter lets cert-manager look up the zone ID by name; without it the solve fails with a permissions error), a different token from the `Zone:DNS:Edit`-only one this example uses for its own DNS record.
 
 ## Apply
 
@@ -27,7 +27,7 @@ The tunnel's own ingress rules are likewise yours: this example assumes the tunn
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars: ui_host, cloudflare_zone_id, cloudflare_tunnel_id
 
-export CLOUDFLARE_API_TOKEN=...   # needs Zone:DNS:Edit on that zone
+export CLOUDFLARE_API_TOKEN=...   # needs Zone:DNS:Edit and Zone:Zone:Read on that zone
 
 terraform init
 terraform apply

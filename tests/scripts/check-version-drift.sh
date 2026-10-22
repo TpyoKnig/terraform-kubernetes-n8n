@@ -196,8 +196,12 @@ else
   report_error "provider/cloudflare: could not read its version constraint from examples/homelab-cloudflare/versions.tf"
 fi
 
+# Matched with an optional leading host/namespace segment: versions.tf pins
+# this one as "registry.terraform.io/veksh/godaddy-dns" (OpenTofu has no
+# built-in default registry, so the example spells it out explicitly), not
+# the bare "veksh/godaddy-dns" the other two example providers use.
 gd_constraint="$(awk '
-  $0 ~ "source[ \t]*=[ \t]*\"veksh/godaddy-dns\"" { found = 1 }
+  $0 ~ "source[ \t]*=[ \t]*\"([^\"]*/)?veksh/godaddy-dns\"" { found = 1 }
   found && /version[ \t]*=/ {
     if (match($0, /"[^"]*"/)) {
       print substr($0, RSTART + 1, RLENGTH - 2)

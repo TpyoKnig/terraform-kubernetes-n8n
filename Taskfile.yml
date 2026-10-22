@@ -186,6 +186,15 @@ tasks:
     cmds:
       - ./scripts/check-variable-prefixes.sh
 
+  inputs-reach-workload:
+    desc: >-
+      Check every declared root input is either referenced outside a check
+      block or named in the script's ACK_ONLY list, and that every "Maps to
+      ENV_VAR" claim in variables.tf names a variable that input's own code
+      path actually renders (see docs/module-contract.md, rule 3.3).
+    cmds:
+      - python3 ./scripts/check-inputs-reach-workload.py
+
   docs:
     desc: Check README.md is not stale relative to variables.tf/outputs.tf (module root, every example and both submodules).
     cmds:
@@ -219,11 +228,13 @@ tasks:
 
   ci:
     desc: >-
-      Run the full local loop (fmt, validate, test, lint, banners, docs, markdown).
-      Mirrors every CI job except checkov, which is a hard-fail gate in CI but is
-      left out here because it needs a pinned checkov install that the other tasks
-      do not: run `task checkov` separately once you have it. Also runs banners and
-      markdown, which CI does not gate on at all.
+      Run the full local loop (fmt, validate, test, lint, banners, naming,
+      inputs-reach-workload, terraform-floor, docs, markdown). Mirrors every
+      CI job except checkov, which is a hard-fail gate in CI but is left out
+      here because it needs a pinned checkov install that the other tasks do
+      not: run `task checkov` separately once you have it. Also runs banners,
+      naming, inputs-reach-workload and markdown, which CI does not gate on
+      at all.
     cmds:
       - task: fmt
       - task: validate
@@ -231,6 +242,7 @@ tasks:
       - task: lint
       - task: banners
       - task: naming
+      - task: inputs-reach-workload
       - task: terraform-floor
       - task: docs
       - task: markdown

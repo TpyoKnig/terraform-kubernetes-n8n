@@ -88,8 +88,9 @@ module "n8n" {
   # it up as is. OTLP tracing defaults to this lab's own collector via
   # otel_endpoint; point it elsewhere, or set it to null to turn tracing off,
   # without touching anything else. The tuning inputs are gated on the same
-  # condition because the module rejects OTel tuning while the master switch
-  # is off. Change service_name if you run multiple n8n instances so they
+  # condition because the module warns (plan-time, non-blocking) when
+  # tuning is set while the master switch is off. Change service_name if
+  # you run multiple n8n instances so they
   # separate in Grafana.
   n8n_metrics_enabled             = true
   n8n_otel_enabled                = var.otel_endpoint != null

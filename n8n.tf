@@ -386,7 +386,7 @@ resource "helm_release" "n8n" {
 
 check "otel_tuning_requires_master_switch" {
   assert {
-    condition = var.n8n_otel_enabled || (
+    condition = var.n8n_otel_enabled ? true : (
       var.n8n_otel_exporter_otlp_endpoint == null &&
       var.n8n_otel_exporter_otlp_headers == null &&
       var.n8n_otel_exporter_service_name == null &&
@@ -531,9 +531,17 @@ check "lan_expose_ip_is_allocator_specific" {
     # `annotations` in a fixed order that tests/defaults.tftest.hcl pins on
     # purpose, and changing which key wins would move deployments that are
     # working today.
+    #
+    # Gated on whether the Service actually renders (enabled, and for the
+    # CNPG side also local.cnpg_enabled): an ip left set on a disabled LAN
+    # expose, or on cnpg_lan_expose with postgres_backend != "cnpg", warns
+    # about a Service that is never created.
     condition = alltrue([
-      for expose in [var.metrics_lan_expose, var.cnpg_lan_expose] :
-      length(expose.ip) > 0 && length(expose.annotations) == 0 ? false : true
+      for expose in [
+        { ip = var.metrics_lan_expose.ip, annotations = var.metrics_lan_expose.annotations, rendered = var.metrics_lan_expose.enabled },
+        { ip = var.cnpg_lan_expose.ip, annotations = var.cnpg_lan_expose.annotations, rendered = local.cnpg_enabled && var.cnpg_lan_expose.enabled },
+      ] :
+      expose.rendered && length(expose.ip) > 0 && length(expose.annotations) == 0 ? false : true
     ])
     error_message = "metrics_lan_expose.ip or cnpg_lan_expose.ip is set with no annotations alongside it. That field renders exactly one annotation, for whichever LB-IPAM allocator it was written against (see the comment on the resource in metrics_lan.tf / postgres_lan.tf for which key); every other allocator ignores that key, so the Service is created, an address is allocated anyway, and nothing reports that the one you asked for was dropped. If your allocator reads that key, this is working as intended and the warning can be ignored. Otherwise set the key your allocator actually reads (for example metallb.universe.tf/loadBalancerIPs on MetalLB, kube-vip.io/loadbalancerIPs on kube-vip, or your cloud controller's own annotation) through the annotations field on the same object, and leave ip empty."
   }
@@ -653,12 +661,17 @@ check "db_postgresdb_ssl_ca_pem_requires_verification" {
 # default, which NODE_TLS_REJECT_UNAUTHORIZED=0 turns off. With a CA bundle,
 # n8n passes an explicit rejectUnauthorized and the variable has no effect on
 # this connection.
+#
+# n8n_extra_env_from_secret feeds the same config.extraEnv list but its
+# values are secretKeyRefs, never literals Terraform can read, so that half
+# of the check can only match on the entry's name, not confirm the value is
+# actually "0".
 check "postgres_ssl_verification_disabled_by_node_tls_env" {
   assert {
-    condition = (var.db_postgresdb_ssl_reject_unauthorized && var.db_postgresdb_ssl_ca_pem == null) ? !anytrue([
-      for e in var.n8n_extra_env :
-      e.name == "NODE_TLS_REJECT_UNAUTHORIZED" && e.value == "0"
-    ]) : true
-    error_message = "db_postgresdb_ssl_reject_unauthorized = true without db_postgresdb_ssl_ca_pem, but n8n_extra_env sets NODE_TLS_REJECT_UNAUTHORIZED=0. Node then skips the PostgreSQL server-certificate check on every n8n pod. Remove that entry, or supply the CA through db_postgresdb_ssl_ca_pem so n8n passes an explicit rejectUnauthorized."
+    condition = (var.db_postgresdb_ssl_reject_unauthorized && var.db_postgresdb_ssl_ca_pem == null) ? !anytrue(concat(
+      [for e in var.n8n_extra_env : e.name == "NODE_TLS_REJECT_UNAUTHORIZED" && e.value == "0"],
+      [for e in var.n8n_extra_env_from_secret : e.name == "NODE_TLS_REJECT_UNAUTHORIZED"],
+    )) : true
+    error_message = "db_postgresdb_ssl_reject_unauthorized = true without db_postgresdb_ssl_ca_pem, but n8n_extra_env or n8n_extra_env_from_secret sets NODE_TLS_REJECT_UNAUTHORIZED. Node then skips the PostgreSQL server-certificate check on every n8n pod. A secret-sourced value cannot be read at plan time, so this fires on the name alone; if that Secret key is not literally \"0\", this warning is a false positive and can be ignored. Remove the entry, or supply the CA through db_postgresdb_ssl_ca_pem so n8n passes an explicit rejectUnauthorized."
   }
 }

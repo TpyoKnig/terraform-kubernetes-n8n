@@ -20,7 +20,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-for tool in terraform helm jq; do
+for tool in terraform helm jq openssl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Required tool missing: $tool" >&2; exit 1; }
 done
 
@@ -77,6 +77,18 @@ yaml_to_json() {
 
 chart_version=$(console <<<'var.n8n_chart_version' | tr -d '"')
 chart_repository=$(console <<<'var.n8n_chart_repository' | tr -d '"')
+# helm pull takes a bare <repo>/<chart> reference only for OCI registries; an
+# https:// chart repository would need `--repo <url> n8n` instead.
+# n8n_chart_repository accepts both schemes (chart-values-diff.sh documents
+# and enforces the same split), so fail clearly here too rather than let helm
+# produce a confusing raw error if the default ever moves to an https mirror.
+case "$chart_repository" in
+  oci://*) ;;
+  *)
+    echo "check-n8n-chart.sh only supports oci:// chart repositories; n8n_chart_repository's default is $chart_repository" >&2
+    exit 1
+    ;;
+esac
 helm pull "$chart_repository/n8n" --version "$chart_version" --untar --untardir "$tmp"
 chart_dir="$tmp/n8n"
 
@@ -425,9 +437,11 @@ fi
 # defaults to -1 (unset), which n8n's worker.ts reads as "use my own
 # --concurrency flag", so at defaults the worker Deployment carries
 # --concurrency=<n8n_worker_concurrency> and no N8N_CONCURRENCY_PRODUCTION_LIMIT
-# env var at all. Any other value overrides every worker instance-wide; this
-# input's default used to be 100, which silently capped a KEDA-scaled worker
-# pool at 100 in-flight executions regardless of replica count (live finding,
+# env var at all. Any other value overrides that same worker's own flag with
+# that number, independently on every worker, not as a shared cap; this
+# input's default used to be 100, which let whichever worker was already
+# running absorb a burst before queue depth ever crossed the threshold that
+# would make a KEDA-scaled worker pool add useful capacity (live finding,
 # see CHANGELOG). Reuses values-default.json from the PDB scenario above.
 helm template n8n "$chart_dir" -f "$tmp/values-default.json" --set secretRefs.existingSecret=test-core \
   --show-only templates/deployment-worker.yaml >"$tmp/deployment-worker-concurrency-default.yaml"

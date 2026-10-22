@@ -27,7 +27,10 @@ webhook-processor pods, and sets `NODE_EXTRA_CA_CERTS` to that path. Node adds
 the certificate(s) to its built-in roots; it does not replace them.
 
 - Certificates only. A private key block is rejected at plan time, and so is
-  a string that is not at least one well-formed PEM certificate.
+  a string lacking a `-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----`
+  pair around base64-looking content. That is a shape check, not real
+  certificate parsing: it does not decode the base64 or verify the result is
+  a parseable X.509 certificate.
 - `NODE_EXTRA_CA_CERTS` is reserved against `n8n_extra_env` and
   `n8n_extra_env_from_secret` while the input is set, same for the
   `"ca-bundle"` volume name in `n8n_extra_volumes` and the
@@ -66,9 +69,11 @@ The task runner sidecar is a separate container. It does not get
 `NODE_EXTRA_CA_CERTS` and `n8n_extra_ca_pem` does not mount anything into it.
 Code nodes that make their own TLS connections from inside the runner
 therefore do not trust the private CA. Reaching the sidecar at all needs a
-custom runner image (`n8n_task_runner_image_repository`) that carries the CA
-in its own trust store; `n8n_extra_env` does not reach the sidecar either, so
-there is no environment-variable route to it.
+custom build of the `n8nio/runners` image that carries the CA in its own
+trust store; no module input sets the runner image's repository (only
+`n8n_task_runner_image_tag` is exposed, pinning the tag on that fixed
+repository), and `n8n_extra_env` does not reach the sidecar either, so there
+is no environment-variable route to it.
 
 ## Inbound: `n8n_proxy_hops`
 

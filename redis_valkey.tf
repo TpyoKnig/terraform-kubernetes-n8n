@@ -22,6 +22,59 @@ locals {
     length(local.valkey_resources_requests) > 0 ? { requests = local.valkey_resources_requests } : {},
     length(local.valkey_resources_limits) > 0 ? { limits = local.valkey_resources_limits } : {},
   ) : null
+  # Maps a Kubernetes memory quantity's trailing suffix to its byte
+  # multiplier; an empty suffix (plain bytes) falls through to the lookup()
+  # default of 1 below. Shared with postgres_cnpg.tf's matching locals,
+  # since locals are module-scoped, not file-scoped.
+  memory_quantity_suffix_bytes = {
+    Ki = 1024
+    Mi = 1024 * 1024
+    Gi = 1024 * 1024 * 1024
+    Ti = 1024 * 1024 * 1024 * 1024
+    k  = 1000
+    M  = 1000 * 1000
+    G  = 1000 * 1000 * 1000
+    T  = 1000 * 1000 * 1000 * 1000
+  }
+
+  # Normalized to a common unit so a request can be compared against its
+  # limit below: millicores for CPU, bytes for memory. Both variables'
+  # own regex validation has already rejected anything but the shapes
+  # handled here (a number, optionally followed by one Kubernetes
+  # suffix), so the lookups below never miss.
+  valkey_cpu_request_millicores = var.valkey_cpu_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.valkey_cpu_request)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.valkey_cpu_request), 1000)
+  )
+  valkey_cpu_limit_millicores = var.valkey_cpu_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.valkey_cpu_limit)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.valkey_cpu_limit), 1000)
+  )
+  valkey_memory_request_bytes = var.valkey_memory_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.valkey_memory_request)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.valkey_memory_request), 1)
+  )
+  valkey_memory_limit_bytes = var.valkey_memory_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.valkey_memory_limit)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.valkey_memory_limit), 1)
+  )
+}
+
+check "valkey_resource_request_not_above_limit" {
+  assert {
+    # guard ? true : body, per AGENTS.md: this module's floor (>= 1.11) does
+    # not short-circuit ||, so the comparison on the right must never run
+    # while either side is null.
+    condition = alltrue([
+      (local.valkey_cpu_request_millicores == null || local.valkey_cpu_limit_millicores == null) ? true : (
+        local.valkey_cpu_request_millicores <= local.valkey_cpu_limit_millicores
+      ),
+      (local.valkey_memory_request_bytes == null || local.valkey_memory_limit_bytes == null) ? true : (
+        local.valkey_memory_request_bytes <= local.valkey_memory_limit_bytes
+      ),
+    ])
+    error_message = "valkey_cpu_request/valkey_cpu_limit or valkey_memory_request/valkey_memory_limit set a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so the Valkey Helm release fails at apply time with a validating-webhook error rather than anything this module's own plan surfaces. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
+  }
 }
 
 resource "random_password" "valkey_default" {
@@ -144,10 +197,13 @@ resource "helm_release" "valkey" {
       } : {},
 
       # Always rendered, never optional, once any of the four sizing inputs is
-      # set: without a request the queue pod runs BestEffort, the first QoS
-      # class the kubelet evicts under node pressure, while every n8n pod it
-      # serves can carry one. Null at every input (the default) renders no
-      # resources key at all, identical to today.
+      # set. Kubernetes defaults an omitted request to its limit when only a
+      # limit is given, so the pod only runs BestEffort, the first QoS class
+      # the kubelet evicts under node pressure, while every n8n pod it serves
+      # can carry one, when none of the four is set at all. An explicit
+      # request is what pins a stronger class (Burstable, or Guaranteed when
+      # every request equals its limit) rather than leaving it to that
+      # default.
       local.valkey_resources != null ? { resources = local.valkey_resources } : {},
     ))
   ]

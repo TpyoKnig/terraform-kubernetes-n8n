@@ -6,7 +6,7 @@ This covers bumping the deployed n8n version on an existing deployment. It does 
 
 Not an n8n version change, but something an existing deployment's own root
 module needs to account for on its next `terraform init`. This module's
-`required_providers` constraint on `hashicorp/kubernetes` widened to
+`required_providers` constraint on `hashicorp/kubernetes` changed to
 `~> 3.0` (alongside `hashicorp/time`'s to `~> 0.14`), matching the AWS,
 Google and Azure siblings.
 
@@ -62,8 +62,12 @@ docker rm n8n-runners-check
 diff <(jq -S . ./new-runners-config.json) <(jq -S . <<< "$(kubectl get configmap -n <namespace> <release>-task-runners -o jsonpath='{.data.n8n-task-runners\.json}')")
 ```
 
-A clean diff means the bump is safe; any difference in `command`, `args` or
-a path means this module's rendered config needs updating alongside the tag.
+A clean diff on `command`, `args` and any path field means the bump is safe;
+a difference there means this module's rendered config needs updating
+alongside the tag. The full diff is never clean: this module's rendered
+config always carries `allowed-env` and `env-overrides` entries the stock
+image's own shipped config does not, by design (see `task_runners_config.tf`),
+so compare only those three kinds of fields, not the whole file.
 
 ## Valkey restarts during the upgrade
 
@@ -102,9 +106,11 @@ Not a chart or image bump, but it changes behavior on the next apply same as
 one. n8n 2.44.5's `worker.ts` reads `N8N_CONCURRENCY_PRODUCTION_LIMIT` before
 the worker's own `--concurrency` flag, and only falls back to the flag when
 that env var is `-1`. With the module's old default of `100`, every worker
-ran at concurrency 100 regardless of `n8n_worker_concurrency`, which silently
-capped a KEDA-scaled burst: new worker replicas came up but received no jobs
-because the pool was already at its instance-wide limit.
+independently ran at its own concurrency ceiling of 100 regardless of
+`n8n_worker_concurrency`, so an already-running worker could absorb an
+entire burst well under 100 jobs by itself before KEDA had scaled anything:
+queue depth never crossed `n8n_worker_keda_jobs_per_replica`, and replicas
+added afterward found nothing left to pull.
 
 **Effect on the next apply:** effective per-worker concurrency drops from
 100 to `n8n_worker_concurrency` (default `10`), and every worker pod rolls

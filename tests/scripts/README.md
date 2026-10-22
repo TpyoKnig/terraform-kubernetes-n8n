@@ -7,7 +7,7 @@ Two manual verification scripts, plus three offline chart-bump tools.
 | Script | Use it when |
 |---|---|
 | [`chart-values-diff.sh`](#chart-values-diff) | Considering a candidate `n8n_chart_version`. Diffs the pinned and candidate `values.yaml` text. |
-| [`check-n8n-chart.sh`](#chart-render-check) | Verifying a chart bump before moving `n8n_chart_version`'s default. Renders this module's own values through the real chart and asserts the behaviors the module's code depends on. |
+| [`check-n8n-chart.sh`](#chart-render-check) | After temporarily moving `n8n_chart_version`'s default to the candidate. Renders this module's own values through the real chart and asserts the behaviors the module's code depends on; it has no candidate argument of its own, so it only ever sees whatever the default currently is. |
 | [`check-helm-chart-coverage.sh`](#chart-coverage-check) | After moving `n8n_chart_version`'s default. Fails if `docs/helm-chart-coverage.md` still claims the old version, or if the chart grew a top-level key the doc never mentions. |
 
 All three need only `helm` (the render check also needs `terraform` and `jq`); none touches a cluster or credentials. `Taskfile.yml` wraps them as `task chart-diff CANDIDATE=<version>`, `task chart-check` and `task chart-coverage`.
@@ -15,7 +15,7 @@ All three need only `helm` (the render check also needs `terraform` and `jq`); n
 ### Chart values diff
 
 ```bash
-tests/scripts/chart-values-diff.sh 1.17.0
+tests/scripts/chart-values-diff.sh 1.18.0
 ```
 
 Prints a text diff of `values.yaml` between the pinned `n8n_chart_version` and the candidate, via `helm show values`. Read it to decide whether a key this module sets moved, was renamed, or changed its default; it does not inspect this module's own values or templates, only the chart's documented defaults.
@@ -35,7 +35,7 @@ task chart-check
 - what an unset `n8n_image_tag` actually resolves to;
 - whether the chart's own webhook Ingress still routes every prefix this module advertises (`/mcp` included).
 
-Run it as part of evaluating a chart bump, before moving `n8n_chart_version`'s default. It is not in CI: like the checkov task, it needs tools CI does not guarantee (`helm`, network egress to pull the chart), and unlike `terraform test` it is not deterministic across chart releases by design, since its whole purpose is to catch when a chart release changes one of these behaviors.
+Run it after temporarily moving `n8n_chart_version`'s default to the candidate being evaluated: it has no candidate argument of its own and always reads whatever the default currently is, so it cannot see a candidate until the default points at one. Commit or revert that temporary move based on the result. It is not in CI: like the checkov task, it needs tools CI does not guarantee (`helm`, network egress to pull the chart), and unlike `terraform test` it is not deterministic across chart releases by design, since its whole purpose is to catch when a chart release changes one of these behaviors.
 It exits non-zero if any assertion fails, after printing every `PASS`/`FAIL` line rather than stopping at the first one, so one run tells you everything a bump needs to look at.
 
 ### Chart coverage check

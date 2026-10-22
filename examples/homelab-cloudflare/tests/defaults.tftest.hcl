@@ -143,6 +143,18 @@ run "proxy_hops_rejects_zero" {
   expect_failures = [var.proxy_hops]
 }
 
+run "proxy_hops_rejects_eleven" {
+  command = plan
+
+  variables {
+    proxy_hops = 11
+  }
+
+  # The module's own validation caps proxy_hops at 10; nothing in this
+  # example raises that ceiling.
+  expect_failures = [var.proxy_hops]
+}
+
 run "no_dns_records_without_a_zone" {
   command = plan
 

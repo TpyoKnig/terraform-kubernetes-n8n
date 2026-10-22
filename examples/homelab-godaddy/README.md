@@ -59,7 +59,7 @@ The `ClusterIssuer` named by `cluster_issuer` must already exist (see [`../homel
 
 Three pieces, all outside Terraform and caller-owned like the rest of the cert-manager setup.
 
-**1. One extra GoDaddy record**, alongside the `A` record this example creates: a CNAME from `_acme-challenge.<godaddy_record_name>` to `_acme-challenge.<godaddy_record_name>.<other-zone>`, TTL 600.
+**1. One extra GoDaddy record**, alongside the `A` record this example creates: a CNAME from `_acme-challenge.<godaddy_record_name>` to `_acme-challenge.<godaddy_record_name>.<other-zone>`, TTL 600. If `godaddy_record_name` is the apex `"@"`, the challenge owner is just `_acme-challenge` (not `_acme-challenge.@`): substitute accordingly in both the record name and the target below.
 
 ```bash
 curl -X PUT \

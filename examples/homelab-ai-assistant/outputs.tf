@@ -69,7 +69,7 @@ output "namespace" {
 }
 
 output "ai_assistant" {
-  description = "The model and sandbox URL n8n was wired to. Exists so sandbox_namespace / sandbox_release_name typos surface as a visible plan/apply output instead of only as a code-execution timeout discovered in the browser; the value here is what N8N_SANDBOX_SERVICE_URL and N8N_INSTANCE_AI_MODEL actually render to, whatever this example's Helm release itself resolves to under a real apply."
+  description = "The model, sandbox URL and SearXNG URL n8n was wired to. Exists so sandbox_namespace / sandbox_release_name typos surface as a visible plan/apply output instead of only as a code-execution timeout discovered in the browser; the value here is what N8N_SANDBOX_SERVICE_URL, N8N_INSTANCE_AI_MODEL and N8N_INSTANCE_AI_SEARXNG_URL actually render to, whatever this example's Helm release itself resolves to under a real apply."
   value = {
     model               = var.ai_model
     sandbox_service_url = local.sandbox_service_url

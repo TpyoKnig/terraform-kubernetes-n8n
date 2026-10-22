@@ -1283,8 +1283,9 @@ locals {
   # Whether the values tree asks the chart to enable the PDB, by either route:
   # the typed input, or the n8n_extra_helm_values overlay. The chart itself no
   # longer acts on this for a single main pool (see the comment above), but
-  # tests still assert that both routes reach local.k8s_values_final honestly,
-  # which is what local.n8n_pdb_enabled_via_extra_values is read by below.
+  # tests/defaults.tftest.hcl still asserts both routes reach
+  # local.k8s_values_final honestly (the_extra_values_overlay_can_also_ask_for_the_pdb
+  # and an_unrelated_extra_values_overlay_leaves_the_pdb_detection_quiet).
 
   k8s_values_pdb = {
     pdb = {
@@ -1866,10 +1867,13 @@ locals {
   # N8N_CONCURRENCY_PRODUCTION_LIMIT before the worker's own --concurrency
   # flag (var.n8n_worker_concurrency, rendered into queueMode.workerConcurrency
   # below) and only falls back to the flag when the env var is -1. A
-  # non-default value here therefore overrides every worker's configured
-  # concurrency instance-wide, which is what silently capped a KEDA-scaled
-  # worker pool at one number regardless of replica count before this
-  # variable's default changed (live finding, see CHANGELOG).
+  # non-default value here overrides that same worker's own --concurrency
+  # flag with that number, independently on every worker rather than as a
+  # shared cap: before this variable's default changed, that meant each
+  # worker ran at its own ceiling of 100 with no coordination between them,
+  # which let whichever worker was already running absorb a burst before
+  # queue depth ever crossed the threshold that would make KEDA add useful
+  # capacity (live finding, see CHANGELOG).
   #
   # executions.data (saveOnError / saveOnSuccess / saveOnProgress /
   # saveManualExecutions) is rendered unconditionally by the chart whether or

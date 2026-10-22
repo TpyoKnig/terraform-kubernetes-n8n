@@ -1130,12 +1130,11 @@ run "the_task_runner_resources_reach_the_sidecar_not_a_dead_key" {
 }
 
 # -1 lets n8n_worker_concurrency govern instead: this used to default to 100,
-# which silently capped the whole worker pool at 100 in-flight executions
-# regardless of replica count (a live finding, see CHANGELOG and the
-# locals.tf comment above k8s_values_executions). Both sides of that
-# interaction are asserted here: productionLimit renders -1 at the default,
-# and queueMode.workerConcurrency still reaches the chart from
-# n8n_worker_concurrency independently of it.
+# which every worker read independently with no coordination between them
+# (a live finding, see CHANGELOG and the locals.tf comment above
+# k8s_values_executions). Both sides of that interaction are asserted here:
+# productionLimit renders -1 at the default, and queueMode.workerConcurrency
+# still reaches the chart from n8n_worker_concurrency independently of it.
 run "execution_concurrency_limit_defaults_to_unset_so_worker_concurrency_governs" {
   command = plan
 

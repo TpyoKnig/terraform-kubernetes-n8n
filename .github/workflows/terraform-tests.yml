@@ -40,13 +40,16 @@ permissions:
   pull-requests: write
 
 env:
-  # Every job except test-floor runs this version: the current latest stable,
-  # so there is one deliberately tracked latest version to bump rather than a
-  # moving target. TF_FLOOR_VERSION below tracks the module's declared floor
-  # instead.
+  # Every job except test-floor and test-opentofu runs this version: the
+  # current latest stable, so there is one deliberately tracked latest
+  # version to bump rather than a moving target. TF_FLOOR_VERSION below
+  # tracks the module's declared floor instead, and test-opentofu reads
+  # TOFU_VERSION, its own independent pin (see the comment on that variable).
   #
   # The `test-floor` job also runs the `terraform test` suites on
-  # TF_FLOOR_VERSION, the lowest release the module's `>= 1.11` floor admits.
+  # TF_FLOOR_VERSION, a release the module's `>= 1.11` floor admits (the
+  # newest 1.11.x patch, not the lowest one the constraint itself would
+  # accept).
   # A floor CI never runs is a claim nobody is checking, and this repo has
   # already been bitten by the specific version-skew hazard that hides behind
   # one: Terraform's `&&`/`||` do not short-circuit before 1.12 (see
@@ -109,6 +112,15 @@ jobs:
 
       - name: every root input is in a known naming family
         run: ./scripts/check-variable-prefixes.sh
+
+  inputs-reach-workload:
+    name: declared inputs reach the workload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: every declared input is wired, and every claimed env var renders
+        run: python3 ./scripts/check-inputs-reach-workload.py
 
   docs:
     name: terraform-docs (README in sync)
