@@ -343,8 +343,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   default stays `null`.
 - `cnpg_ready_timeout` (number, seconds, default `600`): seconds the
   readiness barrier (`kubernetes_job_v1.cnpg_ready`) polls the CNPG
-  Cluster's `rw` Service with `pg_isready` before failing. Previously
-  hardcoded at 300 attempts x a 2-second sleep; the default of `600`
+  Cluster's `rw` Service with `pg_isready` before failing. The Job's poll
+  loop, added earlier in this same Unreleased section, was 300 attempts x a
+  2-second sleep; the default of `600`
   reproduces that exact budget, so a deployment that leaves it unset renders
   and behaves unchanged. Independent of `n8n_helm_timeout`: this Job
   completes, one way or the other, before `helm_release.n8n`'s own wait even

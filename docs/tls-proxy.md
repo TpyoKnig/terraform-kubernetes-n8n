@@ -101,9 +101,11 @@ chain.
 
 The proxy's own TLS to the origin is configured elsewhere:
 
-- With `create_ingress = true`, the Ingress TLS Secret comes from
-  cert-manager via `k8s_ingress_cluster_issuer`; the proxy in front terminates
-  the client's TLS and re-establishes its own to the ingress controller.
+- With `create_ingress = true`, the Ingress references a TLS Secret named by
+  `k8s_ingress_tls_secret_name` (or derived from the host). When
+  `k8s_ingress_cluster_issuer` is set, cert-manager creates it; otherwise,
+  provide the Secret yourself. The proxy in front terminates the client's TLS
+  and re-establishes its own to the ingress controller.
 - With `create_ingress = false`, TLS termination in front of the Service this
   module exposes is entirely the caller's setup; see
   `examples/homelab-split-ingress` for one shape of it.

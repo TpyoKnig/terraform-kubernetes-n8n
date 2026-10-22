@@ -113,6 +113,8 @@ jq -e '.pdb.enabled == false and .replicaCount == 1 and .hpa.main.enabled == fal
   fail "default values tree is not this test's assumed shape (pdb off, replicaCount 1, hpa.main off); re-check the scenario before trusting the PDB assertion below"
 
 render_values "$tmp/values-pdb.json" -var=n8n_main_pdb_enabled=true
+jq -e '.pdb.enabled == true' "$tmp/values-pdb.json" >/dev/null ||
+  fail "n8n_main_pdb_enabled = true did not reach pdb.enabled in the values tree; the PDB assertion below would pass vacuously"
 helm template n8n "$chart_dir" -f "$tmp/values-pdb.json" --set secretRefs.existingSecret=test-core >"$tmp/all-pdb.yaml"
 if grep -q '^kind: PodDisruptionBudget$' "$tmp/all-pdb.yaml"; then
   fail "n8n_main_pdb_enabled = true rendered a PodDisruptionBudget on chart $chart_version against this module's single-replica main; the chart's render gate changed, docs/helm-chart-coverage.md and the n8n.tf comment need to catch up"
@@ -246,7 +248,7 @@ render_values "$tmp/values-webhook.json" \
   -var=n8n_webhook_url=https://hooks.test.example.com \
   -var=create_ingress=true -var=k8s_ingress_cluster_issuer=letsencrypt-prod
 helm template n8n "$chart_dir" -f "$tmp/values-webhook.json" --set secretRefs.existingSecret=test-core >"$tmp/all-webhook.yaml"
-if grep -q 'name: N8N_WEBHOOK_URL' "$tmp/all-webhook.yaml" && ! grep -q '^\s*- name: WEBHOOK_URL$' "$tmp/all-webhook.yaml"; then
+if grep -q 'name: N8N_WEBHOOK_URL' "$tmp/all-webhook.yaml" && ! grep -qE '^\s*(- name: )?WEBHOOK_URL(:|$)' "$tmp/all-webhook.yaml"; then
   pass "chart $chart_version renders N8N_WEBHOOK_URL, not the deprecated WEBHOOK_URL"
 else
   fail "expected chart $chart_version to render N8N_WEBHOOK_URL only; this module's reserved-name list and split-ingress extraEnv injection assume that rename"

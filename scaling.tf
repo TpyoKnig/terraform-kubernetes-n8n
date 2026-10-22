@@ -95,10 +95,12 @@ locals {
 }
 
 # ── Cluster capacity diagnostic ────────────────────────────
-# Demand is backend-independent, local.n8n_peak_cpu_request_millis above is the
-# same pods requesting the same CPU at the same ceilings. Only supply differs, so
-# only supply moves into the submodule: it reads the cluster's own allocatable
-# CPU instead of deriving a vCPU count from an instance type that has no meaning
+# local.n8n_peak_cpu_request_millis above sums the app pods (main, worker,
+# webhook) at their ceilings plus the postgres/pooler/valkey terms whenever
+# that backend's sizing inputs are set, so demand is not backend-independent
+# once any of those is configured. Only supply is derived separately: it
+# moves into the submodule, which reads the cluster's own allocatable CPU
+# instead of deriving a vCPU count from an instance type that has no meaning
 # here.
 #
 # The count is the whole reason this is a submodule rather than another check

@@ -102,13 +102,15 @@ locals {
 
 check "cnpg_resource_request_not_above_limit" {
   assert {
-    # Outer guard ? body : true (local.cnpg_enabled), per AGENTS.md, wraps an
-    # inner null guard ? true : body: on the external backend these four
-    # inputs reach no Cluster or Pooler at all (variables.tf documents each
-    # as "only used when postgres_backend = cnpg" / "cnpg_pooler_enabled"),
-    # so a mismatched pair there is inert, not a real Kubernetes API
-    # rejection, and must not fail the plan. Matches the gating every other
-    # CNPG check in this file already uses (cnpg_pdb_blocks_the_postgres_node_drain,
+    # Outer guard ? body : true (local.cnpg_enabled for the Cluster rows,
+    # local.cnpg_pooler_enabled for the Pooler rows), per AGENTS.md, wraps an
+    # inner null guard ? true : body: on the external backend the Cluster
+    # inputs reach nothing, and with the Pooler off the Pooler inputs reach
+    # nothing either (variables.tf documents each as "only used when
+    # postgres_backend = cnpg" / "cnpg_pooler_enabled is true"), so a
+    # mismatched pair there is inert, not a real Kubernetes API rejection,
+    # and must not fail the plan. Matches the gating every other CNPG check
+    # in this file already uses (cnpg_pdb_blocks_the_postgres_node_drain,
     # cnpg_backup_needs_the_cnpg_backend, and the rest below).
     condition = alltrue([
       local.cnpg_enabled ? (
@@ -121,12 +123,12 @@ check "cnpg_resource_request_not_above_limit" {
           local.cnpg_memory_request_bytes <= local.cnpg_memory_limit_bytes
         )
       ) : true,
-      local.cnpg_enabled ? (
+      local.cnpg_pooler_enabled ? (
         (local.cnpg_pooler_cpu_request_millicores == null || local.cnpg_pooler_cpu_limit_millicores == null) ? true : (
           local.cnpg_pooler_cpu_request_millicores <= local.cnpg_pooler_cpu_limit_millicores
         )
       ) : true,
-      local.cnpg_enabled ? (
+      local.cnpg_pooler_enabled ? (
         (local.cnpg_pooler_memory_request_bytes == null || local.cnpg_pooler_memory_limit_bytes == null) ? true : (
           local.cnpg_pooler_memory_request_bytes <= local.cnpg_pooler_memory_limit_bytes
         )

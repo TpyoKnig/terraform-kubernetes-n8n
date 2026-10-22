@@ -88,7 +88,7 @@ module "n8n" {
   # not configure scraping. The chart ships no ServiceMonitor/annotations of
   # its own (see n8n_metrics_enabled's description), so an in-cluster
   # Prometheus or Alloy still needs its own scrape config or ServiceMonitor
-  # CR pointed at the main pod's Service before it picks this up. OTLP
+  # CR pointed at the main pod's Service before it picks this up. Tracing uses
   # otel_endpoint; point it elsewhere, or set it to null to turn tracing off,
   # without touching anything else. The tuning inputs are gated on the same
   # condition because the module warns (plan-time, non-blocking) when

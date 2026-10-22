@@ -62,18 +62,28 @@ locals {
 
 check "valkey_resource_request_not_above_limit" {
   assert {
-    # guard ? body : true, per AGENTS.md: this module's floor (>= 1.11) does
-    # not short-circuit ||, so the comparison on the right must never run
-    # while either side is null.
+    # Outer guard ? body : true (local.valkey_enabled), matching
+    # postgres_cnpg.tf's cnpg_resource_request_not_above_limit: on the
+    # external redis backend these four inputs reach no Valkey pod at all
+    # (variables.tf documents each as "only used when redis_backend =
+    # valkey"), so a mismatched pair there is inert, not a real Kubernetes
+    # API rejection, and must not fail the plan. Wraps an inner null guard ?
+    # true : body, per AGENTS.md: this module's floor (>= 1.11) does not
+    # short-circuit ||, so the comparison on the right must never run while
+    # either side is null.
     condition = alltrue([
-      (local.valkey_cpu_request_millicores != null && local.valkey_cpu_limit_millicores != null) ? (
-        local.valkey_cpu_request_millicores <= local.valkey_cpu_limit_millicores
+      local.valkey_enabled ? (
+        (local.valkey_cpu_request_millicores == null || local.valkey_cpu_limit_millicores == null) ? true : (
+          local.valkey_cpu_request_millicores <= local.valkey_cpu_limit_millicores
+        )
       ) : true,
-      (local.valkey_memory_request_bytes != null && local.valkey_memory_limit_bytes != null) ? (
-        local.valkey_memory_request_bytes <= local.valkey_memory_limit_bytes
+      local.valkey_enabled ? (
+        (local.valkey_memory_request_bytes == null || local.valkey_memory_limit_bytes == null) ? true : (
+          local.valkey_memory_request_bytes <= local.valkey_memory_limit_bytes
+        )
       ) : true,
     ])
-    error_message = "valkey_cpu_request/valkey_cpu_limit or valkey_memory_request/valkey_memory_limit set a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so this plan-time warning is followed by the Valkey Helm release failing at apply time with a validating-webhook error. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
+    error_message = "valkey_cpu_request/valkey_cpu_limit or valkey_memory_request/valkey_memory_limit set a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so this plan-time warning is followed by the Valkey Helm release failing at apply time. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
   }
 }
 

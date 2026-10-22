@@ -87,7 +87,7 @@ new schema on the old code. None of that appears in a plan.
 | `serviceAccount.annotations` | Not exposed. There is no cloud IAM binding on this platform. |
 | `secretRefs.existingSecret` | Set by the module. It wires its own Secrets and does not hand that over. |
 | `extraVolumes`, `extraVolumeMounts` | Exposed, for shared storage across the pools, plus one managed `ca-bundle` Secret volume and read-only `subPath` mount at `/etc/n8n-certs/ca-bundle.crt` appended when `n8n_extra_ca_pem` is set. |
-| `podAnnotations` | Rendered only when `n8n_extra_ca_pem` is set: a `checksum/extra-ca` annotation so a changed PEM rolls the pods, since Node reads `NODE_EXTRA_CA_CERTS` once at start. |
+| `podAnnotations` | Rendered when `n8n_extra_ca_pem` is set (a `checksum/extra-ca` annotation, so a changed PEM rolls the pods, since Node reads `NODE_EXTRA_CA_CERTS` once at start) or when `valkey_password_rotation_roll_enabled` is true on the valkey backend (a `checksum/valkey-password` annotation). |
 | `extraContainers`, `extraInitContainers` | Exposed as `n8n_extra_containers` and `n8n_extra_init_containers`. Omitted entirely when empty. |
 | `s3.*` | `enabled` is hardcoded false. The module provisions no bucket; see the out-of-scope section in the README. |
 | `license`, `multiMain` | **Never set, by design.** Both are licence-gated. The module deploys Community edition only and renders no licence key. |

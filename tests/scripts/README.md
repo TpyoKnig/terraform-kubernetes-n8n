@@ -1,12 +1,12 @@
 # Scripts
 
-Two manual verification scripts, plus three offline chart-bump tools.
+Two manual verification scripts, plus three chart-bump tools that need no cluster (only registry access to pull the chart).
 
-## Offline, no cluster needed
+## No cluster needed (registry access required to pull the chart)
 
 | Script | Use it when |
 |---|---|
-| [`chart-values-diff.sh`](#chart-values-diff) | Considering a candidate `n8n_chart_version`. Diffs the pinned and candidate `values.yaml` text. |
+| [`chart-values-diff.sh`](#chart-values-diff) | Considering a candidate `n8n_chart_version`, before moving its default. Diffs the pinned and candidate `values.yaml` text; run after the default moves, it reports nothing to diff. |
 | [`check-n8n-chart.sh`](#chart-render-check) | After temporarily moving `n8n_chart_version`'s default to the candidate. Renders this module's own values through the real chart and asserts the behaviors the module's code depends on; it has no candidate argument of its own, so it only ever sees whatever the default currently is. |
 | [`check-helm-chart-coverage.sh`](#chart-coverage-check) | After moving `n8n_chart_version`'s default. Fails if `docs/helm-chart-coverage.md` still claims the old version, or if the chart grew a top-level key the doc never mentions. |
 

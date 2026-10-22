@@ -28,7 +28,7 @@ None of it is cosmetic, and none of it announces itself when it is wrong.
 | Shared filesystem | none | optional `ReadWriteMany` claim across all three pod types |
 | Namespace | module-created | example-created, so the claim can exist first |
 
-## One filesystem across three pod types
+## Shared storage across the pods
 
 Queue mode runs main, worker and webhook-processor pods, and they do not share a filesystem. The chart mounts its own `data` volume on main only, and this module leaves persistence at the chart default, so that volume is an `emptyDir`.
 
@@ -92,7 +92,7 @@ If the control publishes and yours does not, the name is filtered. Pick another.
 
 Same as [`../homelab`](../homelab): a running cluster, the CloudNativePG operator, ingress-nginx, cert-manager with the `ClusterIssuer` named in `cluster_issuer`, and a kubeconfig. Additionally:
 
-- **A DNS-01 `ClusterIssuer`, not an HTTP-01 one.** This is the prerequisite most easily got wrong here. The repository's [`../../modules/tls-letsencrypt`](../../modules/tls-letsencrypt/) solves HTTP-01, which needs Let's Encrypt to reach each hostname from the public internet on port 80, and a tunnel-only cluster has no such path. It fails quietly: cert-manager retries, ingress-nginx serves its own self-signed certificate, and the symptom is a browser warning with nothing in the apply to explain it. With the zone already at Cloudflare, a `ClusterIssuer` using the `cloudflare` DNS-01 solver and a `Zone:DNS:Edit` token is the natural fit.
+- **A DNS-01 `ClusterIssuer`, not an HTTP-01 one.** This is the prerequisite most easily got wrong here. The repository's [`../../modules/tls-letsencrypt`](../../modules/tls-letsencrypt/) solves HTTP-01, which needs Let's Encrypt to reach each hostname from the public internet on port 80, and a tunnel-only cluster has no such path. It fails quietly: cert-manager retries, ingress-nginx serves its own self-signed certificate, and the symptom is a browser warning with nothing in the apply to explain it. With the zone already at Cloudflare, use a `ClusterIssuer` with the `cloudflare` DNS-01 solver and a token carrying both `Zone:DNS:Edit` and `Zone:Zone:Read`.
 - A Cloudflare Tunnel already terminating at your ingress controller, and its UUID (`cloudflared tunnel list`).
 - An API token with `Zone:DNS:Edit`, if you want the records created here.
 - ingress-nginx configured to derive the client address from `X-Forwarded-For`, otherwise the editor allowlist below compares against cloudflared's own address and admits everyone or no one:
@@ -152,10 +152,6 @@ terraform destroy
 
 Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 
-## Shared storage across the pods
-
-Identical to [`../homelab`](../homelab#shared-storage-across-the-pods), including the inputs and the two settings that make it take effect. Set `shared_storage_class` to an RWX-capable class and this example creates a claim and mounts it into the main, worker and webhook-processor pods; leave it null and binary data stays in Postgres. Read that section rather than a copy of it here, so the two cannot drift.
-
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -196,7 +192,7 @@ Identical to [`../homelab`](../homelab#shared-storage-across-the-pods), includin
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_cloudflare_api_token"></a> [cloudflare\_api\_token](#input\_cloudflare\_api\_token) | Cloudflare API token with Zone:DNS:Edit on cloudflare\_zone\_id. Read whenever set, even with cloudflare\_zone\_id null, so a destroy can clean up a record from an earlier apply before the zone ID was cleared. Prefer the CLOUDFLARE\_API\_TOKEN environment variable over putting it in terraform.tfvars. | `string` | `null` | no |
+| <a name="input_cloudflare_api_token"></a> [cloudflare\_api\_token](#input\_cloudflare\_api\_token) | Cloudflare API token with Zone:DNS:Edit on cloudflare\_zone\_id. Read whenever set, even with cloudflare\_zone\_id null, so a plan can clean up a record from an earlier apply before the zone ID was cleared. Prefer the CLOUDFLARE\_API\_TOKEN environment variable, except for that cleanup: the environment variable is invisible to this Terraform variable, so pass the token through terraform.tfvars for that one apply instead. | `string` | `null` | no |
 | <a name="input_cloudflare_tunnel_id"></a> [cloudflare\_tunnel\_id](#input\_cloudflare\_tunnel\_id) | UUID of the Cloudflare Tunnel that fronts the cluster's ingress controller. Each DNS record created when cloudflare\_zone\_id is set is a proxied CNAME to <this>.cfargotunnel.com. The tunnel itself is not managed by this example: it is long-lived cluster infrastructure serving every other hostname too, so a terraform destroy here must not be able to take it down. | `string` | `null` | no |
 | <a name="input_cloudflare_zone_id"></a> [cloudflare\_zone\_id](#input\_cloudflare\_zone\_id) | Cloudflare zone ID for the zone both hostnames sit under. Leave null (the default) to manage DNS yourself, in which case the example creates no records. Set it and the example creates one proxied CNAME per hostname pointing at the Cloudflare Tunnel named by cloudflare\_tunnel\_id. The API token needs Zone:DNS:Edit on this zone. | `string` | `null` | no |
 | <a name="input_cluster_issuer"></a> [cluster\_issuer](#input\_cluster\_issuer) | cert-manager ClusterIssuer that signs both Ingress certificates. Must already exist in the cluster - this example does not install cert-manager. Each hostname gets its own Certificate, so an issuer scoped to a single DNS zone needs both names inside it. | `string` | `"letsencrypt-prod"` | no |

@@ -74,6 +74,7 @@ tasks:
           var: EXAMPLES
           as: EXAMPLE
         cmd: |
+          set -e
           cd examples/{{.EXAMPLE}}
           terraform test -verbose
           if [ -d tests/opentofu-gaps ]; then
@@ -83,6 +84,7 @@ tasks:
           var: SUBMODULES
           as: SUBMODULE
         cmd: |
+          set -e
           cd modules/{{.SUBMODULE}}
           terraform test -verbose
           if [ -d tests/opentofu-gaps ]; then
@@ -227,8 +229,8 @@ tasks:
   example-parity:
     desc: >-
       Check the seven homelab examples' variable surfaces and shared-storage
-      documentation haven't silently drifted apart. Local-only, not CI-gated.
-      No terraform, no network.
+      documentation haven't silently drifted apart. CI-gated (the
+      example-parity job). No terraform, no network.
     cmds:
       - ./scripts/check-example-parity.sh
 
@@ -291,14 +293,19 @@ tasks:
   ci:
     desc: >-
       Run the full local loop (fmt, validate, test, lint, banners, naming,
-      inputs-reach-workload, terraform-floor, docs, markdown). Mirrors every
-      CI job except checkov and test-opentofu: checkov is a hard-fail gate in
-      CI but is left out here because it needs a pinned checkov install that
-      the other tasks do not (run `task checkov` separately once you have
-      it); test-opentofu is covered by the separate `task opentofu` instead.
-      naming and inputs-reach-workload do have their own CI jobs, run here
-      too for one local command. Only banners and markdown are local-only,
-      not CI-gated at all.
+      inputs-reach-workload, terraform-floor, example-parity, docs,
+      markdown). Mirrors every CI job except checkov, test-opentofu and
+      test-floor: checkov is a hard-fail gate in CI but is left out here
+      because it needs a pinned checkov install that the other tasks do
+      not (run `task checkov` separately once you have it); test-opentofu
+      is covered by the separate `task opentofu` instead. test-floor runs
+      the whole suite a second time against TF_FLOOR_VERSION, a second
+      Terraform binary this task does not install; reproduce it locally by
+      pointing `terraform` on PATH at the floor binary and re-running
+      `task test`, or trust CI's own test-floor job. naming,
+      inputs-reach-workload and example-parity do have their own CI jobs,
+      run here too for one local command. Only banners and markdown are
+      local-only, not CI-gated at all.
     cmds:
       - task: fmt
       - task: validate
@@ -308,5 +315,6 @@ tasks:
       - task: naming
       - task: inputs-reach-workload
       - task: terraform-floor
+      - task: example-parity
       - task: docs
       - task: markdown

@@ -11,12 +11,14 @@
 # in tests/ breaks `tofu init` for the whole root module, not just this run.
 # Parking it in tests/opentofu-gaps/ instead keeps it outside that scan.
 #
-# .github/workflows/terraform-tests.yml's test-opentofu job never points at
-# this directory, so tofu does not see this file at all (nothing to
-# soft-fail there). test/test-floor still run it, with the rest of the
-# suite, via `terraform test -test-directory=tests/opentofu-gaps`. See that
-# workflow's comment on test-opentofu for the companion
-# modules/cluster-capacity gap.
+# .github/workflows/terraform-tests.yml's test-opentofu job does run this
+# directory, via its own "tofu test (known OpenTofu gaps)" step
+# (`tofu test -test-directory=tests/opentofu-gaps`), but that step is
+# continue-on-error: true: `tofu init` rejecting this file outright is an
+# expected, non-blocking failure the step's comment names. test/test-floor
+# run the suite as a real, blocking assertion via
+# `terraform test -test-directory=tests/opentofu-gaps`. See that workflow's
+# comment on test-opentofu for the companion modules/cluster-capacity gap.
 #
 # Run: terraform test -test-directory=tests/opentofu-gaps
 #   (from the module root)
@@ -70,7 +72,7 @@ run "enabling_rotation_roll_reaches_both_releases" {
   }
 
   assert {
-    condition = alltrue([
+    condition = length(helm_release.valkey) == 1 && alltrue([
       for r in helm_release.valkey :
       contains(keys(yamldecode(r.values[0]).podAnnotations), "checksum/valkey-password")
     ])

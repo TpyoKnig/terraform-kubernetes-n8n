@@ -12,9 +12,11 @@
 # swallow a regression in that file's own "an_unavailable_read_says_nothing"
 # run, which carries no override_data and is unaffected.
 #
-# .github/workflows/terraform-tests.yml's test-opentofu job never points at
-# this directory, so tofu does not see this file at all. test/test-floor
-# still run it, with the rest of the directory's suite, via
+# .github/workflows/terraform-tests.yml's test-opentofu job does run this
+# directory, via its own "tofu test (known OpenTofu gaps)" step
+# (`tofu test -test-directory=tests/opentofu-gaps`), but that step is
+# continue-on-error: true and names this file's failures as expected,
+# non-blocking. test/test-floor run it as a real, blocking assertion via
 # `terraform test -test-directory=tests/opentofu-gaps`. See that workflow's
 # comment on test-opentofu for the companion root-module gap.
 #
@@ -195,8 +197,15 @@ run "a_noexecute_tainted_node_is_not_supply" {
 }
 
 # The provider can hand taints back as null rather than an empty list; a for
-# over null is a hard plan error outside any check, which is exactly what this
-# module must never produce.
+# over null is a hard plan error outside any check, which is exactly what
+# this module must never produce. Omitting the attribute (rather than
+# writing `taints = null` explicitly) is deliberate, not an oversight: the
+# override_data mock engine fills an unspecified nested attribute with a
+# value already typed to the real schema (list of object here), which is
+# what resolves to null in practice; a bare `taints = null` written here
+# carries no such type information, and feeding it back against the
+# schema-typed generated value fails with "incompatible types; expected
+# list of object, found dynamic" (confirmed against this exact run).
 run "a_null_taints_attribute_does_not_abort_the_plan" {
   command = plan
 
@@ -225,7 +234,7 @@ run "an_unreadable_demand_model_silences_the_check" {
 
   variables {
     model_readable          = false
-    peak_cpu_request_millis = 0
+    peak_cpu_request_millis = 12000
   }
 
   override_data {

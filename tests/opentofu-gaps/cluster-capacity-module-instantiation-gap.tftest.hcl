@@ -25,11 +25,13 @@
 # Terraform. Terraform's own documented test behaviour needs no such output
 # to resolve a module's instance count; OpenTofu's test runner does here.
 #
-# .github/workflows/terraform-tests.yml's test-opentofu job never points at
-# this directory, so tofu does not see this file at all. test/test-floor
-# still run it, with the rest of the directory's suite, via
-# `terraform test -test-directory=tests/opentofu-gaps`. See that workflow's
-# comment on test-opentofu for the companion gaps in this same directory.
+# .github/workflows/terraform-tests.yml's test-opentofu job does run this
+# file, via its own "tofu test (known OpenTofu gaps)" step
+# (`tofu test -test-directory=tests/opentofu-gaps`), but that step is
+# continue-on-error: true and names this run as an expected, non-blocking
+# failure in its comment. test/test-floor run it as a real, blocking
+# assertion via `terraform test -test-directory=tests/opentofu-gaps`, with
+# the rest of this directory's suite.
 #
 # Run: terraform test -test-directory=tests/opentofu-gaps
 #   (from the module root)

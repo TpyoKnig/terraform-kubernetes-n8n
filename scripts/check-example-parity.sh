@@ -137,6 +137,23 @@ is_allowed() {
 fail=0
 baseline_vars="$(declare_vars "$BASELINE")"
 
+# An ALLOWED_DIFFS entry naming an example directory that no longer exists
+# (removed or renamed) is never visited by the per-example loop below, since
+# that loop only iterates over EXAMPLES, built from directories found on
+# disk. Caught here instead, independent of that loop, so a removed example
+# cannot leave a stale exemption behind silently.
+for entry in "${ALLOWED_DIFFS[@]}"; do
+  entry_example="${entry%%:*}"
+  known=0
+  for example in "${EXAMPLES[@]}"; do
+    [[ "$example" == "$entry_example" ]] && { known=1; break; }
+  done
+  if [[ "$known" -eq 0 ]]; then
+    echo "check-example-parity: ALLOWED_DIFFS names \"$entry_example\", but no such examples/$entry_example directory exists; remove the stale exemption" >&2
+    fail=1
+  fi
+done
+
 for example in "${EXAMPLES[@]}"; do
   example_vars="$(declare_vars "$example")"
 

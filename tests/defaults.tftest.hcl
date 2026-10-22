@@ -7424,6 +7424,22 @@ run "valkey_request_at_its_limit_draws_no_warning" {
   }
 }
 
+# The Kubernetes rejection this check warns about only happens to a Valkey
+# pod this module actually renders. On the external redis backend,
+# helm_release.valkey never renders (redis_valkey.tf's count is gated on
+# local.valkey_enabled), so a mismatched pair here is inert and must not
+# warn, the same shape as postgres_cnpg.tf's cnpg_enabled gate.
+run "valkey_resource_mismatch_on_the_external_backend_draws_no_warning" {
+  command = plan
+
+  variables {
+    redis_backend      = "external"
+    redis_host         = "redis.external.example.com"
+    valkey_cpu_request = "1000m"
+    valkey_cpu_limit   = "500m"
+  }
+}
+
 # Hand-computed against this module's own defaults so a silent term change
 # fails loudly: main 1 × (1000m + 200m task runner), workers 10 × (500m +
 # 200m), webhooks 8 × 300m = 10600m with nothing backend-sized. Postgres and
@@ -7488,6 +7504,25 @@ run "the_resource_limit_check_stays_quiet_on_the_external_backend" {
   assert {
     condition     = length(kubectl_manifest.cnpg_cluster) == 0
     error_message = "postgres_backend = \"external\" must plan no CNPG Cluster; the caller's server is the database."
+  }
+}
+
+# A mismatched Pooler request/limit pair reaches no Pooler at all while
+# cnpg_pooler_enabled stays at its default (false), even with the Cluster
+# itself active (postgres_backend = "cnpg"). Gating this half of the check
+# on cnpg_enabled alone, rather than cnpg_pooler_enabled, would warn about a
+# Pooler pod that is never rendered.
+run "the_pooler_resource_limit_check_stays_quiet_with_the_pooler_disabled" {
+  command = plan
+
+  variables {
+    cnpg_pooler_cpu_request = "500m"
+    cnpg_pooler_cpu_limit   = "100m"
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_pooler) == 0
+    error_message = "cnpg_pooler_enabled defaults to false, so no Pooler should be planned."
   }
 }
 
