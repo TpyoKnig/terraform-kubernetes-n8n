@@ -25,6 +25,7 @@ cloudflare_tunnel_id = "00000000-0000-0000-0000-000000000000"
 
 # How many proxies append to X-Forwarded-For before a request reaches n8n.
 # 2 = ingress-nginx + the Cloudflare edge. Raise for a WAF or another proxy.
+# Must be a whole number from 1 to 10.
 # proxy_hops = 2
 
 # Path to the kubeconfig the kubernetes and helm providers authenticate with.

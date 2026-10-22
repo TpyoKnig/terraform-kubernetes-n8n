@@ -1,10 +1,12 @@
 # Shared responsibility
 
 This module deploys an opinionated slice of n8n's workload onto a Kubernetes
-cluster you already run: the namespace, Secrets, the n8n Helm release, the
-CloudNativePG `Cluster` and the Valkey release when you pick the in-cluster
-defaults, the `Ingress` when you ask for one, the worker `ScaledObject` when
-you attest KEDA, the task-runner `ConfigMap`, and two optional `LoadBalancer`
+cluster you already run: the namespace when `create_namespace` is true (the
+default), Secrets, the n8n Helm release, the CloudNativePG `Cluster` and the
+Valkey release when you pick the in-cluster defaults, the `Ingress` when you
+ask for one, the worker `ScaledObject` when you attest KEDA, the
+task-runner `ConfigMap` when task runners are enabled
+(`n8n_task_runners_enabled`, the default), and two optional `LoadBalancer`
 Services. It does not, and cannot, run the platform underneath that workload.
 This page collects the ownership boundaries that are otherwise scattered
 across `AGENTS.md`'s "ownership boundary" section, the README's
@@ -14,11 +16,18 @@ descriptions, and [`docs/operations.md`](./operations.md), into one table so
 anyone pricing or supporting a deployment on top of the module can find every
 gap in one place.
 
-The rule behind the split is ownership, not convenience. Each caller-owned
-item below is a cluster-wide singleton serving every workload on the
-cluster. A module that installed one would take responsibility for
-upgrading and destroying it on behalf of workloads it cannot see; see
-`AGENTS.md` → "The ownership boundary, and why it sits here".
+The rule behind the split is ownership, not convenience, though the reason
+differs by row. The platform components above (the cluster itself, the
+ingress controller, cert-manager, the CloudNativePG operator, KEDA, the
+default `StorageClass`, metrics-server) are each a cluster-wide singleton
+serving every workload on the cluster: a module that installed one would
+take responsibility for upgrading and destroying it on behalf of workloads
+it cannot see; see `AGENTS.md` → "The ownership boundary, and why it sits
+here". DNS, backup and restore, upgrades, monitoring, and support are not
+singleton services; they stay caller-owned because there is no portable way
+to automate them inside one module's `apply` (DNS, backup/restore,
+migration rollback) or because they are platform/organizational concerns
+this module never provides (monitoring, support).
 
 | Area | What the module does | What the caller owns | Related input / doc |
 |---|---|---|---|
@@ -30,7 +39,7 @@ upgrading and destroying it on behalf of workloads it cannot see; see
 | Default `StorageClass` | Requests PVCs for the in-cluster CNPG and Valkey defaults, naming a class only when `cnpg_storage_class` / `valkey_storage_class` is set. | Providing a default `StorageClass` (or naming one explicitly) with a provisioner that actually binds. With no default and no class named, the PVC stays `Pending` and the pod that needs it never starts, which blocks n8n outright on the in-cluster backend defaults. | `cnpg_storage_class`, `valkey_storage_class` |
 | metrics-server | Renders a CPU-based HPA on the worker pool whenever KEDA is not attested, and on the webhook-processor pool whenever `n8n_webhook_hpa_enabled` is true (the default, independent of KEDA). | Installing metrics-server (or another `metrics.k8s.io` provider). With none installed the HPA reports unknown metrics and never scales, quietly capping the pool at its floor. | `n8n_webhook_hpa_enabled`; README → [Autoscaling and capacity](../README.md#autoscaling-and-capacity) |
 | DNS | Creates no DNS record anywhere, and documents the hostname(s) the `Ingress` answers on (`n8n_domain`, `n8n_additional_domains`). | Making the name resolve to whatever fronts the cluster: a tunnel, a public `LoadBalancer`, split-horizon DNS, a reverse proxy, an overlay network. There is no portable default, which is why the examples each work one strategy end to end rather than the module picking one. | README → [Ingress, TLS and DNS](../README.md#ingress-tls-and-dns); `examples/homelab-cloudflare/`, `examples/homelab-godaddy/` |
-| Secrets and Terraform state | Generates, as Terraform-managed values: the n8n encryption key when neither `n8n_encryption_key` nor `n8n_encryption_key_secret_ref` is set, the Valkey default-user password when `redis_backend = "valkey"`, and the task-runner auth token (minted by the chart itself, outside Terraform's reach). | Every generated or caller-supplied secret value this module does not receive through a `*_secret_ref` lands in Terraform state in plaintext: the generated encryption key, `db_password` when supplied directly rather than via `db_password_secret_ref`, and `redis_auth_token` likewise. Restricting access to state, and to the namespace the module writes Secrets into, is the caller's job. CloudNativePG keeps its own app-user credentials out of Terraform's reach entirely, generating them straight into a Secret the module never reads. | `n8n_encryption_key`, `n8n_encryption_key_secret_ref`, `db_password_secret_ref`, `redis_auth_token_secret_ref`, `n8n_extra_env_from_secret` |
+| Secrets and Terraform state | Generates, as Terraform-managed values: the n8n encryption key when neither `n8n_encryption_key` nor `n8n_encryption_key_secret_ref` is set, the Valkey default-user password when `redis_backend = "valkey"`, and the task-runner auth token (minted by the chart itself, outside Terraform's reach). | Every generated or caller-supplied secret value this module does not receive through a `*_secret_ref` lands in Terraform state in plaintext: the generated encryption key, `db_password` when supplied directly rather than via `db_password_secret_ref`, and `redis_auth_token` likewise. The Valkey default-user password (`random_password.valkey_default`) has no such escape: on the in-cluster `redis_backend = "valkey"` path the module always generates it and it always lands in state, since `redis_auth_token` / `redis_auth_token_secret_ref` apply only to the external Redis path. Restricting access to state, and to the namespace the module writes Secrets into, is the caller's job. CloudNativePG keeps its own app-user credentials out of Terraform's reach entirely, generating them straight into a Secret the module never reads. | `n8n_encryption_key`, `n8n_encryption_key_secret_ref`, `db_password_secret_ref`, `redis_auth_token_secret_ref`, `n8n_extra_env_from_secret` |
 | Backup and restore | With `postgres_backend = "cnpg"`, `cnpg_backup` writes the `Cluster`'s WAL-archiving configuration when set (off by default: CloudNativePG itself takes no backups unasked). The module never creates a `Backup` or `ScheduledBackup`, and the Valkey queue is treated as disposable, not backed up at all. | The base backup a `Backup` or `ScheduledBackup` custom resource would take, restore drills, and backups for an external database or Redis brought via the `"external"` backend paths. A PVC alone is not a backup: `terraform destroy` plus a `StorageClass` reclaim policy of `Delete` is all that stands between the only Postgres copy and gone. | `cnpg_backup`, `cnpg_plugins`; [`docs/operations.md`](./operations.md#backups); README → [Out of scope](../README.md#out-of-scope) |
 | Upgrades and migration rollback | Supports bumping `n8n_image_tag` / `n8n_chart_version` / `cnpg_postgres_image_tag` on an existing deployment, with per-version upgrade notes in the CHANGELOG and [`docs/upgrading-n8n.md`](./upgrading-n8n.md). | Database migration rollback on a failed n8n upgrade is not automatic: stop n8n and run `n8n db:revert` once per reversible migration, or restore the database backup taken before the upgrade. Some migrations are irreversible; check the release notes first. A Postgres major-version bump through `cnpg_postgres_image_tag` runs CNPG's in-place `pg_upgrade` job with the whole cluster offline for its duration; rehearse it somewhere that does not matter first. | [`docs/upgrading-n8n.md`](./upgrading-n8n.md), `cnpg_postgres_image_tag` |
 | Monitoring and alerting | Wires n8n's Prometheus metrics endpoint (`n8n_metrics_enabled`) and OpenTelemetry tracing (`n8n_otel_*`) when the caller configures them. | The module installs no Prometheus, Grafana, Loki, OpenSearch, Datadog Agent, or any log shipper, and creates no dashboards or alerts. KEDA and metrics-server are load-bearing for autoscaling and are still the caller's to install, per the rows above. Scrape configuration and alerting are the caller's monitoring stack. | `n8n_metrics_enabled`, `n8n_otel_enabled`; README → [Out of scope](../README.md#out-of-scope) |

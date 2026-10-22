@@ -140,19 +140,64 @@ for t in root_text.values():
 # Not just "is this env var emitted anywhere in the root": an input whose
 # claimed env var happens to be emitted by a wholly different input's own
 # rendering would otherwise pass despite rendering nothing (or the wrong
-# name) itself. Scoped to within NEARBY characters of one of the claiming
-# variable's own var.<name> references, generous enough to span the
-# local/resource attribute that actually renders it.
-NEARBY = 400
+# name) itself. Scoped to the same `{ name = ..., value = ... }` entry as one
+# of the claiming variable's own var.<name> references: entries in this repo
+# sit one per line or one per small multi-line block, so a neighbouring
+# entry's `name = "..."` must not satisfy a different input's claim.
+#
+# One shape still needs a step beyond the entry itself: a handful of entries
+# (e.g. N8N_REINSTALL_MISSING_PACKAGES) render a fixed literal value and are
+# gated entirely from outside, as `var.x ? [ { name = ..., value = "true" } ]
+# : []`; the var never appears inside the entry's own braces. For those the
+# tie to the claiming input is the one-line `var.<name> ? [` guard that opens
+# the list the entry lives in, checked on that single source line so it
+# cannot pick up an unrelated guard a line or more away.
+
+
+def container_spans(text):
+    """Every balanced `{...}` or `[...]` span in text, inner spans included."""
+    spans = []
+    stack = []
+    for i, ch in enumerate(text):
+        if ch in "{[":
+            stack.append(i)
+        elif ch in "}]" and stack:
+            start = stack.pop()
+            spans.append((start, i))
+    return spans
+
+
+root_spans = {f: container_spans(t) for f, t in root_text.items()}
+
+
+def enclosing_span(spans, start, end, min_size=0):
+    """Smallest span in spans, at least min_size long, containing [start, end)."""
+    best = None
+    for s, e in spans:
+        if s <= start and end <= e and (e - s) >= min_size and (best is None or (e - s) < (best[1] - best[0])):
+            best = (s, e)
+    return best
+
+
+def guards_with_its_own_variable(text, list_start, var_name):
+    line_start = text.rfind("\n", 0, list_start) + 1
+    line = text[line_start:list_start]
+    return re.search(r'\bvar\.' + re.escape(var_name) + r'\b\s*\?\s*$', line) is not None
 
 
 def rendered_by_its_own_variable(var_name, env_name):
     pattern = re.compile(r'\bvar\.' + re.escape(var_name) + r'\b')
     name_pattern = re.compile(r'name\s*=\s*"' + re.escape(env_name) + r'"')
-    for t in root_text.values():
-        for m in pattern.finditer(t):
-            start, end = max(0, m.start() - NEARBY), min(len(t), m.end() + NEARBY)
-            if name_pattern.search(t[start:end]):
+    for f, t in root_text.items():
+        spans = root_spans[f]
+        for nm in name_pattern.finditer(t):
+            entry = enclosing_span(spans, nm.start(), nm.end())
+            if not entry:
+                continue
+            if pattern.search(t[entry[0]:entry[1]]):
+                return True
+            parent = enclosing_span(spans, entry[0], entry[1], min_size=entry[1] - entry[0] + 1)
+            if parent and guards_with_its_own_variable(t, parent[0], var_name):
                 return True
     return False
 
@@ -172,5 +217,5 @@ if unrendered:
     print("   the wrong variable, or that variable renders only from a different")
     print("   input's own code path. All three are worth failing over.")
 
-if dead or unrendered or ack_rendered:
+if dead or unref or unrendered or ack_rendered:
     sys.exit(1)

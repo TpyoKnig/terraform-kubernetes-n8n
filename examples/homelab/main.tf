@@ -84,8 +84,11 @@ module "n8n" {
   n8n_task_runners_enabled = true
 
   # Observability: /metrics is always on, because it is scraped rather than
-  # pushed and so needs no collector; an in-cluster Prometheus or Alloy picks
-  # it up as is. OTLP tracing defaults to this lab's own collector via
+  # pushed and so needs no collector. This only exposes the endpoint; it does
+  # not configure scraping. The chart ships no ServiceMonitor/annotations of
+  # its own (see n8n_metrics_enabled's description), so an in-cluster
+  # Prometheus or Alloy still needs its own scrape config or ServiceMonitor
+  # CR pointed at the main pod's Service before it picks this up. OTLP
   # otel_endpoint; point it elsewhere, or set it to null to turn tracing off,
   # without touching anything else. The tuning inputs are gated on the same
   # condition because the module warns (plan-time, non-blocking) when

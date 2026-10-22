@@ -73,7 +73,7 @@ check "valkey_resource_request_not_above_limit" {
         local.valkey_memory_request_bytes <= local.valkey_memory_limit_bytes
       ) : true,
     ])
-    error_message = "valkey_cpu_request/valkey_cpu_limit or valkey_memory_request/valkey_memory_limit set a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so the Valkey Helm release fails at apply time with a validating-webhook error rather than anything this module's own plan surfaces. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
+    error_message = "valkey_cpu_request/valkey_cpu_limit or valkey_memory_request/valkey_memory_limit set a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so this plan-time warning is followed by the Valkey Helm release failing at apply time with a validating-webhook error. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
   }
 }
 
@@ -197,13 +197,12 @@ resource "helm_release" "valkey" {
       } : {},
 
       # Always rendered, never optional, once any of the four sizing inputs is
-      # set. Kubernetes defaults an omitted request to its limit when only a
-      # limit is given, so the pod only runs BestEffort, the first QoS class
-      # the kubelet evicts under node pressure, while every n8n pod it serves
-      # can carry one, when none of the four is set at all. An explicit
-      # request is what pins a stronger class (Burstable, or Guaranteed when
-      # every request equals its limit) rather than leaving it to that
-      # default.
+      # set. BestEffort, the first QoS class the kubelet evicts under node
+      # pressure, applies only when none of the four is set at all, while
+      # every n8n pod it serves can carry one. A limit alone already pins the
+      # stronger Burstable class, since Kubernetes defaults an omitted
+      # request to match it; Guaranteed needs every request to equal its own
+      # limit, for both cpu and memory.
       local.valkey_resources != null ? { resources = local.valkey_resources } : {},
     ))
   ]

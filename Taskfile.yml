@@ -104,15 +104,28 @@ tasks:
     cmds:
       - |
         set -e
+        if ! command -v tofu >/dev/null 2>&1; then
+          echo "ERROR: tofu is not on PATH, cannot run tofu test for {{.DIR}}. This is a missing prerequisite, not the known OpenTofu testing-framework gap: install tofu (see task opentofu's own desc) and re-run." >&2
+          exit 1
+        fi
         cd "{{.DIR}}"
         init_status=0
         tofu init -backend=false || init_status=$?
-        test_status=0
-        if [ "$init_status" -eq 0 ]; then
-          tofu test -verbose || test_status=$?
+        if [ "$init_status" -ne 0 ]; then
+          echo "ERROR: tofu init failed for {{.DIR}} (exit $init_status). This is an init failure (missing provider, network, or a real configuration break), not the known OpenTofu testing-framework gap, which only ever fails at tofu test." >&2
+          exit "$init_status"
         fi
-        if [ "$init_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
-          echo "WARNING: tofu test failed for {{.DIR}} (init=$init_status test=$test_status): known non-blocking OpenTofu gap, see test-opentofu's continue-on-error comment in .github/workflows/terraform-tests.yml" >&2
+        test_status=0
+        tofu test -verbose || test_status=$?
+        if [ "$test_status" -ne 0 ]; then
+          echo "WARNING: tofu test failed for {{.DIR}} (exit $test_status): known non-blocking OpenTofu gap, see test-opentofu's continue-on-error comment in .github/workflows/terraform-tests.yml" >&2
+        fi
+        if [ -d "tests/opentofu-gaps" ]; then
+          gaps_status=0
+          tofu test -test-directory=tests/opentofu-gaps -verbose || gaps_status=$?
+          if [ "$gaps_status" -ne 0 ]; then
+            echo "WARNING: tofu test (known OpenTofu gaps) failed for {{.DIR}} (exit $gaps_status): isolated in tests/opentofu-gaps, see test-opentofu's matching step in .github/workflows/terraform-tests.yml" >&2
+          fi
         fi
 
   opentofu:
@@ -258,11 +271,13 @@ tasks:
     desc: >-
       Run the full local loop (fmt, validate, test, lint, banners, naming,
       inputs-reach-workload, terraform-floor, docs, markdown). Mirrors every
-      CI job except checkov, which is a hard-fail gate in CI but is left out
-      here because it needs a pinned checkov install that the other tasks do
-      not: run `task checkov` separately once you have it. Also runs banners,
-      naming, inputs-reach-workload and markdown, which CI does not gate on
-      at all.
+      CI job except checkov and test-opentofu: checkov is a hard-fail gate in
+      CI but is left out here because it needs a pinned checkov install that
+      the other tasks do not (run `task checkov` separately once you have
+      it); test-opentofu is covered by the separate `task opentofu` instead.
+      naming and inputs-reach-workload do have their own CI jobs, run here
+      too for one local command. Only banners and markdown are local-only,
+      not CI-gated at all.
     cmds:
       - task: fmt
       - task: validate

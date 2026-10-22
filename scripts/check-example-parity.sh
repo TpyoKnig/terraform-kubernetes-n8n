@@ -34,9 +34,9 @@
 # catches the surface going out of sync, the same scope the sibling's
 # equivalent check has.
 #
-# Local-only: not run in CI (.github/workflows/terraform-tests.yml), unlike
-# the AWS sibling's check-example-parity.sh, which that repo does gate CI
-# on. Run by hand or via `task example-parity`.
+# Run in CI via .github/workflows/terraform-tests.yml's example-parity job,
+# matching the AWS sibling's check-example-parity.sh, which that repo also
+# gates CI on. Also runnable by hand or via `task example-parity`.
 #
 # Usage: scripts/check-example-parity.sh
 # Requires: bash, grep, sed, sort, dirname. No terraform, no network.
@@ -47,8 +47,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 BASELINE=homelab
-EXAMPLES=(homelab-pgbouncer homelab-cloudflare homelab-godaddy homelab-split-ingress
-  homelab-cloudflare-split-ingress homelab-ai-assistant)
+
+# Built from examples/homelab-*/ rather than hardcoded, so a new example
+# directory is picked up by both checks below automatically instead of
+# silently skipping it until someone remembers to add it here. $BASELINE
+# itself does not match this pattern (no trailing "-..."), so it is never
+# double-counted.
+shopt -s nullglob
+EXAMPLES=()
+for dir in examples/homelab-*/; do
+  EXAMPLES+=("$(basename "$dir")")
+done
 
 # "example:pattern" pairs allowed to differ from examples/homelab, either
 # way (a variable the baseline has and the example doesn't, or vice versa).

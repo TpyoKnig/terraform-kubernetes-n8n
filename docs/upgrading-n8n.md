@@ -59,15 +59,18 @@ its own copy of the launcher config to diff against what this file renders:
 docker create --name n8n-runners-check n8nio/runners:<new-tag>
 docker cp n8n-runners-check:/etc/n8n-task-runners.json ./new-runners-config.json
 docker rm n8n-runners-check
-diff <(jq -S . ./new-runners-config.json) <(jq -S . <<< "$(kubectl get configmap -n <namespace> <release>-task-runners -o jsonpath='{.data.n8n-task-runners\.json}')")
+diff \
+  <(jq -S 'del(.. | .["allowed-env"]?, .["env-overrides"]?)' ./new-runners-config.json) \
+  <(jq -S 'del(.. | .["allowed-env"]?, .["env-overrides"]?)' <<< "$(kubectl get configmap -n <namespace> <release>-task-runners -o jsonpath='{.data.n8n-task-runners\.json}')")
 ```
 
-A clean diff on `command`, `args` and any path field means the bump is safe;
-a difference there means this module's rendered config needs updating
-alongside the tag. The full diff is never clean: this module's rendered
-config always carries `allowed-env` and `env-overrides` entries the stock
-image's own shipped config does not, by design (see `task_runners_config.tf`),
-so compare only those three kinds of fields, not the whole file.
+This filters out `allowed-env` and `env-overrides` before diffing: this
+module's rendered config always carries those two keys, by design (see
+`task_runners_config.tf`), while the stock image's own shipped config does
+not, so an unfiltered diff can never be clean regardless of whether
+`command`, `args` or any path field actually changed. A clean filtered diff
+means the bump is safe; a difference means this module's rendered config
+needs updating alongside the tag.
 
 ## Valkey restarts during the upgrade
 
@@ -142,17 +145,31 @@ Behavior that changed on this bump, verified by rendering this module's values t
 
 1. Set `n8n_image_tag`, any required `n8n_chart_version`, and, when using a custom application tag, the matching `n8n_task_runner_image_tag`.
 2. `terraform plan` and review the diff. `atomic = true` rolls back Kubernetes resources after a failed rollout, not PostgreSQL migrations.
-3. `terraform apply`. Watch the main pods through the rollout:
+3. `terraform apply`. Watch the main and worker pods through the rollout:
 
    ```bash
    kubectl get pods -n <namespace> -l app.kubernetes.io/component=main -w
    ```
 
-4. Confirm the version actually running matches what you set:
+   ```bash
+   kubectl get pods -n <namespace> -l app.kubernetes.io/component=worker -w
+   ```
+
+4. Confirm the version actually running matches what you set, on a main pod
+   and on every worker pod:
 
    ```bash
    kubectl exec -n <namespace> <main-pod> -c n8n-main -- n8n --version
+   kubectl get pods -n <namespace> -l app.kubernetes.io/component=worker -o name | \
+     xargs -I{} kubectl exec -n <namespace> {} -c n8n-worker -- n8n --version
    ```
+
+   A rolling `terraform apply` can leave main and some workers on the new
+   tag while other workers are still mid-rollout on the old one. Treat any
+   mismatch as a state to finish (wait for the rollout to converge) or
+   revert (roll back the tag), not one to leave running: workers on
+   different n8n versions can process the same Bull queue with different
+   migration and feature assumptions.
 
 ## Rolling back
 

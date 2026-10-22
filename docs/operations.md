@@ -21,7 +21,7 @@ apply the cluster needs:
 | --- | --- | --- |
 | **CloudNativePG operator** | Reconciles the `Cluster` CR this module renders | `helm install cnpg cnpg/cloudnative-pg -n cnpg-system --create-namespace`. Only needed for `postgres_backend = "cnpg"`. |
 | **ingress-nginx** (or another controller) | Serves the `Ingress` | Set `k8s_ingress_class_name` to match. |
-| **cert-manager + a `ClusterIssuer`** | Issues the TLS certificate | Named via `k8s_ingress_cluster_issuer`. [`modules/tls-letsencrypt`](../modules/tls-letsencrypt/) creates a Let's Encrypt one if you have none, solving HTTP-01, which needs the hostname publicly reachable on port 80. Tunnel-only clusters need a DNS-01 issuer arranged separately. |
+| **cert-manager + a `ClusterIssuer`** | Issues the TLS certificate | Named via `k8s_ingress_cluster_issuer`. [`modules/tls-letsencrypt`](../modules/tls-letsencrypt/) creates a Let's Encrypt one if you have none, solving HTTP-01, which needs the public internet to reach the challenge path, including through an HTTPS redirect or a Cloudflare Tunnel. A cluster with no public path to that request at all (private network, authenticating proxy, or a tunnel that never routes it to an origin) needs a DNS-01 issuer arranged separately. |
 | **A default `StorageClass`** | Backs the CNPG and Valkey PVCs | Or name one explicitly with `cnpg_storage_class` / `valkey_storage_class`. |
 | **DNS** | Resolves `k8s_ingress_host` to the ingress controller's address | Yours to manage; see below. |
 | **A `LoadBalancer` IP allocator** | Only if you enable `cnpg_lan_expose` or `metrics_lan_expose` | Cilium LB-IPAM, MetalLB, kube-vip or a cloud controller. Any of them will allocate an address; *requesting a specific one* is allocator-specific - see below. |

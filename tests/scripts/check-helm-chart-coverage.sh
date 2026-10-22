@@ -96,7 +96,12 @@ backticked_terms="$(grep -oE '`[^`]*`' <<<"$contract_section" || true)"
 
 missing=()
 for key in "${chart_keys[@]}"; do
-  if ! grep -qE "(^|[^A-Za-z0-9_-])${key}([^A-Za-z0-9_-]|$)" <<<"$backticked_terms"; then
+  # Anchored to right after the opening backtick, not anywhere inside the
+  # span: a dotted path like `config.timezone` must only count toward
+  # `config`. Without this anchor, a key search for a hypothetical top-level
+  # `timezone` key would match here too, because the dot before "timezone"
+  # already satisfies the old "preceded by a non-word char" rule.
+  if ! grep -qE '^`'"${key}"'([^A-Za-z0-9_-]|$)' <<<"$backticked_terms"; then
     missing+=("$key")
   fi
 done

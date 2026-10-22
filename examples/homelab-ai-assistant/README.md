@@ -129,7 +129,7 @@ kubectl -n n8n exec deploy/n8n-main -c n8n-main -- \
   wget -q -O - 'http://searxng-http.searxng.svc.cluster.local:8080/search?q=n8n&format=json'
 ```
 
-That must print JSON results; if it errors on `format=json`, SearXNG is missing `json` in its `search.formats`. Even once the variable is set, n8n asks an owner to approve web search in an "Add web search" dialog the first time the assistant wants the web, and the example cannot answer that for you. Brave Search is the alternative: storing a `brave-api-key` in `ai-assistant-secrets` alone does nothing here, since `main.tf` does not wire it into `n8n_extra_env_from_secret`; add an `INSTANCE_AI_BRAVE_SEARCH_API_KEY` entry there too, per the worked example in [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
+If the command fails to connect at all, the Service name or namespace is wrong, fix that first. If it connects but returns an error specifically on the `format=json` parameter (not a connection failure), SearXNG is missing `json` in its `search.formats`. Even once the variable is set, n8n asks an owner to approve web search in an "Add web search" dialog the first time the assistant wants the web, and the example cannot answer that for you. Brave Search is the alternative: storing a `brave-api-key` in `ai-assistant-secrets` alone does nothing here, since `main.tf` does not wire it into `n8n_extra_env_from_secret`; add an `INSTANCE_AI_BRAVE_SEARCH_API_KEY` entry there too, per the worked example in [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
 
 Verified live on n8n 2.44.4 with SearXNG: asking "Search the web for the latest stable n8n release" ran the assistant's `research` tool with `action: web-search` and the answer matched the GitHub release.
 

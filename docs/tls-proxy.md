@@ -45,14 +45,18 @@ the certificate(s) to its built-in roots; it does not replace them.
   Redis connections are plain TCP (or TLS negotiated in-protocol, see
   `db_postgresdb_ssl_enabled`) and never go through them, so an in-cluster
   CloudNativePG or Valkey endpoint needs no `NO_PROXY` entry either way.
-- `NO_PROXY` takes comma-separated hostnames, domain suffixes (a leading `.`),
-  and exact IP addresses, each with an optional `:port`. It does not parse CIDR
-  notation, so an entry such as `10.0.0.0/8` is inert. List every HTTP(S)
-  destination that must bypass the proxy by hostname or exact IP, such as the
-  cluster's own service domains (`.svc`, `.cluster.local`). The module only
-  sets these environment variables: whether a given client honours them is up
-  to the client, and Node's built-in HTTP stack does not read them on its own
-  without a proxy agent configured in the workflow or node that makes the call.
+- `NO_PROXY` syntax is client-specific. Most Node HTTP libraries, including
+  Node's own built-in stack, parse only comma-separated hostnames, domain
+  suffixes (a leading `.`), and exact IP addresses, each with an optional
+  `:port`, not CIDR notation, so an entry such as `10.0.0.0/8` is inert
+  there; curl 7.86.0 and newer does parse CIDR in `NO_PROXY`, so a node or
+  workflow step that shells out to curl behaves differently. List every
+  HTTP(S) destination that must bypass the proxy by hostname or exact IP to
+  be safe across clients, such as the cluster's own service domains (`.svc`,
+  `.cluster.local`). The module only sets these environment variables:
+  whether a given client honours them at all is up to the client, and
+  Node's built-in HTTP stack does not read them on its own without a proxy
+  agent configured in the workflow or node that makes the call.
 - Credentials embedded in a proxy URL (`http://user:pass@proxy`) are stored in
   plaintext in Terraform state and the Helm release, like every other
   `n8n_extra_env` value. Prefer a proxy that authenticates the cluster by
@@ -60,8 +64,10 @@ the certificate(s) to its built-in roots; it does not replace them.
 - If `n8n_network_policy_enabled = true`, the chart's `NetworkPolicy` already
   permits egress to port 443 from any destination, so a proxy listening on
   443 needs no change there; a proxy on another port needs
-  `n8n_extra_helm_values` to widen the policy, the same escape hatch the OTLP
-  collector guidance in `docs/helm-chart-coverage.md` uses.
+  `n8n_extra_helm_values` to add that port, since the module exposes no
+  typed input for extra `NetworkPolicy` egress rules (see
+  `docs/operations.md` → "Network policy" for what the rendered policy does
+  and does not cover).
 
 ### Task runner sidecar
 
@@ -70,10 +76,12 @@ The task runner sidecar is a separate container. It does not get
 Code nodes that make their own TLS connections from inside the runner
 therefore do not trust the private CA. Reaching the sidecar at all needs a
 custom build of the `n8nio/runners` image that carries the CA in its own
-trust store; no module input sets the runner image's repository (only
-`n8n_task_runner_image_tag` is exposed, pinning the tag on that fixed
-repository), and `n8n_extra_env` does not reach the sidecar either, so there
-is no environment-variable route to it.
+trust store. No dedicated module input sets the runner image's repository
+(only `n8n_task_runner_image_tag` is exposed, pinning the tag on that fixed
+repository); `n8n_extra_helm_values` can still set
+`taskRunners.image.repository` as a raw overlay, merged after the module's
+own values. `n8n_extra_env` does not reach the sidecar either, so there is
+no environment-variable route to it.
 
 ## Inbound: `n8n_proxy_hops`
 

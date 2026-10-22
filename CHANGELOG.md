@@ -341,6 +341,18 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   seconds of webhook failures before self-recovery. Setting this input to
   `60000` rides out an outage of that length. Documentation only; the
   default stays `null`.
+- `cnpg_ready_timeout` (number, seconds, default `600`): seconds the
+  readiness barrier (`kubernetes_job_v1.cnpg_ready`) polls the CNPG
+  Cluster's `rw` Service with `pg_isready` before failing. Previously
+  hardcoded at 300 attempts x a 2-second sleep; the default of `600`
+  reproduces that exact budget, so a deployment that leaves it unset renders
+  and behaves unchanged. Independent of `n8n_helm_timeout`: this Job
+  completes, one way or the other, before `helm_release.n8n`'s own wait even
+  starts, so raising `n8n_helm_timeout` alone could not give a healthy but
+  slow bootstrap (large WAL replay, cold storage, a busy cluster) more time
+  here. The Job's own Terraform `timeouts.create` now derives from this
+  input (`cnpg_ready_timeout + 300s`) instead of a separate hardcoded `15m`,
+  so the two budgets cannot drift apart again.
 
 ### Changed
 
@@ -679,6 +691,29 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   apart. The output defaults to the same `"32m"` while
   `n8n_payload_size_max` is left null, so both examples render identically
   until a caller sets that input.
+- `check.cnpg_resource_request_not_above_limit` now fires only when
+  `postgres_backend = "cnpg"`. The four inputs it compares
+  (`cnpg_cpu_request`/`_limit`, `cnpg_memory_request`/`_limit`,
+  `cnpg_pooler_cpu_request`/`_limit`, `cnpg_pooler_memory_request`/`_limit`)
+  are each documented as only used on the CNPG path, but the check itself
+  ran unconditionally: a caller on `postgres_backend = "external"` with one
+  of these set above its own limit got an apply-time error over values that
+  reach no Cluster or Pooler at all, matching the gating every other CNPG
+  check in `postgres_cnpg.tf` already uses.
+- `examples/homelab-godaddy`'s `godaddy-dns` provider block no longer
+  substitutes a placeholder credential for a typed `godaddy_api_key` /
+  `godaddy_api_secret` that is merely unset while its *other* typed
+  counterpart is explicitly set. The placeholder gate previously evaluated
+  each credential only against `godaddy_domain`, so a caller who set one
+  typed credential explicitly and left the other to its
+  `GODADDY_API_KEY`/`GODADDY_API_SECRET` environment variable got that
+  variable's half silently overwritten by a placeholder on the destroy path
+  (`godaddy_domain` turned `null` while a prior record is still in state),
+  and GoDaddy rejected the delete with the record stranded in state. The
+  gate now also requires the other typed credential to be unset, so a
+  partially-typed credential pair keeps falling back to its environment
+  variable on that path, same as before this bug, and placeholders apply
+  only on the genuine both-unset no-DNS path they were meant for.
 
 ### Removed
 

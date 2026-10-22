@@ -12,8 +12,9 @@
 # the real chart from the result.
 #
 # Requires: terraform (initialized with `terraform init -backend=false` at
-# the module root first), helm, jq. No cluster, no credentials, no plan or
-# apply.
+# the module root first), helm, jq, openssl (used to generate a throwaway
+# CA certificate for the postgres TLS scenario). No cluster, no credentials,
+# no plan or apply.
 #
 # Usage: tests/scripts/check-n8n-chart.sh
 
@@ -477,9 +478,11 @@ fi
 # n8n_pruning_soft_delete_interval): at the defaults none of the three is
 # set, so the module omits the keys and the chart's own values.yaml defaults
 # (hardDeleteBuffer 1, hardDeleteInterval 15, softDeleteInterval 60) must
-# still reach the pod, proving the default plan is byte-identical to before
-# these inputs existed. Reuses deployment-main-null-tag.json's sibling,
-# values-default.json, from the PDB scenario above.
+# still reach the pod. The two assertions below only check the hard-delete
+# buffer and interval env vars; they do not prove the whole rendered plan
+# is byte-identical to before these inputs existed. Reuses
+# deployment-main-null-tag.json's sibling, values-default.json, from the
+# PDB scenario above.
 helm template n8n "$chart_dir" -f "$tmp/values-default.json" --set secretRefs.existingSecret=test-core \
   --show-only templates/deployment-main.yaml >"$tmp/deployment-main-pruning-default.yaml"
 yaml_to_json "$tmp/deployment-main-pruning-default.yaml" >"$tmp/deployment-main-pruning-default.json"

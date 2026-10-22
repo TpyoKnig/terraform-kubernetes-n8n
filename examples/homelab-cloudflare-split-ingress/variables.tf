@@ -140,7 +140,7 @@ variable "cloudflare_tunnel_id" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with Zone:DNS:Edit on cloudflare_zone_id. Only read when cloudflare_zone_id is set. Prefer the CLOUDFLARE_API_TOKEN environment variable over putting it in terraform.tfvars."
+  description = "Cloudflare API token with Zone:DNS:Edit on cloudflare_zone_id. Read whenever set, even with cloudflare_zone_id null, so a destroy can clean up a record from an earlier apply before the zone ID was cleared. Prefer the CLOUDFLARE_API_TOKEN environment variable over putting it in terraform.tfvars."
   type        = string
   default     = null
   sensitive   = true

@@ -83,15 +83,15 @@ module "n8n" {
   # main + worker pods; base n8n image ships no Python).
   n8n_task_runners_enabled = true
 
-  # Observability: /metrics is always on, because it is scraped rather than
-  # pushed and so needs no collector; an in-cluster Prometheus or Alloy picks
-  # it up as is. OTLP tracing defaults to this lab's own collector via
-  # otel_endpoint; point it elsewhere, or set it to null to turn tracing off,
-  # without touching anything else. The tuning inputs are gated on the same
-  # condition because the module warns (plan-time, non-blocking) when
-  # tuning is set while the master switch is off. Change service_name if
-  # you run multiple n8n instances so they
-  # separate in Grafana.
+  # Observability: /metrics is enabled here (the module defaults this input to
+  # false), because it is scraped rather than pushed and so needs no
+  # collector; an in-cluster Prometheus or Alloy picks it up as is. OTLP
+  # tracing defaults to this lab's own collector via otel_endpoint; point it
+  # elsewhere, or set it to null to turn tracing off, without touching
+  # anything else. The tuning inputs are gated on the same condition because
+  # the module warns (plan-time, non-blocking) when tuning is set while the
+  # master switch is off. Change service_name if you run multiple n8n
+  # instances so they separate in Grafana.
   n8n_metrics_enabled             = true
   n8n_otel_enabled                = var.otel_endpoint != null
   n8n_otel_exporter_otlp_endpoint = var.otel_endpoint

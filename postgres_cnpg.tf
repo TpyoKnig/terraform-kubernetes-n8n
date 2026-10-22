@@ -102,22 +102,35 @@ locals {
 
 check "cnpg_resource_request_not_above_limit" {
   assert {
-    # guard ? true : body, per AGENTS.md: this module's floor (>= 1.11) does
-    # not short-circuit ||, so the comparison on the right must never run
-    # while either side is null.
+    # Outer guard ? body : true (local.cnpg_enabled), per AGENTS.md, wraps an
+    # inner null guard ? true : body: on the external backend these four
+    # inputs reach no Cluster or Pooler at all (variables.tf documents each
+    # as "only used when postgres_backend = cnpg" / "cnpg_pooler_enabled"),
+    # so a mismatched pair there is inert, not a real Kubernetes API
+    # rejection, and must not fail the plan. Matches the gating every other
+    # CNPG check in this file already uses (cnpg_pdb_blocks_the_postgres_node_drain,
+    # cnpg_backup_needs_the_cnpg_backend, and the rest below).
     condition = alltrue([
-      (local.cnpg_cpu_request_millicores == null || local.cnpg_cpu_limit_millicores == null) ? true : (
-        local.cnpg_cpu_request_millicores <= local.cnpg_cpu_limit_millicores
-      ),
-      (local.cnpg_memory_request_bytes == null || local.cnpg_memory_limit_bytes == null) ? true : (
-        local.cnpg_memory_request_bytes <= local.cnpg_memory_limit_bytes
-      ),
-      (local.cnpg_pooler_cpu_request_millicores == null || local.cnpg_pooler_cpu_limit_millicores == null) ? true : (
-        local.cnpg_pooler_cpu_request_millicores <= local.cnpg_pooler_cpu_limit_millicores
-      ),
-      (local.cnpg_pooler_memory_request_bytes == null || local.cnpg_pooler_memory_limit_bytes == null) ? true : (
-        local.cnpg_pooler_memory_request_bytes <= local.cnpg_pooler_memory_limit_bytes
-      ),
+      local.cnpg_enabled ? (
+        (local.cnpg_cpu_request_millicores == null || local.cnpg_cpu_limit_millicores == null) ? true : (
+          local.cnpg_cpu_request_millicores <= local.cnpg_cpu_limit_millicores
+        )
+      ) : true,
+      local.cnpg_enabled ? (
+        (local.cnpg_memory_request_bytes == null || local.cnpg_memory_limit_bytes == null) ? true : (
+          local.cnpg_memory_request_bytes <= local.cnpg_memory_limit_bytes
+        )
+      ) : true,
+      local.cnpg_enabled ? (
+        (local.cnpg_pooler_cpu_request_millicores == null || local.cnpg_pooler_cpu_limit_millicores == null) ? true : (
+          local.cnpg_pooler_cpu_request_millicores <= local.cnpg_pooler_cpu_limit_millicores
+        )
+      ) : true,
+      local.cnpg_enabled ? (
+        (local.cnpg_pooler_memory_request_bytes == null || local.cnpg_pooler_memory_limit_bytes == null) ? true : (
+          local.cnpg_pooler_memory_request_bytes <= local.cnpg_pooler_memory_limit_bytes
+        )
+      ) : true,
     ])
     error_message = "One of cnpg_cpu_request/cnpg_cpu_limit, cnpg_memory_request/cnpg_memory_limit, cnpg_pooler_cpu_request/cnpg_pooler_cpu_limit or cnpg_pooler_memory_request/cnpg_pooler_memory_limit sets a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so the Cluster or Pooler fails to reconcile at apply time rather than anything this module's own plan surfaces. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
   }
@@ -283,10 +296,14 @@ resource "kubectl_manifest" "cnpg_cluster" {
 #
 # Not a time_sleep. A sleep long enough to be safe on the slowest cluster is
 # waste on every other one, and it would still be a guess rather than a
-# condition. Also not an input: unlike the Pooler-Service-creation window
-# n8n.tf's own comment on kubectl_manifest.cnpg_pooler argues a sleep is the
-# wrong fix for, this barrier polls a real condition (pg_isready) rather than
-# guessing a duration, so the objection there does not apply here.
+# condition: unlike the Pooler-Service-creation window n8n.tf's own comment
+# on kubectl_manifest.cnpg_pooler argues a sleep is the wrong fix for, this
+# barrier polls a real condition (pg_isready) rather than guessing a
+# duration, so the objection there does not apply here. The ceiling on how
+# long it polls before giving up is cnpg_ready_timeout, independent of
+# n8n_helm_timeout: this Job completes, one way or the other, before
+# helm_release.n8n's own wait even starts, so raising n8n_helm_timeout alone
+# cannot buy a slow bootstrap more time here.
 #
 # Additive on every CNPG-backed deployment's first apply after adopting this:
 # one new Job object, no change to any existing resource. Near-instant
@@ -337,8 +354,8 @@ resource "kubernetes_job_v1" "cnpg_ready" {
               attempt=0
               until pg_isready -q -h '${local.cnpg_service_host}' -p 5432; do
                 attempt=$((attempt + 1))
-                if [ "$attempt" -ge 300 ]; then
-                  echo "Postgres at ${local.cnpg_service_host} did not accept connections within 10 minutes. The CloudNativePG Cluster ${local.cnpg_cluster_name} is still not serving: check 'kubectl get cluster -n ${local.namespace_name}' and the operator's logs." >&2
+                if [ "$attempt" -ge ${floor(var.cnpg_ready_timeout / 2)} ]; then
+                  echo "Postgres at ${local.cnpg_service_host} did not accept connections within ${var.cnpg_ready_timeout}s (cnpg_ready_timeout). The CloudNativePG Cluster ${local.cnpg_cluster_name} is still not serving: check 'kubectl get cluster -n ${local.namespace_name}' and the operator's logs. Raise cnpg_ready_timeout if this is a healthy cluster that bootstraps slowly rather than a wedged one." >&2
                   exit 1
                 fi
                 sleep 2
@@ -378,8 +395,11 @@ resource "kubernetes_job_v1" "cnpg_ready" {
 
   wait_for_completion = true
 
+  # Matches the script's own deadline (cnpg_ready_timeout) plus a 5-minute
+  # buffer for Job scheduling and the image pull, the same margin the
+  # original fixed 15m carried over the script's original fixed 10m.
   timeouts {
-    create = "15m"
+    create = "${var.cnpg_ready_timeout + 300}s"
   }
 
   depends_on = [kubectl_manifest.cnpg_cluster]

@@ -10,7 +10,7 @@ Two manual verification scripts, plus three offline chart-bump tools.
 | [`check-n8n-chart.sh`](#chart-render-check) | After temporarily moving `n8n_chart_version`'s default to the candidate. Renders this module's own values through the real chart and asserts the behaviors the module's code depends on; it has no candidate argument of its own, so it only ever sees whatever the default currently is. |
 | [`check-helm-chart-coverage.sh`](#chart-coverage-check) | After moving `n8n_chart_version`'s default. Fails if `docs/helm-chart-coverage.md` still claims the old version, or if the chart grew a top-level key the doc never mentions. |
 
-All three need only `helm` (the render check also needs `terraform` and `jq`); none touches a cluster or credentials. `Taskfile.yml` wraps them as `task chart-diff CANDIDATE=<version>`, `task chart-check` and `task chart-coverage`.
+All three need only `helm` (the render check also needs `terraform`, `jq`, and `openssl`); none touches a cluster or credentials. `Taskfile.yml` wraps them as `task chart-diff CANDIDATE=<version>`, `task chart-check` and `task chart-coverage`.
 
 ### Chart values diff
 

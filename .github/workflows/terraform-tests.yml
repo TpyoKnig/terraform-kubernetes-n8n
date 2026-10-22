@@ -122,6 +122,15 @@ jobs:
       - name: every declared input is wired, and every claimed env var renders
         run: python3 ./scripts/check-inputs-reach-workload.py
 
+  example-parity:
+    name: example parity (variables and shared-storage docs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: examples/homelab-* stay in step with examples/homelab
+        run: ./scripts/check-example-parity.sh
+
   docs:
     name: terraform-docs (README in sync)
     runs-on: ubuntu-latest
@@ -257,7 +266,14 @@ jobs:
 
       - name: terraform test
         working-directory: ${{ matrix.target }}
-        run: terraform test -verbose
+        # tests/opentofu-gaps/ holds runs that a known OpenTofu gap can't
+        # execute (see test-opentofu's comment below); real Terraform has
+        # no such gap, so this still runs them, as part of the suite.
+        run: |
+          terraform test -verbose
+          if [ -d tests/opentofu-gaps ]; then
+            terraform test -test-directory=tests/opentofu-gaps -verbose
+          fi
 
   # The same suites as `test`, on TF_FLOOR_VERSION instead of TF_VERSION. A
   # separate job rather than a matrix dimension on `test`, so the existing
@@ -299,7 +315,14 @@ jobs:
 
       - name: terraform test
         working-directory: ${{ matrix.target }}
-        run: terraform test -verbose
+        # tests/opentofu-gaps/ holds runs that a known OpenTofu gap can't
+        # execute (see test-opentofu's comment below); real Terraform has
+        # no such gap, so this still runs them, as part of the suite.
+        run: |
+          terraform test -verbose
+          if [ -d tests/opentofu-gaps ]; then
+            terraform test -test-directory=tests/opentofu-gaps -verbose
+          fi
 
   # OpenTofu is a second supported consumer of this module: it is published
   # to both the Terraform and OpenTofu registries. This job proves `tofu
@@ -330,44 +353,59 @@ jobs:
           key: tofu-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
           restore-keys: tofu-providers-
 
-      # Two targets are non-blocking here, both known OpenTofu
-      # testing-framework gaps rather than defects in this module's
-      # resources or variables. continue-on-error, not a silent green: a
-      # real regression in either suite still shows red, it just does not
-      # block the job on these two known gaps.
+      - name: tofu init
+        working-directory: ${{ matrix.target }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && tofu init -backend=false
+
+      - name: tofu test
+        working-directory: ${{ matrix.target }}
+        run: tofu test -verbose
+
+      # Two targets also carry a tests/opentofu-gaps/ directory: known
+      # OpenTofu testing-framework gaps rather than defects in this
+      # module's resources or variables, isolated there (out of the
+      # default "tests" directory both tools scan) so they cannot taint
+      # the two steps above. continue-on-error is scoped to this one step,
+      # which runs only those isolated files, not the rest of either
+      # suite: a real regression anywhere else still blocks the job.
       #
-      # "." (root): tests/defaults.tftest.hcl's
+      # "." (root): tests/opentofu-gaps/password-rotation-override-during.tftest.hcl's
       # "enabling_rotation_roll_reaches_both_releases" run uses
       # override_resource's override_during = plan (needed to assert a
       # plan-time value on random_password.valkey_default[0], an unknown
       # that only resolves at apply otherwise). OpenTofu v1.13.2's
       # override_resource block supports only target/values; it has no
       # override_during argument, so `tofu init` rejects the test file
-      # outright with "Unsupported argument" before any test can run.
-      # Revisit when OpenTofu ships override_during (tracked upstream;
-      # none of this module's other targets hit it, since override_during
-      # is used nowhere else in the tree).
+      # outright with "Unsupported argument" before any test can run, and
+      # init scans every *.tftest.hcl file under its test directory
+      # regardless of which one holds the invalid argument. That is why
+      # this run has to sit outside "tests" entirely rather than merely in
+      # its own file there: leaving it in "tests" would fail `tofu init`
+      # above for the whole root module, not just this one step. Revisit
+      # when OpenTofu ships override_during (tracked upstream; none of
+      # this module's other targets hit it, since override_during is used
+      # nowhere else in the tree).
       #
-      # "modules/cluster-capacity": tests/capacity.tftest.hcl's
+      # "modules/cluster-capacity": tests/opentofu-gaps/override-data-field-gap.tftest.hcl's
       # override_data blocks for data.kubernetes_nodes.capacity supply a
       # partial metadata object (just { name = "..." }), relying on
       # Terraform auto-generating the remaining computed sub-attributes
       # (annotations, generation, labels, resource_version, uid).
       # OpenTofu v1.13.2 does not auto-fill those when only some fields of
       # a nested block are given, and rejects the override instead
-      # ("Invalid mock/override field `nodes`: ... are required").
-      # Revisit by supplying every field explicitly in that test file (a
-      # real fix, portable to both tools) or once OpenTofu's mock
-      # generation matches Terraform's here.
-      - name: tofu init
+      # ("Invalid mock/override field `nodes`: ... are required"). This
+      # one fails only at tofu test (not tofu init), so the module's one
+      # override_data-free run, tests/capacity.tftest.hcl's
+      # "an_unavailable_read_says_nothing", stays in the default "tests"
+      # directory and blocks normally in the step above. Revisit by
+      # supplying every field explicitly in the isolated file (a real fix,
+      # portable to both tools) or once OpenTofu's mock generation matches
+      # Terraform's here.
+      - name: tofu test (known OpenTofu gaps)
+        if: matrix.target == '.' || matrix.target == 'modules/cluster-capacity'
         working-directory: ${{ matrix.target }}
-        continue-on-error: ${{ matrix.target == '.' || matrix.target == 'modules/cluster-capacity' }}
-        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && tofu init -backend=false
-
-      - name: tofu test
-        working-directory: ${{ matrix.target }}
-        continue-on-error: ${{ matrix.target == '.' || matrix.target == 'modules/cluster-capacity' }}
-        run: tofu test -verbose
+        continue-on-error: true
+        run: tofu test -test-directory=tests/opentofu-gaps -verbose
 
   tflint:
     name: tflint (${{ matrix.target }})

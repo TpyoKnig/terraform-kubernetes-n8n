@@ -21,7 +21,8 @@ provider "kubectl" {
 }
 
 
-# Only contacted when cloudflare_zone_id is set (dns.tf). Pass the token via the
+# Read whenever cloudflare_api_token is set, even with cloudflare_zone_id
+# null (see the explicit-token branch below). Pass the token via the
 # CLOUDFLARE_API_TOKEN environment variable in preference to terraform.tfvars.
 provider "cloudflare" {
   # A provider block cannot be made conditional, and the plugin refuses to
@@ -47,7 +48,10 @@ provider "cloudflare" {
   # CLOUDFLARE_API_TOKEN instead of cloudflare_api_token still hits that
   # placeholder on a destroy with the zone ID already null, because the env
   # var is invisible here: pass the token through terraform.tfvars for that
-  # one apply, or `terraform state rm` the record.
+  # one apply. `terraform state rm` only forgets the record in Terraform
+  # state; it stays live and unmanaged at Cloudflare and must be deleted
+  # there by hand, or a later apply with the zone ID re-enabled will
+  # conflict with it.
   #
   # Null (rather than a placeholder default) on the explicit-token branch is
   # what lets the plugin fall back to CLOUDFLARE_API_TOKEN: an explicit

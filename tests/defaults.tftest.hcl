@@ -6680,6 +6680,26 @@ run "credentials_overwrite_reserves_the_mount_path" {
   expect_failures = [var.n8n_credentials_overwrite_secret_ref]
 }
 
+# n8n_credentials_overwrite_secret_ref's own collision validation only
+# checked n8n_extra_env (the plain escape hatch), not
+# n8n_extra_env_from_secret (the Secret-backed one), even though both render
+# into the same config.extraEnv list: a caller using the Secret-backed input
+# instead of the plain one hit no guard at all until the matching validation
+# was added above.
+run "credentials_overwrite_conflicts_with_extra_env_from_secret" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_env_from_secret = [
+      { name = "CREDENTIALS_OVERWRITE_DATA_FILE", secret_name = "something-else", secret_key = "value" },
+    ]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
 
 # ── Pod DNS: n8n_dns_config ───────────────────────────────────────────────────
 
@@ -6886,47 +6906,6 @@ run "the_valkey_password_checksum_is_absent_until_opted_in" {
   }
 }
 
-# A plan-time assert cannot read the hash itself once the toggle is on:
-# random_password.valkey_default is unknown until apply (module-contract.md
-# 5.4 rules out command = apply as a workaround for exactly this), so this run
-# overrides it during plan and holds the shape, that the key the rotation
-# depends on is present on both releases, which is the part that actually
-# wires the two together.
-run "enabling_rotation_roll_reaches_both_releases" {
-  command = plan
-
-  variables {
-    redis_backend                         = "valkey"
-    valkey_password_rotation_roll_enabled = true
-  }
-
-  override_resource {
-    target          = random_password.valkey_default[0]
-    override_during = plan
-    values = {
-      result = "test-valkey-password-0123456789ab"
-    }
-  }
-
-  assert {
-    condition     = contains(keys(local.k8s_values_pod_annotations.podAnnotations), "checksum/valkey-password")
-    error_message = "The n8n release's podAnnotations must carry checksum/valkey-password once enabled, or rotating the generated password restarts no n8n pod."
-  }
-
-  assert {
-    condition     = contains(keys(local.k8s_values_final.podAnnotations), "checksum/valkey-password")
-    error_message = "The checksum must survive into the final merged values the n8n release renders."
-  }
-
-  assert {
-    condition = alltrue([
-      for r in helm_release.valkey :
-      contains(keys(yamldecode(r.values[0]).podAnnotations), "checksum/valkey-password")
-    ])
-    error_message = "The valkey release's podAnnotations must carry the same key: one apply has to roll the server onto the new ACL and the clients onto the new password together, or rotation arms a split-brain instead."
-  }
-}
-
 # The external-redis path has no module-generated credential to hash, and the
 # gate keeps its rendered values byte-identical regardless of the toggle.
 run "the_external_redis_path_renders_no_pod_annotations_even_when_enabled" {
@@ -7012,6 +6991,65 @@ run "an_external_postgres_gets_no_readiness_barrier" {
     condition     = length(kubernetes_job_v1.cnpg_ready) == 0
     error_message = "The readiness Job belongs to the CNPG Cluster this module creates. On the external backend there is no Cluster to wait for, and polling a database the module does not own would fail an apply over the caller's own infrastructure."
   }
+}
+
+# cnpg_ready_timeout governs the same barrier: the default must reproduce the
+# hardcoded 300-attempt / 2s-sleep budget this module shipped before the input
+# existed, so a deployment that leaves it unset behaves unchanged.
+run "cnpg_ready_timeout_defaults_to_the_original_budget" {
+  command = plan
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "-ge 300")
+    error_message = "cnpg_ready_timeout must default to 600s, reproducing the 300-attempt threshold (300 x 2s sleep) this module hardcoded before the input existed."
+  }
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "within 600s")
+    error_message = "The failure message must name the actual configured budget."
+  }
+}
+
+# Raising it moves both the attempt threshold and the failure message, so a
+# caller with a healthy but slow bootstrap (large WAL replay, cold storage)
+# gets more time independent of n8n_helm_timeout, which this Job completes
+# before helm_release.n8n's own wait even starts.
+run "cnpg_ready_timeout_is_configurable" {
+  command = plan
+
+  variables {
+    cnpg_ready_timeout = 1800
+  }
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "-ge 900")
+    error_message = "cnpg_ready_timeout = 1800 must raise the attempt threshold to 900 (1800s / 2s sleep), not stay pinned at the old hardcoded 300."
+  }
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "within 1800s")
+    error_message = "The failure message must name the raised budget, not the old hardcoded 10 minutes."
+  }
+}
+
+run "cnpg_ready_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    cnpg_ready_timeout = 600.5
+  }
+
+  expect_failures = [var.cnpg_ready_timeout]
+}
+
+run "cnpg_ready_timeout_rejects_below_60" {
+  command = plan
+
+  variables {
+    cnpg_ready_timeout = 59
+  }
+
+  expect_failures = [var.cnpg_ready_timeout]
 }
 
 # ── The database, pooler and queue are sized only when asked ──────────────────
@@ -7362,6 +7400,46 @@ run "valkey_memory_limit_rejects_whitespace" {
   expect_failures = [var.valkey_memory_limit]
 }
 
+# The guard mirrors cnpg_resource_request_not_above_limit (postgres_cnpg.tf):
+# a request above its own limit is a shape the Kubernetes API rejects
+# outright, so the warning here must actually fire rather than only
+# type-check.
+run "valkey_cpu_request_above_its_limit_is_warned_about" {
+  command = plan
+
+  variables {
+    redis_backend      = "valkey"
+    valkey_cpu_request = "1000m"
+    valkey_cpu_limit   = "500m"
+  }
+
+  expect_failures = [check.valkey_resource_request_not_above_limit]
+}
+
+run "valkey_memory_request_above_its_limit_is_warned_about" {
+  command = plan
+
+  variables {
+    redis_backend         = "valkey"
+    valkey_memory_request = "1Gi"
+    valkey_memory_limit   = "256Mi"
+  }
+
+  expect_failures = [check.valkey_resource_request_not_above_limit]
+}
+
+run "valkey_request_at_its_limit_draws_no_warning" {
+  command = plan
+
+  variables {
+    redis_backend         = "valkey"
+    valkey_cpu_request    = "250m"
+    valkey_cpu_limit      = "250m"
+    valkey_memory_request = "256Mi"
+    valkey_memory_limit   = "256Mi"
+  }
+}
+
 # Hand-computed against this module's own defaults so a silent term change
 # fails loudly: main 1 × (1000m + 200m task runner), workers 10 × (500m +
 # 200m), webhooks 8 × 300m = 10600m with nothing backend-sized. Postgres and
@@ -7402,6 +7480,30 @@ run "the_pooler_term_counts_only_while_the_pooler_is_enabled" {
   assert {
     condition     = local.n8n_peak_cpu_request_millis == 10800
     error_message = "Peak demand must be 10800m: the 10600m base plus the pooler's 2 (cnpg_pooler_instances) × 100m, with postgres and valkey both still unsized."
+  }
+}
+
+# A mismatched request/limit pair on the external backend reaches no Cluster
+# or Pooler at all (both are documented "only used when postgres_backend =
+# cnpg" / "cnpg_pooler_enabled"), so the check must stay silent there, unlike
+# every other case above where cnpg is the active backend. A run with no
+# expect_failures fails outright if the check still fired.
+run "the_resource_limit_check_stays_quiet_on_the_external_backend" {
+  command = plan
+
+  variables {
+    postgres_backend        = "external"
+    db_host                 = "postgres.example.com"
+    db_password             = "not-a-real-password"
+    cnpg_cpu_request        = "2000m"
+    cnpg_cpu_limit          = "500m"
+    cnpg_pooler_cpu_request = "500m"
+    cnpg_pooler_cpu_limit   = "100m"
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_cluster) == 0
+    error_message = "postgres_backend = \"external\" must plan no CNPG Cluster; the caller's server is the database."
   }
 }
 

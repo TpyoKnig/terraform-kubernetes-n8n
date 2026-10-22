@@ -178,9 +178,10 @@ EOF
 
 # Example-only providers: cloudflare (homelab-cloudflare,
 # homelab-cloudflare-split-ingress) and godaddy-dns (homelab-godaddy). Both
-# examples pin the same constraint for cloudflare, so one read is enough;
-# verified identical by `terraform fmt`/review, not re-checked file by file
-# here.
+# examples pin the same constraint for cloudflare, so one read is enough:
+# this reads only examples/homelab-cloudflare/versions.tf's constraint and
+# assumes the split-ingress copy matches, rather than reading and comparing
+# both files.
 cf_constraint="$(awk '
   $0 ~ "source[ \t]*=[ \t]*\"cloudflare/cloudflare\"" { found = 1 }
   found && /version[ \t]*=/ {

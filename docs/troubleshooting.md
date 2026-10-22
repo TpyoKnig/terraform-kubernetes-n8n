@@ -563,13 +563,17 @@ the trace never covers the time a job spent waiting in the queue.
 Measure the wait where it exists, not from inside n8n. Watch the Bull queue
 directly. The in-cluster Valkey backend requires the `default` user's
 password from the `<release>-redis-auth` Secret (chart's `auth.enabled`),
-so an unauthenticated `valkey-cli` gets `NOAUTH`:
+so an unauthenticated `valkey-cli` gets `NOAUTH`. Pass the password through
+`REDISCLI_AUTH` (which valkey-cli and redis-cli both read) rather than the
+`-a` flag: an argument lands in the pod's own process list, visible to
+anything that can read `/proc` or run `ps` on that node, where an
+environment variable set only for this one `kubectl exec` does not:
 
 ```bash
 password=$(kubectl get secret -n <namespace> <release>-redis-auth \
   -o jsonpath='{.data.default}' | base64 -d)
 kubectl exec -n <namespace> <valkey-pod> -- \
-  valkey-cli -a "$password" --no-auth-warning LLEN bull:jobs:wait
+  env REDISCLI_AUTH="$password" valkey-cli --no-auth-warning LLEN bull:jobs:wait
 ```
 
 A depth that grows while workers are busy is queue wait, and the levers are
@@ -600,12 +604,17 @@ before the deployment self-recovered.
 
 ### Fix
 
-Raise `n8n_redis_timeout_threshold` to ride out an outage of that length;
-60000 (60 seconds) was measured surviving a 48-second outage, while 30000
-was measured failing a 25-second one (see the variable's own description
-for why the margin is slimmer against this failure mode than the budget
-formula implies). The default stays `null`:
-raising it module-wide means a real, longer outage leaves pods retrying
-against a dead endpoint instead of restarting, which is worse for callers
-who never hit this single-replica-Valkey case. Set it deliberately once
-you know the outage length you need to survive, not as a blanket default.
+Raise `n8n_redis_timeout_threshold` to ride out an outage of that length.
+60000 (60 seconds) was measured surviving a 48-second outage. 30000 failed
+a 25-second one despite its roughly 33.2-second theoretical budget: that
+budget assumes Redis hangs rather than refuses (ioredis's connectTimeout
+stays a fixed 10s per attempt regardless of this setting), but a
+deleted/rescheduled pod fails each connection attempt immediately instead
+of hanging out that 10s, so each attempt costs far less of the budget and
+the theoretical ceiling overstates what the setting buys against exactly
+this failure mode (see the variable's own description for the full
+formula). The default stays `null`: raising it module-wide means a real,
+longer outage leaves pods retrying against a dead endpoint instead of
+restarting, which is worse for callers who never hit this
+single-replica-Valkey case. Set it deliberately once you know the outage
+length you need to survive, not as a blanket default.

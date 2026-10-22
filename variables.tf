@@ -214,6 +214,20 @@ variable "n8n_credentials_overwrite_secret_ref" {
   }
 
   validation {
+    # Same collision as the n8n_extra_env check just above, but against
+    # n8n_extra_env_from_secret: both inputs render into the same
+    # config.extraEnv list, so a caller using the Secret-backed escape hatch
+    # instead of the plain one hits the same silent override, and had no
+    # guard here at all until this validation was added.
+    condition = var.n8n_credentials_overwrite_secret_ref == null ? true : alltrue([
+      for env in var.n8n_extra_env_from_secret :
+      !contains(["CREDENTIALS_OVERWRITE_DATA", "CREDENTIALS_OVERWRITE_DATA_FILE"], env.name)
+    ])
+    error_message = "n8n_credentials_overwrite_secret_ref conflicts with CREDENTIALS_OVERWRITE_DATA or CREDENTIALS_OVERWRITE_DATA_FILE in n8n_extra_env_from_secret. Remove the escape-hatch entry and let the dedicated input set the file path."
+  }
+
+
+  validation {
     condition = var.n8n_credentials_overwrite_secret_ref == null ? true : alltrue([
       for volume in var.n8n_extra_volumes : volume.name != "credentials-overwrite"
     ])
@@ -890,7 +904,7 @@ variable "n8n_execution_timeout_max" {
 }
 
 variable "n8n_execution_concurrency_limit" {
-  description = "Maximum concurrent production executions across the instance, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker (n8n 2.44.5 worker.ts), capping total in-flight production executions across the whole pool at this one number no matter how many replicas KEDA adds. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
+  description = "Maximum concurrent production executions per worker process, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker independently (n8n 2.44.5 worker.ts, see docs/operations.md's \"How worker concurrency and scale-out interact\" section): it is still a per-worker ceiling, not a shared pool-wide one, so total in-flight production executions across the pool becomes replicas x n8n_execution_concurrency_limit, scaling with however many replicas KEDA adds, the same way n8n_worker_concurrency itself scales. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
   type        = number
   default     = -1
 
@@ -1620,6 +1634,18 @@ variable "cnpg_pooler_max_client_conn" {
   validation {
     condition     = var.cnpg_pooler_max_client_conn == floor(var.cnpg_pooler_max_client_conn) && var.cnpg_pooler_max_client_conn >= 1
     error_message = "cnpg_pooler_max_client_conn must be a whole number of at least 1."
+  }
+}
+
+variable "cnpg_ready_timeout" {
+  description = "Seconds the postgres_cnpg.tf readiness barrier (kubernetes_job_v1.cnpg_ready) polls the CloudNativePG Cluster's rw Service with pg_isready before giving up. Only used when postgres_backend = \"cnpg\". Independent of n8n_helm_timeout: this Job must complete before helm_release.n8n's own wait even starts, so raising n8n_helm_timeout alone cannot give a healthy but slow CNPG bootstrap (large WAL replay, cold storage, a busy cluster) more time here. Default 600 matches this module's original hardcoded 10-minute budget, so a deployment that leaves it unset behaves unchanged."
+  type        = number
+  default     = 600
+  nullable    = false
+
+  validation {
+    condition     = var.cnpg_ready_timeout == floor(var.cnpg_ready_timeout) && var.cnpg_ready_timeout >= 60
+    error_message = "cnpg_ready_timeout must be a whole number of at least 60 seconds, the same rule n8n_helm_timeout enforces."
   }
 }
 

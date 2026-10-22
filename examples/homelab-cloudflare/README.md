@@ -27,7 +27,7 @@ The tunnel's own ingress rules are likewise yours: this example assumes the tunn
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars: ui_host, cloudflare_zone_id, cloudflare_tunnel_id
 
-export CLOUDFLARE_API_TOKEN=...   # needs Zone:DNS:Edit and Zone:Zone:Read on that zone
+export CLOUDFLARE_API_TOKEN=...   # needs Zone:DNS:Edit on that zone (this is the token that manages the DNS record above, a separate token from the ClusterIssuer's own Zone:DNS:Edit + Zone:Zone:Read one described above)
 
 terraform init
 terraform apply

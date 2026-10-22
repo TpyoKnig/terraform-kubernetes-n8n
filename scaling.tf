@@ -78,7 +78,8 @@ locals {
     )
   }
 
-  # What the three pod families request when every autoscaler sits at its
+  # What the n8n app pods (main, task runner, worker, webhook) and backend pods
+  # (postgres, pooler, valkey) request when every autoscaler sits at its
   # ceiling simultaneously. Not a forecast: the point is that this number must
   # be schedulable at all, because each autoscaler can independently reach its
   # own maximum.
