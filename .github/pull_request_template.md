@@ -27,7 +27,7 @@ provider-version bumps, etc.).
 
 - [ ] `terraform fmt -recursive` is clean.
 - [ ] `terraform validate` passes at the module root.
-- [ ] `terraform test -verbose` passes at the module root and on any example I touched.
+- [ ] `terraform test -verbose` passes at the module root and on any example I touched, plus `terraform test -test-directory=tests/opentofu-gaps -verbose` wherever that directory exists.
 - [ ] `tflint --format compact` is clean at any directory I touched.
 - [ ] If I added or renamed an input/output, I ran `terraform-docs markdown table --output-file README.md --output-mode inject .` and committed the refreshed README.
 - [ ] If I added a non-trivial new behavior, I added a plan-time assertion in the relevant `.tftest.hcl` file.

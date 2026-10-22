@@ -29,6 +29,9 @@ terraform fmt -recursive
 terraform init -backend=false
 terraform validate
 terraform test -verbose
+if [ -d tests/opentofu-gaps ]; then
+  terraform test -test-directory=tests/opentofu-gaps -verbose
+fi
 tflint --init && tflint --format compact
 terraform-docs --output-check .
 ```
@@ -38,7 +41,12 @@ under each example directory (`examples/homelab`,
 `examples/homelab-cloudflare`, `examples/homelab-godaddy`,
 `examples/homelab-split-ingress`) and each submodule
 (`modules/cluster-capacity`, `modules/tls-letsencrypt`), which mirrors
-the CI matrix exactly. CI will run the same matrix on your PR.
+the CI matrix exactly. CI will run the same matrix on your PR. The root
+and `modules/cluster-capacity` also carry a `tests/opentofu-gaps`
+directory: run the `if` block above there too, it is real coverage under
+Terraform, just isolated out of `terraform test`'s default directory
+because a known OpenTofu testing-framework limitation cannot execute it
+(see AGENTS.md's local development loop).
 
 Don't skip the submodules. They are the only roots that catch a change
 to their own input contract: a new required variable in either one

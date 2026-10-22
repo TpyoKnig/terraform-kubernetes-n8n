@@ -55,18 +55,39 @@ tasks:
         cmd: cd modules/{{.SUBMODULE}} && terraform validate
 
   test:
-    desc: terraform test (plan-time, mocked providers) for the module root, every example and both submodules.
+    desc: >-
+      terraform test (plan-time, mocked providers) for the module root,
+      every example and both submodules, plus tests/opentofu-gaps wherever
+      that directory exists. The gaps directory holds runs a known OpenTofu
+      testing-framework limitation cannot execute (see the comments beside
+      test-opentofu in .github/workflows/terraform-tests.yml); real
+      Terraform has no such gap, so this task proves them here as part of
+      the suite, the same shape CI's test/test-floor jobs run.
     deps: [init]
     cmds:
       - terraform test -verbose
+      - |
+        if [ -d tests/opentofu-gaps ]; then
+          terraform test -test-directory=tests/opentofu-gaps -verbose
+        fi
       - for:
           var: EXAMPLES
           as: EXAMPLE
-        cmd: cd examples/{{.EXAMPLE}} && terraform test -verbose
+        cmd: |
+          cd examples/{{.EXAMPLE}}
+          terraform test -verbose
+          if [ -d tests/opentofu-gaps ]; then
+            terraform test -test-directory=tests/opentofu-gaps -verbose
+          fi
       - for:
           var: SUBMODULES
           as: SUBMODULE
-        cmd: cd modules/{{.SUBMODULE}} && terraform test -verbose
+        cmd: |
+          cd modules/{{.SUBMODULE}}
+          terraform test -verbose
+          if [ -d tests/opentofu-gaps ]; then
+            terraform test -test-directory=tests/opentofu-gaps -verbose
+          fi
 
   lint:
     desc: tflint for the module root, every example and both submodules.

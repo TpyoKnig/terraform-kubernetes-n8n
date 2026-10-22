@@ -206,11 +206,11 @@ run "kubernetes_ingress_serves_one_host_by_default" {
     condition     = length(local.k8s_values_ingress.ingress.tls) == 1
     error_message = "One TLS block covering every host, so cert-manager issues a single Certificate."
   }
-
-  assert {
-    condition     = length(module.cluster_capacity) == 1
-    error_message = "The kubernetes backend must instantiate modules/cluster-capacity: it is the only sizing diagnostic on this path."
-  }
+  # The third assertion this run used to carry here, that
+  # modules/cluster-capacity actually instantiates on this path, now lives in
+  # tests/opentofu-gaps/cluster-capacity-module-instantiation-gap.tftest.hcl:
+  # OpenTofu v1.13.2's test runner cannot resolve length(module.x) for a
+  # count-conditioned module with zero output blocks (see that file's header).
 }
 
 # The node read is an ordinary data source, so a plan somewhere the cluster is
@@ -5383,30 +5383,14 @@ run "reinstalling_missing_packages_reaches_the_pods" {
 # Terraform evaluates a check's error_message alongside its condition rather
 # than lazily on failure. Before nullable = false, an explicit null on any of
 # the five aborted the plan from inside a block whose whole purpose is to
-# warn without failing. The plan simply succeeding at the defaults is the
-# point of this run.
-run "explicit_nulls_on_webhook_resources_fall_back_to_defaults" {
-  command = plan
-
-  variables {
-    n8n_webhook_cpu_request        = null
-    n8n_webhook_cpu_limit          = null
-    n8n_webhook_memory_request     = null
-    n8n_webhook_memory_limit       = null
-    n8n_reinstall_missing_packages = null
-  }
-
-  assert {
-    condition = (
-      var.n8n_webhook_cpu_request == "300m" &&
-      var.n8n_webhook_cpu_limit == "800m" &&
-      var.n8n_webhook_memory_request == "512Mi" &&
-      var.n8n_webhook_memory_limit == "1Gi" &&
-      var.n8n_reinstall_missing_packages == false
-    )
-    error_message = "An explicit null on any of these five must fall back to its declared default, not propagate into the module."
-  }
-}
+# warn without failing. The run proving the plan simply succeeds at the
+# defaults, "explicit_nulls_on_webhook_resources_fall_back_to_defaults", now
+# lives in
+# tests/opentofu-gaps/nullable-variable-null-override-gap.tftest.hcl:
+# OpenTofu v1.13.2's test runner does not fall an explicit `variables` block
+# null on a nullable = false input back to its default the way `tofu`'s own
+# documented language behaviour and real Terraform both do (see that file's
+# header).
 
 run "opentelemetry_reaches_the_pods_only_when_enabled" {
   command = plan

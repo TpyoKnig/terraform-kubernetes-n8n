@@ -445,6 +445,9 @@ terraform fmt -recursive                       # before committing
 terraform init -backend=false                  # at module root
 terraform validate
 terraform test -verbose                        # plan-time, no cluster needed
+if [ -d tests/opentofu-gaps ]; then
+  terraform test -test-directory=tests/opentofu-gaps -verbose
+fi
 tflint --init && tflint --format compact
 terraform-docs --output-check .                # README drift check
 
@@ -466,10 +469,19 @@ for dir in examples/homelab \
       && terraform init -backend=false \
       && terraform validate \
       && terraform test -verbose \
+      && { [ ! -d tests/opentofu-gaps ] || terraform test -test-directory=tests/opentofu-gaps -verbose; } \
       && tflint --init && tflint --format compact \
       && terraform-docs --output-check . ) || echo "FAILED: $dir"
 done
 ```
+
+`tests/opentofu-gaps` (and the matching directory under
+`modules/cluster-capacity`) holds runs that a known OpenTofu
+testing-framework limitation cannot execute, isolated out of the default
+`tests` directory so they cannot taint it; real Terraform has no such gap,
+so the loop above still runs them as real coverage. Skipping that `if`
+block would silently stop proving those runs locally even though
+`terraform test`'s default directory no longer reaches them.
 
 The loop above uses whichever `terraform` is on `PATH`. CI's `test-floor` job
 (see "The floor is `>= 1.11`") also runs `terraform test` against

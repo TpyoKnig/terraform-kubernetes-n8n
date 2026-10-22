@@ -386,6 +386,24 @@ jobs:
       # this module's other targets hit it, since override_during is used
       # nowhere else in the tree).
       #
+      # "." (root): tests/opentofu-gaps/cluster-capacity-module-instantiation-gap.tftest.hcl's
+      # run asserts length(module.cluster_capacity) == 1. OpenTofu v1.13.2's
+      # test runner cannot resolve that for a count-conditioned module with
+      # zero output blocks: it always reports an empty tuple regardless of
+      # the module's real instance count. modules/cluster-capacity
+      # deliberately has no outputs (a pure check-based advisory), so this
+      # is a test-runner limitation rather than a reason to add one. See
+      # that gap file's header for the minimal reproduction.
+      #
+      # "." (root): tests/opentofu-gaps/nullable-variable-null-override-gap.tftest.hcl's
+      # run sets four webhook quantity variables and n8n_reinstall_missing_packages
+      # to null through its own `variables` block and asserts each falls
+      # back to its nullable = false default. OpenTofu v1.13.2's `tofu test`
+      # does not apply that fallback on its own run-level variable
+      # overrides, even though OpenTofu's own language docs and real
+      # Terraform both do. See that gap file's header for the minimal
+      # reproduction.
+      #
       # "modules/cluster-capacity": tests/opentofu-gaps/override-data-field-gap.tftest.hcl's
       # override_data blocks for data.kubernetes_nodes.capacity supply a
       # partial metadata object (just { name = "..." }), relying on
