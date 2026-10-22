@@ -409,6 +409,36 @@ If pods already have corrupted package directories from an interrupted
 install, a rolling restart after raising the resources above resolves it:
 n8n rewrites the directory from scratch on the next successful install.
 
+## KEDA scales up extra workers, but they receive no jobs
+
+### Symptom
+
+A burst of queued executions grows the queue depth, `bull:jobs:wait` /
+`bull:jobs:active` cross the configured threshold, and KEDA adds worker
+replicas exactly as expected. `kubectl get pods` shows the new workers
+`Running` and `Ready`. But throughput does not improve: the queue stays deep,
+and the new workers' logs show no execution activity at all, while one
+original worker keeps running at its configured `--concurrency`.
+
+### Cause
+
+`n8n_execution_concurrency_limit` is set above `-1` (or was left at this
+module's old default of `100` before the default changed, see CHANGELOG).
+n8n 2.44.5's `worker.ts` reads `N8N_CONCURRENCY_PRODUCTION_LIMIT` before the
+worker's own `--concurrency` flag, and uses the flag only when that env var
+is `-1`. Any other value overrides `n8n_worker_concurrency` on **every**
+worker instance-wide: the whole pool is capped at that one number of
+in-flight production executions, regardless of replica count. A single
+worker already running at the limit leaves every other replica with nothing
+to pick up.
+
+### Fix
+
+Set `n8n_execution_concurrency_limit = -1` (the module's current default) so
+each worker is bounded only by its own `n8n_worker_concurrency`, and total
+pool capacity becomes `replicas x n8n_worker_concurrency`. See
+[operations.md → How worker concurrency and scale-out interact](./operations.md#how-worker-concurrency-and-scale-out-interact).
+
 ## `terraform plan` fails with `Get "http://localhost/...": connect: connection refused`
 
 ### Symptom
@@ -499,3 +529,72 @@ This scopes both `N8N_REDIS_KEY_PREFIX` and the Bull queue's own key prefix
 triggers reading from the matching, non-default queue keys. Leave it unset on
 the default `redis_backend = "valkey"` path: that release is dedicated to one
 deployment, so there is nothing to scope.
+
+## Clients measure requests as slow while every n8n metric and trace says fast
+
+### Symptom
+
+Callers see webhook responses taking far longer than n8n's own observability
+admits to. `n8n_webhook_request_duration_seconds` reports a healthy mean, and
+the OTel trace for the same execution looks fast too. Nothing inside n8n's
+metrics or traces points at the delay.
+
+### Cause
+
+The waiting happens before anything n8n measures. In queue mode a webhook
+request is accepted, enqueued in Redis/Valkey, and only measured once a
+worker picks it up and starts executing: the queue wait between those two
+moments is invisible to n8n twice over. The webhook duration histogram's
+largest bucket is 10 seconds (`n8n/packages/cli/src/metrics/prometheus/
+webhook-and-form-metrics.service.ts`), so any wait past that collapses into
+one bin and barely moves the mean. n8n's OTel root span is `workflow.execute`
+(`n8n/packages/cli/src/modules/otel/execution-level-tracer.ts`), started when
+workflow execution begins, not when the request arrived or was enqueued, so
+the trace never covers the time a job spent waiting in the queue.
+
+### Fix
+
+Measure the wait where it exists, not from inside n8n. Watch the Bull queue
+directly:
+
+```bash
+kubectl exec -n <namespace> <valkey-pod> -- \
+  valkey-cli LLEN bull:jobs:wait
+```
+
+A depth that grows while workers are busy is queue wait, and the levers are
+worker count (`n8n_worker_keda_max_replicas`), per-worker concurrency
+(`n8n_worker_concurrency`), and for executions that outlive their lock,
+`n8n_queue_worker_lock_duration`. Do not spend time hunting the missing
+time in n8n's dashboards or traces: it is not recorded anywhere n8n can see.
+
+## Every n8n pod crashes on a brief Redis/Valkey outage
+
+### Symptom
+
+Main, worker and webhook-processor pods all crash and restart within
+seconds of a Valkey pod becoming unreachable (a reschedule, an upgrade, a
+deleted pod), even though the outage lasted well under a minute.
+
+### Cause
+
+This module's default backend is a single-replica Valkey
+(`redis_backend = "valkey"`): there is no standby to fail over to, so any
+interruption is a hard outage until that one pod comes back. At the
+default `n8n_redis_timeout_threshold` (`null`, effectively the chart's
+`10000`), n8n gives up on Redis and exits the process after about 11
+seconds of unavailability. A live test that deleted the Valkey pod
+measured 31 seconds for it to come back; every n8n pod crashed on Redis
+loss during that window, producing about 45 seconds of webhook failures
+before the deployment self-recovered.
+
+### Fix
+
+Raise `n8n_redis_timeout_threshold` to ride out an outage of that length;
+60000 (60 seconds) was measured surviving a 48-second outage, while 30000
+was measured failing a 25-second one by 1.1 seconds (see the variable's
+own description for the full budget math). The default stays `null`:
+raising it module-wide means a real, longer outage leaves pods retrying
+against a dead endpoint instead of restarting, which is worse for callers
+who never hit this single-replica-Valkey case. Set it deliberately once
+you know the outage length you need to survive, not as a blanket default.

@@ -54,6 +54,20 @@ appear in no shipped build. The names below are the ones the code reads.
 Web search is optional and either backend satisfies it. SearXNG keeps the
 queries inside the cluster; Brave does not, and costs money.
 
+Setting the variable is not the whole step. The first time the assistant wants
+the web, n8n shows an "Add web search" dialog in the UI asking an owner to
+approve it; nothing in this module can pre-answer that. Once approved, a
+prompt that needs the web ("Search the web for the latest stable n8n release")
+runs the assistant's `research` tool with `action: web-search` and answers from
+the result. Verified live against n8n 2.44.4 with SearXNG. The first search
+can be slow: one run showed over five minutes of thinking before the answer.
+
+The SearXNG address is whatever Service name your SearXNG chart creates, which
+is not always `searxng`. Check it from an n8n pod before trusting it:
+`kubectl -n <ns> exec deploy/n8n-main -c n8n-main -- wget -q -O - '<url>/search?q=n8n&format=json'`
+should print JSON results. `format=json` failing means `json` is missing from
+SearXNG's `search.formats`.
+
 ## Wiring
 
 The secrets go in a `Secret` you create yourself, in the same namespace as the
@@ -83,7 +97,7 @@ module "n8n" {
     { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
     { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
     { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
-    { name = "N8N_INSTANCE_AI_SEARXNG_URL", value = "http://searxng.searxng.svc.cluster.local:8080" },
+    { name = "N8N_INSTANCE_AI_SEARXNG_URL", value = "http://searxng-http.searxng.svc.cluster.local:8080" },
   ]
 
   n8n_extra_env_from_secret = [

@@ -40,23 +40,33 @@ permissions:
   pull-requests: write
 
 env:
-  # Every job runs this one version: the current latest stable, so there is one
-  # deliberately tracked version to bump rather than a moving target.
+  # Every job except test-floor runs this version: the current latest stable,
+  # so there is one deliberately tracked latest version to bump rather than a
+  # moving target. TF_FLOOR_VERSION below tracks the module's declared floor
+  # instead.
   #
-  # The floor is 1.11: check blocks, override_resource's override_during, and
-  # the test syntax this repo's suites rely on all arrived by then.
-  #
-  # The module's own floor moved with it: every versions.tf in the repo now
-  # declares required_version = ">= 1.11" rather than the ">= 1.9" that no job
-  # here exercised. Keep the two in step. A floor CI never runs is a claim
-  # nobody is checking, and this repo has already been bitten by the specific
-  # version-skew hazard that hides behind one (`check` blocks did not
-  # short-circuit && / || before Terraform 1.10; see AGENTS.md).
-  TF_VERSION: "1.15.8"
-  TFLINT_VERSION: "v0.53.0"
+  # The `test-floor` job also runs the `terraform test` suites on
+  # TF_FLOOR_VERSION, the lowest release the module's `>= 1.11` floor admits.
+  # A floor CI never runs is a claim nobody is checking, and this repo has
+  # already been bitten by the specific version-skew hazard that hides behind
+  # one: Terraform's `&&`/`||` do not short-circuit before 1.12 (see
+  # AGENTS.md), one minor above this floor, so the seven examples'
+  # `shared_storage_class` validation failed on 1.11.4 while CI's own
+  # newer-than-1.12 pin passed it silently. `tests/scripts/check-terraform-floor.sh`
+  # fails the job if TF_FLOOR_VERSION and every versions.tf's
+  # required_version ever drift apart at major.minor granularity.
+  TF_VERSION: "1.17.0"
+  TF_FLOOR_VERSION: "1.11.4"
+  # OpenTofu is a second supported consumer of this module (published to
+  # both the Terraform and OpenTofu registries), tracked here as its own
+  # pin rather than reusing TF_VERSION: the two tools version independently
+  # and "latest stable tofu" and "latest stable terraform" are not the same
+  # release. test-opentofu below is the only job that reads this.
+  TOFU_VERSION: "1.13.2"
+  TFLINT_VERSION: "v0.64.0"
   # NOTE: the tflint job resolves its config with `git rev-parse --show-toplevel`
   # rather than an env var here. `${{ github.workspace }}` is empty on the
-  # Forgejo/act runner this repo also builds on, TFLINT_CONFIG_FILE resolved to
+  # self-hosted runner this repo also builds on, TFLINT_CONFIG_FILE resolved to
   # "/.tflint.hcl" and every tflint job failed to load it. Do not reintroduce
   # that expression anywhere in this file.
   # checkov results are version-dependent, so this gate pins one version rather
@@ -64,7 +74,7 @@ env:
   # refuses to run against a different local version, which makes this line the
   # single source of truth for both. Bumping it is a deliberate change: expect a
   # new release to report findings that need triaging in the same commit.
-  CHECKOV_VERSION: "3.3.9"
+  CHECKOV_VERSION: "3.3.30"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   # Shared provider plugin cache across the validate/test/tflint matrices.
@@ -72,7 +82,7 @@ env:
   # it on a hit, keyed below on the .terraform.lock.hcl files committed at
   # the module root and in each examples/* root module. A literal absolute path
   # rather than a workspace expression: every job here is ubuntu-latest, and
-  # `${{ github.workspace }}` is empty on the Forgejo/act runner (it resolved to
+  # `${{ github.workspace }}` is empty on that same self-hosted runner (it resolved to
   # "/.terraform-plugin-cache", which survived only because "/" happened to be
   # writable in the job container).
   TF_PLUGIN_CACHE_DIR: "/tmp/.terraform-plugin-cache"
@@ -124,7 +134,7 @@ jobs:
           # binary that unpacks and installs happily on an arm64 runner and then
           # dies at first use with "cannot execute binary file: Exec format
           # error" (exit 126) - which reads like a corrupt download, not a
-          # portability bug. The homelab Forgejo runner is a Raspberry Pi;
+          # portability bug. That self-hosted runner is ARM-based;
           # GitHub's hosted runners are x86_64. Both are supported upstream.
           case "$(uname -m)" in
             x86_64)        TD_ARCH=amd64 ;;
@@ -211,16 +221,6 @@ jobs:
     name: terraform test (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: validate
-    env:
-      # Stub credentials so the veksh/godaddy-dns provider initialises during
-      # terraform test in examples/homelab-godaddy. The provider block there is
-      # configured unconditionally, so the plugin is initialised even on the
-      # default path where godaddy_domain is null and no record is planned.
-      # Scoped to this job: no GoDaddy API call is made, the tests mock the
-      # provider, and the other jobs (fmt, validate, tflint, checkov) do not
-      # need these set.
-      GODADDY_API_KEY: "ci-stub-not-real"
-      GODADDY_API_SECRET: "ci-stub-not-real"
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +246,116 @@ jobs:
       - name: terraform test
         working-directory: ${{ matrix.target }}
         run: terraform test -verbose
+
+  # The same suites as `test`, on TF_FLOOR_VERSION instead of TF_VERSION. A
+  # separate job rather than a matrix dimension on `test`, so the existing
+  # check names stay unchanged and each version is defined once (a matrix
+  # value cannot read `env`). The `target:` list below must stay in lockstep
+  # with `test`'s own list just above (and with `validate`/`tflint`'s,
+  # `test-opentofu`'s below, and with Taskfile.yml's EXAMPLES/SUBMODULES
+  # vars): a root missing from one list passes its floor (or OpenTofu) job
+  # without ever running there.
+  test-floor:
+    name: terraform test on floor (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [".", "examples/homelab", "examples/homelab-pgbouncer", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "examples/homelab-ai-assistant", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: required_version matches TF_FLOOR_VERSION
+        if: matrix.target == '.'
+        run: tests/scripts/check-terraform-floor.sh
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_FLOOR_VERSION }}
+
+      - name: cache terraform providers
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: tf-providers-
+
+      - name: terraform init
+        working-directory: ${{ matrix.target }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && terraform init -backend=false
+
+      - name: terraform test
+        working-directory: ${{ matrix.target }}
+        run: terraform test -verbose
+
+  # OpenTofu is a second supported consumer of this module: it is published
+  # to both the Terraform and OpenTofu registries. This job proves `tofu
+  # init`/`tofu test` on the pinned TOFU_VERSION, on the same roots as
+  # `test`/`test-floor` above, using OpenTofu's own binary rather than
+  # hashicorp/setup-terraform. The `target:` list must stay in lockstep with
+  # `test`'s own list above (see that job's comment for the full list of
+  # places this has to match).
+  test-opentofu:
+    name: tofu test (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [".", "examples/homelab", "examples/homelab-pgbouncer", "examples/homelab-cloudflare", "examples/homelab-godaddy", "examples/homelab-split-ingress", "examples/homelab-cloudflare-split-ingress", "examples/homelab-ai-assistant", "modules/cluster-capacity", "modules/tls-letsencrypt"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: cache opentofu providers
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tofu-providers-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: tofu-providers-
+
+      # Two targets are non-blocking here, both known OpenTofu
+      # testing-framework gaps rather than defects in this module's
+      # resources or variables. continue-on-error, not a silent green: a
+      # real regression in either suite still shows red, it just does not
+      # block the job on these two known gaps.
+      #
+      # "." (root): tests/defaults.tftest.hcl's
+      # "enabling_rotation_roll_reaches_both_releases" run uses
+      # override_resource's override_during = plan (needed to assert a
+      # plan-time value on random_password.valkey_default[0], an unknown
+      # that only resolves at apply otherwise). OpenTofu v1.13.2's
+      # override_resource block supports only target/values; it has no
+      # override_during argument, so `tofu init` rejects the test file
+      # outright with "Unsupported argument" before any test can run.
+      # Revisit when OpenTofu ships override_during (tracked upstream;
+      # none of this module's other targets hit it, since override_during
+      # is used nowhere else in the tree).
+      #
+      # "modules/cluster-capacity": tests/capacity.tftest.hcl's
+      # override_data blocks for data.kubernetes_nodes.capacity supply a
+      # partial metadata object (just { name = "..." }), relying on
+      # Terraform auto-generating the remaining computed sub-attributes
+      # (annotations, generation, labels, resource_version, uid).
+      # OpenTofu v1.13.2 does not auto-fill those when only some fields of
+      # a nested block are given, and rejects the override instead
+      # ("Invalid mock/override field `nodes`: ... are required").
+      # Revisit by supplying every field explicitly in that test file (a
+      # real fix, portable to both tools) or once OpenTofu's mock
+      # generation matches Terraform's here.
+      - name: tofu init
+        working-directory: ${{ matrix.target }}
+        continue-on-error: ${{ matrix.target == '.' || matrix.target == 'modules/cluster-capacity' }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR" && tofu init -backend=false
+
+      - name: tofu test
+        working-directory: ${{ matrix.target }}
+        continue-on-error: ${{ matrix.target == '.' || matrix.target == 'modules/cluster-capacity' }}
+        run: tofu test -verbose
 
   tflint:
     name: tflint (${{ matrix.target }})

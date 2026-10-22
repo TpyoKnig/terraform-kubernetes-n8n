@@ -18,18 +18,22 @@ terraform {
   #          below this floor gets a confusing assertion failure from
   #          `terraform test` instead of a version error.
   #
-  # 1.10 is also load-bearing in passing: it added short-circuit evaluation of
-  # && and ||, which this module's `check` blocks used to have to work around
-  # by hand (see AGENTS.md). Declared as >= 1.11 in every versions.tf in the
-  # repo and matched by CI's TF_VERSION pin, so the floor is a claim CI
-  # actually exercises rather than one nobody checks.
+  # Short-circuit evaluation of && and || is not load-bearing here: it only
+  # arrived in Terraform 1.12, one minor above this floor, so every guard
+  # condition in this module (`check` blocks and `variable` validations
+  # alike) is written `guard ? body : true` rather than `!guard || body` (see
+  # AGENTS.md). Declared as >= 1.11 in every versions.tf in the repo and
+  # matched by CI's TF_VERSION pin and the TF_FLOOR_VERSION pin's test-floor
+  # job, so the floor is a claim CI actually exercises rather than one
+  # nobody checks.
   required_version = ">= 1.11"
 
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
+      version = "~> 3.0"
     }
+
     helm = {
       source  = "hashicorp/helm"
       version = "~> 3.0"
@@ -55,7 +59,7 @@ terraform {
     }
     time = {
       source  = "hashicorp/time"
-      version = "~> 0.12"
+      version = "~> 0.14"
     }
   }
 }

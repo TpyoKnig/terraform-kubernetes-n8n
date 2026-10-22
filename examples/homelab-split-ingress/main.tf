@@ -65,6 +65,12 @@ module "n8n" {
 
   n8n_timezone = var.timezone
 
+  # No backup, acknowledged rather than left to warn on every plan. A homelab
+  # example is the case the acknowledgement exists for: the database's only
+  # copy is its PVC, that is the documented shape here, and docs/operations.md
+  # covers adding continuous archiving when it stops being acceptable.
+  cnpg_backup_acknowledged = false
+
   # Task runners on so Python Code nodes work (adds the runner sidecar to main
   # and worker pods; the base n8n image ships no Python).
   n8n_task_runners_enabled = true

@@ -25,10 +25,6 @@ the test framework, and the quality bar this module is held to.
 The short version:
 
 ```bash
-# Stub credentials so the veksh/godaddy-dns provider initializes during
-# `terraform test`. Required once per shell session.
-export GODADDY_API_KEY=stub GODADDY_API_SECRET=stub
-
 terraform fmt -recursive
 terraform init -backend=false
 terraform validate
@@ -56,6 +52,25 @@ across the module root and every example in one command. See
 [`Taskfile.yml`](./Taskfile.yml) for the individual targets (`task fmt`,
 `task validate`, `task test`, `task lint`, `task docs`,
 `task docs-generate`).
+
+### OpenTofu
+
+This module is published to both the Terraform and OpenTofu registries,
+so OpenTofu is a tested, supported consumer, not just Terraform with a
+different binary name. CI's `test-opentofu` job runs `tofu init
+-backend=false` and `tofu test` across the same root, example and
+submodule matrix `test`/`test-floor` cover, on the pinned `TOFU_VERSION`
+(see `.github/workflows/terraform-tests.yml`). If you have the `tofu`
+CLI installed, run the same thing locally with `task opentofu`
+(standalone, not part of `task ci`, since most contributors only have
+one of the two CLIs on PATH). Two targets are deliberately
+non-blocking there for known OpenTofu testing-framework gaps unrelated
+to this module's resources or variables; see the comments beside
+`test-opentofu` in the workflow file for what they are and why a real
+fix in either tool will let CI go fully strict there too. A change that
+affects `tests/*.tftest.hcl` syntax or mock/override shapes should still
+pass `task opentofu` where it is not one of those two documented
+exceptions.
 
 ## Commit messages
 

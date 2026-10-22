@@ -1,11 +1,11 @@
 # Copy this file to terraform.tfvars and fill in your values.
 
 # Hostname the n8n editor UI and webhooks are served on. A DNS record for this
-# name has to reach the cluster's ingress. Creating it is yours to do: there is
-# no Route 53 equivalent on a self-hosted cluster, and how the name gets there
-# depends entirely on your setup: a tunnel, a public LoadBalancer, split-horizon
-# DNS on the LAN, a reverse proxy in front. examples/homelab-cloudflare is one
-# worked version (a Cloudflare Tunnel), not the assumed one.
+# name has to reach the cluster's ingress. Creating it is yours to do: the
+# module creates no DNS records, and how the name gets there depends entirely on
+# your setup: a tunnel, a public LoadBalancer, split-horizon DNS on the LAN, a
+# reverse proxy in front. examples/homelab-cloudflare is one worked version (a
+# Cloudflare Tunnel), not the assumed one.
 ui_host = "n8n.example.com"
 
 # Set true only if the KEDA operator is already installed cluster-wide. Workers
@@ -39,6 +39,13 @@ ui_host = "n8n.example.com"
 # default, and no Service is created then.
 # postgres_lan_ip = "192.168.1.50"
 # metrics_lan_ip  = "192.168.1.51"
+
+# OTLP traces default to this lab's own collector (Grafana Alloy). Point
+# otel_endpoint at a different collector you run, or set it to null to turn
+# tracing off entirely; /metrics stays on regardless, since it is scraped
+# rather than pushed and needs no collector.
+# otel_endpoint = "http://otel-collector.observability.svc.cluster.local:4318"
+# otel_endpoint = null
 
 # ── Shared storage (optional) ─────────────────────────────────────────────────
 # Queue mode runs main, worker and webhook-processor pods and they share no

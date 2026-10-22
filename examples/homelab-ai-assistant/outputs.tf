@@ -73,6 +73,7 @@ output "ai_assistant" {
   value = {
     model               = var.ai_model
     sandbox_service_url = local.sandbox_service_url
+    searxng_url         = var.searxng_url
   }
 }
 

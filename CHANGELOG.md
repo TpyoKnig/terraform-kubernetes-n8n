@@ -7,12 +7,702 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `valkey_helm_timeout` (number, seconds, default `600`): seconds Terraform
+  waits for the Valkey Helm release to converge, only used when
+  `redis_backend = "valkey"`. The default matches the literal
+  `helm_release.valkey` carried before this input existed, so a deployment
+  that leaves it unset renders unchanged. Raise it independently of
+  `n8n_helm_timeout` on storage where the Valkey PVC binds slowly (a
+  `WaitForFirstConsumer` class with no provisioner left the PVC Pending into
+  the timeout).
+- `n8n_pruning_enabled` (bool, default `true`): whether n8n deletes old
+  execution records on a schedule, rendered as the chart's
+  `executions.pruning.enabled`. True matches today's hardcoded value, so a
+  deployment that leaves it unset renders unchanged. Set `false` to retain
+  every execution indefinitely; `n8n_pruning_max_age` and
+  `n8n_pruning_max_count` keep rendering so the policy resumes unchanged if
+  pruning is switched back on.
+- `n8n_pruning_hard_delete_buffer`, `n8n_pruning_hard_delete_interval` and
+  `n8n_pruning_soft_delete_interval` (numbers, default `null`): the chart's
+  `executions.pruning.hardDeleteBuffer` / `hardDeleteInterval` /
+  `softDeleteInterval`, rendered as `EXECUTIONS_DATA_HARD_DELETE_BUFFER` /
+  `EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL` /
+  `EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL`. Left null (the default), the
+  module omits all three keys, so the chart's own defaults
+  (1 hour / 15 minutes / 60 minutes) keep applying exactly as they always
+  have; the deployment this fills a gap for had never had a way to tune this
+  cadence at all. Each is a whole-number-of-at-least-1 validation, matching
+  the chart's own truthiness gate: a `0` would silently omit the env var
+  rather than mean "no buffer" or "no interval".
+- `n8n_payload_size_max` (number, MiB, default `null`): wires
+  `N8N_PAYLOAD_SIZE_MAX` on every pod type and, when set, derives the
+  Ingress `proxy-body-size` annotation from the same value plus 2 MiB of
+  multipart-framing headroom, so n8n's own limit and the proxy's cannot
+  disagree. Left null (the default), nothing changes: the env var stays
+  omitted and the annotation stays at its original `32m` literal.
+- `ingress_proxy_body_size` output: the same derived body-size string, for
+  `create_ingress = false` callers to put on their own Ingress instead of a
+  literal that can drift from `n8n_payload_size_max`.
+- Validation added to `k8s_ingress_host` (FQDN shape), `n8n_chart_repository`
+  / `valkey_chart_repository` (reject a trailing slash), `n8n_timezone`
+  (IANA shape), `n8n_execution_timeout` / `n8n_execution_timeout_max` /
+  `n8n_pruning_max_age` / `n8n_pruning_max_count` /
+  `n8n_task_runner_auto_shutdown_timeout` /
+  `n8n_task_runner_request_timeout` / `n8n_helm_timeout` /
+  `cnpg_instances` / `db_postgresdb_pool_size` /
+  `n8n_webhook_hpa_scale_up_stabilization_window_seconds` /
+  `n8n_compression_max_decompressed_size_bytes` /
+  `n8n_compression_max_zip_entries` (whole-number floors),
+  `n8n_binary_data_path` (reject a trailing slash),
+  `valkey_chart_version` (exact SemVer), `cnpg_storage_size` /
+  `valkey_storage_size` (Kubernetes quantity shape), `cnpg_database_name` /
+  `cnpg_database_owner` (unquoted Postgres identifier shape), and
+  `n8n_python_stdlib_allow` (rejects the wildcard mixed with named modules,
+  which the Python runner's own parser refuses to start on). Every current
+  default already satisfies its own new rule, so this only changes when an
+  already-broken value fails: at plan time with a clear message instead of
+  later, at apply or inside the chart's own JSON-schema validation.
+
+- [`docs/shared-responsibility.md`](./docs/shared-responsibility.md): one
+  table collecting every caller-owned piece (cluster, ingress controller,
+  cert-manager, the CNPG operator, KEDA, `StorageClass`, metrics-server, DNS,
+  secrets and Terraform state, backups, upgrades, monitoring), pulled
+  together from `AGENTS.md` and the README.
+- [`docs/build-time-decisions.md`](./docs/build-time-decisions.md): inputs
+  that can't change, or that change disruptively, after the first apply
+  (namespace name, `postgres_backend` / `redis_backend`, CNPG storage size
+  and class, the CNPG Postgres major version, the n8n encryption key, binary
+  data mode, and the n8n domain), each verified against the resources and
+  variable validations that produce the effect.
+- [`docs/versioning.md`](./docs/versioning.md): the inventory of every
+  pinned version this module carries (Terraform providers, the CI
+  toolchain, the n8n and Valkey charts, the n8n application image, the
+  CloudNativePG Postgres image), the bump tiers (patch-safe,
+  minor-required, verification-required), and what the automated drift
+  report can and cannot see. Ported from
+  `terraform-aws-n8n/docs/versioning.md`, trimmed to what this module
+  actually pins now that it has no cloud account and no cluster of its own.
+- `tests/scripts/check-version-drift.sh` (`task version-drift`): reports
+  every pin behind upstream as `DRIFT`/`OK`/`ERROR`, reusing
+  `tests/scripts/lib/constraints.sh`'s Terraform constraint evaluator.
+  Checks the five root Terraform providers plus the two example-only ones
+  (`cloudflare`, `godaddy-dns`), the CI toolchain (terraform, tflint,
+  terraform-docs, checkov), the n8n Helm chart (ghcr.io's anonymous tag
+  list), the Valkey chart (`valkey-io/valkey-helm`'s index.yaml), the n8n
+  application version (`n8n_image_tag` against `n8n-io/n8n`'s own
+  releases), and `cnpg_postgres_image_tag`'s floating major tag (reported
+  as the minor it currently resolves to, not as drift, since it tracks
+  upstream automatically). Report-only: never bumps anything, and exits 0
+  unless a required tool (curl/jq/python3) is missing. A new weekly
+  `.github/workflows/version-drift.yml` runs it and syncs the result to a
+  single tracking issue, the same pattern `terraform-aws-n8n` uses.
+- `scripts/check-example-parity.sh` (`task example-parity`, local-only):
+  diffs the seven homelab examples' declared variable names against
+  `examples/homelab` and fails on any undeclared difference, and checks
+  that every example declaring `shared_storage_class` documents it with a
+  "Shared storage across the pods" README section. Added the missing
+  section to `examples/homelab-pgbouncer`, `examples/homelab-ai-assistant`
+  and `examples/homelab-cloudflare-split-ingress`, which had the variable
+  but no prose explaining it.
+- `n8n_extra_ca_pem`, ported from the AWS sibling
+  (n8n-io/terraform-aws-n8n#202). PEM-encoded CA certificate(s) the main,
+  worker and webhook-processor pods trust for outbound TLS, for a
+  TLS-inspecting egress proxy or a private CA. The module stores the PEM in a
+  module-managed Secret, mounts it read-only at
+  `/etc/n8n-certs/ca-bundle.crt`, and sets `NODE_EXTRA_CA_CERTS`. A private
+  key block is rejected at plan time, as is a value with no well-formed PEM
+  certificate. Changing the PEM rolls every n8n pod through a
+  `checksum/extra-ca` pod annotation. The task runner sidecar is a separate
+  container and does not inherit the trust. While set, the volume name
+  `"ca-bundle"`, the mount path `/etc/n8n-certs/ca-bundle.crt`, and the env
+  name `NODE_EXTRA_CA_CERTS` are reserved against `n8n_extra_volumes`,
+  `n8n_extra_volume_mounts`, `n8n_extra_env` and `n8n_extra_env_from_secret`.
+  See [`docs/tls-proxy.md`](./docs/tls-proxy.md).
+- `db_postgresdb_ssl_reject_unauthorized` and `db_postgresdb_ssl_ca_pem`:
+  server-certificate verification for the Postgres TLS connection, on both
+  the CNPG and external paths. Defaults preserve existing behavior exactly
+  (`db_postgresdb_ssl_reject_unauthorized` defaults to `false`, the value
+  this module always hardcoded before). The CA is delivered through the
+  chart's `database.ssl.ca` value, the one case this module uses that key;
+  `config.extraEnv` still owns `DB_POSTGRESDB_SSL_ENABLED` /
+  `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` on every other path, and a
+  chart-version check keeps the two from ever duplicating a name once a CA
+  is active. Two new `check` blocks warn, non-blocking, when a CA is set
+  without verification on, or when `NODE_TLS_REJECT_UNAUTHORIZED=0` in
+  `n8n_extra_env` would silently defeat verification with no CA supplied.
+  See [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) (new this
+  release) for the CNPG path's per-cluster CA and how to extract it.
+- `n8n_node_max_old_space_size_mb`: V8 old-space heap ceiling in MB, emitted
+  as `NODE_OPTIONS=--max-old-space-size=<value>` in `config.extraEnv` on
+  every n8n container. Null (the default) emits nothing and leaves V8 to size
+  the heap itself. `NODE_OPTIONS` is reserved in `n8n_extra_env` only while
+  this input is set, so a caller's own unrelated `NODE_OPTIONS` flags stay
+  settable with it left null. Ported from this module's AWS sibling.
+- `n8n_credentials_overwrite_secret_ref`: mounts one key of an existing,
+  caller-managed Kubernetes Secret read-only at
+  `/etc/n8n/credentials-overwrite/<key>` on the main, worker and
+  webhook-processor pods, and sets `CREDENTIALS_OVERWRITE_DATA_FILE` to that
+  path. The module never reads the Secret's contents, so the credential
+  overwrite JSON never enters this module's Helm values or Terraform state.
+  Reserves the `credentials-overwrite` volume name and
+  `/etc/n8n/credentials-overwrite` mount path, and rejects
+  `CREDENTIALS_OVERWRITE_DATA`/`CREDENTIALS_OVERWRITE_DATA_FILE` in
+  `n8n_extra_env`, while set. Ported from this module's AWS sibling.
+- `n8n_dns_config`: pod-level `dnsConfig` (nameservers, search domains,
+  `ndots`) applied to the main, worker and webhook-processor pods via the
+  chart's top-level `dnsConfig` value. Null (the default) omits the block
+  entirely. Chiefly useful for `ndots: 1`, which stops an in-cluster or
+  external hostname with fewer than 5 dots from being tried against every
+  cluster search domain before being tried as written. Ported from this
+  module's AWS sibling.
+- `n8n_queue_worker_lock_duration`, `n8n_queue_worker_lock_renew_time` and
+  `n8n_queue_worker_stalled_interval`: expose the chart's `redis.worker.lockDuration`,
+  `redis.worker.lockRenewTime` and `redis.worker.stalledInterval`
+  (`QUEUE_WORKER_LOCK_DURATION`, `QUEUE_WORKER_LOCK_RENEW_TIME` and
+  `QUEUE_WORKER_STALLED_INTERVAL` on the pods). All default to `null`, which
+  omits the key entirely and leaves the chart's own defaults (60000 / 10000 /
+  30000 ms), so this is additive. Ported from terraform-aws-n8n 0.4.0.
+  `QUEUE_WORKER_MAX_STALLED_COUNT` is deliberately not exposed: n8n v2 removed
+  the environment variable and hardcodes Bull's `maxStalledCount` to 0.
+- `n8n_executions_data_save_on_success`, `n8n_executions_data_save_on_error`,
+  `n8n_executions_data_save_on_progress` and
+  `n8n_executions_data_save_manual_executions`: expose the chart's
+  `executions.data.saveOnSuccess` / `saveOnError` / `saveOnProgress` /
+  `saveManualExecutions`. All default to n8n's own defaults (`"all"` / `"all"`
+  / `false` / `true`), matching what the chart already rendered unconditionally,
+  so this is additive: no existing deployment's rendered values change. Ported
+  from terraform-aws-n8n 0.4.0. All four names are reserved in
+  `local.n8n_managed_env_names`: the chart renders them unconditionally from
+  this values path, and a caller also setting one through `n8n_extra_env` would
+  duplicate the name in a container's env list, which Kubernetes resolves
+  last-wins and which fails the next helm upgrade's strategic merge patch.
+- `db_postgresdb_connection_timeout_ms`, `db_ping_timeout_ms` and
+  `db_ping_interval_seconds`: expose `DB_POSTGRESDB_CONNECTION_TIMEOUT`,
+  `DB_PING_TIMEOUT_MS` and `DB_PING_INTERVAL_SECONDS`. All default to `null`,
+  which omits the variable and leaves n8n's own defaults (20000ms / 5000ms /
+  2s), so this is additive. Ported from terraform-aws-n8n 0.4.0. Previously
+  unsettable by any means: the chart has no values path for them, and `DB_` is
+  a module-managed prefix, so `n8n_extra_env` already rejected them at plan
+  time with no replacement.
+- `postgres_connection_budget_check_enabled`: an opt-in (default `false`)
+  advisory `check.postgres_pool_size_fits_known_max_connections`
+  (`postgres_cnpg.tf`), comparing `db_postgresdb_pool_size` times the modeled
+  main/worker/webhook-processor replica ceiling against `max_connections`.
+  Adapted from terraform-google-n8n's
+  `postgres_pool_size_fits_known_max_connections` for CNPG: on the `cnpg`
+  backend the known value is `cnpg_max_connections`, since the module always
+  sets it on the CNPG Cluster's `postgresql.parameters`; on the `external`
+  backend, where the module manages nothing on the server, it falls back to
+  PostgreSQL's own stock default of 100. Silent behind `cnpg_pooler_enabled`,
+  where pod count stops being a term in the connection budget. Advisory only:
+  it never fails a plan.
+
+- `n8n_smtp`: SMTP server n8n sends user-management email through (invites,
+  password resets, workflow-shared notifications). Null (the default)
+  configures no mail, which is n8n's own behavior with no SMTP host set.
+  Renders `N8N_EMAIL_MODE=smtp` plus the `N8N_SMTP_*` family on every pod
+  type; `port` defaults to `465` and `ssl` to `true` (implicit TLS), `user`
+  is optional for unauthenticated relays. The password never passes through
+  this input: `password_secret_ref` names an existing Secret and key (key
+  defaults to `"password"`) read as a `secretKeyRef`, so it never lands in
+  Terraform state or the Helm release values. `N8N_EMAIL_MODE` and the full
+  `N8N_SMTP_*` family are reserved against `n8n_extra_env`.
+- `n8n_diagnostics_enabled`: the telemetry off switch. Maps to
+  `N8N_DIAGNOSTICS_ENABLED`. Null (the default) omits the env var, so n8n's
+  own default (`true`, phones home to telemetry.n8n.io and PostHog) stands
+  untouched; set `false` to turn it off. Reserved against `n8n_extra_env`
+  regardless of whether it is set.
+
+- `examples/homelab-godaddy` documents what a trusted certificate needs.
+  cert-manager has no GoDaddy DNS-01 solver, so an issuer scoped to another
+  zone leaves the Order pending. The README now lists the three ways out
+  (HTTP-01 on a publicly reachable address, a GoDaddy webhook solver, or
+  CNAME delegation of `_acme-challenge` to a zone cert-manager can solve) and
+  carries the CNAME-delegation recipe, validated live against a GoDaddy
+  domain with a real Let's Encrypt certificate.
+- `otel_endpoint` in `examples/homelab`, `examples/homelab-cloudflare`,
+  `examples/homelab-godaddy` and `examples/homelab-pgbouncer`: the four
+  examples switched OTel tracing on unconditionally and aimed it at a
+  hardcoded collector address, with no variable to point elsewhere and no
+  way to turn it off short of editing `main.tf`. `otel_endpoint` defaults
+  to that same address, so no existing caller's rendered configuration
+  changes; set it to a different collector or to `null` to disable tracing
+  instead. `n8n_otel_enabled`, the exporter service name, sample rate and
+  `production_only` all key off whether it is set.
+
+- `valkey_append_only_enabled`: turns on Valkey's append-only file so the
+  Bull queue survives a crash. The chart's generated config carries no
+  persistence directives at all, so the server ran on its built-in
+  defaults, RDB snapshots only, taken as rarely as once an hour under light
+  write load; a crash or OOM kill between snapshots silently lost every job
+  accepted since the last one, from both ends: the webhook had already
+  answered 200 and no worker would ever see the job. Default `false`: this
+  module ships the tradeoff off rather than on, since the write
+  amplification it costs has no pre-existing promise to keep, unlike a
+  module that already documented always-on durability. Set it `true` for
+  any deployment where losing an hour of accepted jobs is not acceptable.
+
+- `valkey_password_rotation_roll_enabled`: opt-in `checksum/valkey-password`
+  pod annotation on both the n8n and Valkey releases, so a password rotation
+  rolls both sides in one apply instead of leaving every pod on the old
+  credential until an unrelated restart. See the entry under `### Fixed` for
+  why this ships off by default rather than unconditionally.
+
+- A `kubernetes_job_v1.cnpg_ready` readiness barrier, unconditional whenever
+  `postgres_backend = "cnpg"`. `kubectl_manifest.cnpg_cluster` applies the
+  Cluster custom resource and returns without waiting for it: the
+  gavinbunney/kubectl provider's `wait_for_rollout` speaks Deployment,
+  StatefulSet and DaemonSet, and a CNPG Cluster is none of those. On a
+  brand-new install this raced n8n's own pods against `initdb`, which
+  usually self-heals through a CrashLoopBackOff or two but, on a slow
+  cluster, can instead expire the Helm release's own wait and roll the whole
+  atomic install back with a timeout that never mentions the database. The
+  new Job polls the Cluster's `rw` Service with `pg_isready`, reusing the
+  same operand image the Cluster runs so no new image needs pulling, and the
+  `helm_release.n8n` resource now depends on the Job instead of the Cluster
+  manifest directly. Carries no `ttl_seconds_after_finished`: the TTL
+  controller deletes the Job object itself, not just its completed pod,
+  which previously manufactured a permanent `1 to add` on every plan past
+  the TTL window. **On an existing CNPG-backed deployment's first apply
+  after taking this change: one new Job object to add, nothing else
+  touched.** Where CNPG is already up, `pg_isready` succeeds on its first
+  attempt and the Job completes in seconds; no existing resource is
+  modified and no pod is restarted.
+
+- `cnpg_cpu_request`/`cnpg_cpu_limit`/`cnpg_memory_request`/`cnpg_memory_limit`,
+  the equivalent `cnpg_pooler_*` quartet, and `valkey_cpu_request`/
+  `valkey_cpu_limit`/`valkey_memory_request`/`valkey_memory_limit`: size the
+  CNPG Cluster, the PgBouncer Pooler (while enabled) and the Valkey release.
+  All twelve default `null`, which renders no `resources` key at all, the
+  BestEffort scheduling this module has always produced; a caller who sets
+  nothing sees no change to any rendered manifest. Counted into `scaling.tf`'s
+  peak-CPU demand model (`cnpg_instances` × the Postgres request, the current
+  `cnpg_pooler_instances` × the pooler request while the pooler is enabled,
+  one Valkey term while the backend is valkey) only while the corresponding
+  input is actually set, so an unsized backend contributes nothing to the
+  capacity warning either, matching the rendered reality rather than assuming
+  a size nobody asked for.
+
+- `k8s_namespace_labels` / `k8s_namespace_annotations` (both `map(string)`,
+  default `{}`): stamped on the namespace the module creates, caller labels
+  merged last so they win. The main use is Pod Security Admission: the
+  `pod-security.kubernetes.io/enforce` label has to sit on the namespace, an
+  object the caller could not otherwise reach on the path where this module
+  creates it, so the only previous route to a PSS-enforced deployment was
+  `create_namespace = false` and owning the namespace outside the module.
+  Annotations are a separate input because Kubernetes reads the two
+  differently: admission and label selectors read labels, while quota and
+  GitOps tooling usually read annotations. At the defaults the namespace
+  renders exactly as it did before: one label
+  (`app.kubernetes.io/managed-by`) and no annotations.
+
+- `n8n_extra_env` and `n8n_extra_env_from_secret` now carve a fixed list of
+  official n8n environment names out of the `DB_` / `QUEUE_` prefix guard
+  (`local.n8n_env_carveouts` in `locals.tf`), checked before the prefix rule
+  so these exact names pass while everything else under the prefixes stays
+  blocked. The guard protected module-written connection settings but also
+  caught names n8n reads directly and this module writes nowhere: the
+  external-Postgres mutual-TLS client certificate and key
+  (`DB_POSTGRESDB_SSL_CERT` / `DB_POSTGRESDB_SSL_KEY`, which n8n's own
+  `PostgresSSLConfig` reads with no chart value and no typed input here),
+  Postgres client tuning and health-check recovery tuning, query logging,
+  the shared-database table prefix, and the Redis client TLS/keep-alive
+  names the chart has no values path for. Every name was read directly out
+  of n8n 2.44.5's own config source rather than assumed. Deliberately
+  excluded: `DB_POSTGRESDB_SSL_CA`, `DB_POSTGRESDB_CONNECTION_TIMEOUT`,
+  `DB_PING_TIMEOUT_MS` and `DB_PING_INTERVAL_SECONDS` already have a typed
+  input each (`db_postgresdb_ssl_ca_pem` and friends); carving them out too
+  would open a second door to the same destination.
+
+- Two advisory `check` blocks (warnings only, never failing a plan):
+  `check.cnpg_has_no_backup_configured` fires when `postgres_backend =
+  "cnpg"` and neither `cnpg_backup` nor `cnpg_plugins` is set, since the
+  deployment's only copy of every workflow, credential and execution is then
+  one PVC; silenced by configuring either backup input, or by the new
+  `cnpg_backup_acknowledged` input (default `null`, read by nothing, exists
+  only so the check can see that the trade was deliberate).
+  `check.lan_expose_ip_is_allocator_specific` fires when `metrics_lan_expose.ip`
+  or `cnpg_lan_expose.ip` is set with no `annotations` alongside it: that
+  field renders exactly one annotation, for whichever LB-IPAM allocator it
+  was written against, and every other allocator ignores that key and hands
+  out an arbitrary address with nothing reporting the drop. All seven
+  examples now set `cnpg_backup_acknowledged = false` with a comment
+  explaining why, since a homelab deployment's only copy of the database
+  being its PVC is the documented shape there.
+- `n8n_redis_timeout_threshold`'s description and a new
+  `docs/troubleshooting.md` entry now document a measured failure mode
+  specific to this module's default backend: a single-replica Valkey
+  (`redis_backend = "valkey"`) has no standby, so at the default (`null`,
+  effectively 10 seconds) every n8n pod crashes on Redis loss about 11
+  seconds into any Valkey interruption. A live test that deleted the
+  Valkey pod measured 31 seconds for it to come back, giving about 45
+  seconds of webhook failures before self-recovery. Setting this input to
+  `60000` rides out an outage of that length. Documentation only; the
+  default stays `null`.
+
+### Changed
+
+- `examples/homelab-cloudflare` and `examples/homelab-cloudflare-split-ingress`
+  now require the Cloudflare provider `~> 5.0`, replacing the
+  `>= 4.0, < 4.52.7` cap. The cap existed because 4.52.7 was believed to break
+  `api_token` sourced from a sensitive Terraform variable, the exact shape
+  both examples use; live-tested against a real zone on 2026-10-21, that
+  belief did not hold; 4.52.7 through the newest 4.x release all configure
+  and apply correctly. Both examples' `cloudflare_record.n8n` is renamed to
+  `cloudflare_dns_record.n8n` (the v5 rewrite's resource rename) with a
+  `moved` block, so an existing deployment's next `terraform init -upgrade`
+  and `apply` carries the record's state across with no destroy/recreate:
+  live-verified for both the single-record (`count`) and two-record
+  (`for_each`) shape, on Terraform 1.11.4, a newer 1.x Terraform, and
+  OpenTofu. The record's `ttl` is now set explicitly to `1` (automatic):
+  required in v5, where v4 left it computed.
+
+- **`n8n_execution_concurrency_limit` default `100` -> `-1`.** Breaking
+  behavior change. n8n 2.44.5's `worker.ts` reads
+  `N8N_CONCURRENCY_PRODUCTION_LIMIT` before the worker's own `--concurrency`
+  flag and only falls back to the flag when that env var is `-1`; with the
+  old default of `100`, every worker ran at concurrency 100 regardless of
+  `n8n_worker_concurrency` (default `10`), so a KEDA-scaled burst filled one
+  worker to its instance-wide cap while every other replica sat idle with
+  nothing to do. Confirmed live: a 40-job burst ran entirely on one worker
+  under the old default with added replicas receiving zero jobs; with
+  `n8n_execution_concurrency_limit = -1` a 1000-job burst spread evenly
+  across 6 workers. **Effect on an existing deployment:** on the next
+  `apply`, effective per-worker concurrency drops from 100 to
+  `n8n_worker_concurrency` (default `10`), and every worker pod rolls once as
+  its env changes. Size `n8n_worker_concurrency` and
+  `n8n_worker_keda_min_replicas` / `_max_replicas` for the new effective
+  ceiling (`replicas x n8n_worker_concurrency`) before applying. Set
+  `n8n_execution_concurrency_limit = 100` to keep the previous behavior.
+  `n8n_worker_concurrency`'s description now states the same dependency.
+  See [`docs/operations.md`](./docs/operations.md#worker-autoscaling) and
+  [`docs/upgrading-n8n.md`](./docs/upgrading-n8n.md).
+
+- `n8n_domain` / `n8n_additional_domains`: tightened the fully-qualified
+  hostname validation to a per-label grammar (no label may start or end with
+  a hyphen, no empty label, so a doubled dot is also rejected) plus explicit
+  253-character/63-character-per-label length limits, matching this module's
+  AWS sibling. The previous single-character-class regex accepted malformed
+  names such as `a--b..com`.
+
+- `n8n_image_tag` default `2.36.2` -> `2.44.5`, the latest stable n8n release
+  (2.45.0 is a prerelease and is not used). **This upgrades n8n on the next
+  apply and runs database migrations**: back up the database first and read
+  `docs/upgrading-n8n.md`. The `n8nio/n8n` and `n8nio/runners` `2.44.5` tags
+  are both published.
+- `valkey_chart_version` default `0.11.0` -> `0.12.0` (Valkey 9.1.1 -> 9.1.2).
+  The chart's `values.yaml` is identical between the two versions.
+
+- `n8n_chart_version` default bumped `1.10.0` -> `1.17.0`
+  (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`, appVersion 2.44.5).
+  `n8n_image_tag` is bumped separately to `2.44.5` (see above).
+  Verified by rendering this module's own values through both chart
+  versions (`tests/scripts/check-n8n-chart.sh`, new this release):
+  - The worker Deployment's `spec.replicas` is now omitted once an
+    autoscaler owns the count (chart >= 1.13.0,
+    n8n-io/n8n-hosting#201), which this module's worker always
+    satisfies. **One-time effect:** the first `helm upgrade` onto this
+    chart version drops the live worker replica count to Kubernetes'
+    default of 1 until the autoscaler (KEDA or the CPU HPA) restores
+    the configured floor. No input change needed; see
+    `docs/upgrading-n8n.md`.
+  - Main pods no longer carry the task-runner sidecar; it now runs on
+    worker pods only, matching this module's always-on queue mode.
+  - `n8n_main_pdb_enabled = true` no longer renders a
+    `PodDisruptionBudget`: chart 1.16.0 gates it on main running more
+    than one replica (n8n-io/n8n-hosting#228), which this module never
+    does. The now-moot `main_pdb_blocks_the_main_pod_node_drain` check
+    was removed from `n8n.tf`.
+  - An unset `n8n_image_tag` now resolves to the chart's own
+    appVersion instead of the floating `stable` tag (chart >= 1.12.0).
+  - The chart's own webhook Ingress routes `/mcp` directly as of chart
+    1.16.0. The supplementary `kubernetes_ingress_v1.n8n_mcp` resource
+    this module rendered to cover that gap was removed: an
+    unconditionally empty `dynamic "path"` block fails the Kubernetes
+    provider's Ingress schema validation, so leaving it dormant was not
+    an option. **Resource deletion:** `terraform apply` after this bump
+    destroys that Ingress on any deployment with `create_ingress =
+    true`.
+  - The chart-rendered env var `WEBHOOK_URL` was renamed to
+    `N8N_WEBHOOK_URL` (n8n deprecated the old name as of n8n 2.35.0).
+    This module's reserved-name list and its split-ingress `extraEnv`
+    injection moved to the new name to match.
+  - Worker readiness and liveness probes now check real health instead of
+    only process existence. Chart 1.17.0 flips `redis.healthCheck.enabled`'s
+    own default to `true` (n8n-io/n8n-hosting#233), which this module does
+    not override: the worker's readiness probe moves from an always-passing
+    `pgrep -f 'n8n worker'` exec check to an `httpGet` probe against
+    `/healthz/readiness` (gated on the worker's own DB and Redis
+    connection), the liveness probe moves to `httpGet` `/healthz`, and a new
+    startup probe (up to 300s) holds off liveness while database migrations
+    run. **Effect on an existing deployment:** every worker pod rolls once
+    as its probes and the new `QUEUE_HEALTH_CHECK_ACTIVE` env var change;
+    see `docs/upgrading-n8n.md`.
+
+- **Provider constraints widened to the v3 line: `hashicorp/kubernetes`
+  `~> 2.0` -> `~> 3.0`, `hashicorp/time` `~> 0.12` -> `~> 0.14`** (root, all
+  seven examples, and `modules/cluster-capacity`; `modules/tls-letsencrypt`
+  declares neither provider). Matches the `~> 3.0` / `~> 0.14` pins the AWS,
+  Google and Azure siblings already carry. **BREAKING for any caller whose
+  own root module pins `kubernetes` to `~> 2.0`:** `terraform init` cannot
+  satisfy both constraints at once, so that caller's own provider
+  requirement must move to `~> 3.0` (or an unconstrained/wider range) before
+  picking up this version; see `docs/upgrading-n8n.md`. `terraform validate`
+  now prints a cosmetic "Deprecated Resource" warning for
+  `kubernetes_namespace.n8n` and the four unversioned `kubernetes_secret`
+  resources in `n8n.tf` (`n8n`, `n8n_db`, `n8n_redis`, `n8n_ca_bundle`):
+  kubernetes provider 3.x deprecates the unversioned resource types in favor
+  of their `_v1` equivalents. They are not renamed here: the provider has no
+  `moved` support across that rename
+  (`hashicorp/terraform-provider-kubernetes` issue #2812), and renaming
+  without one would destroy and recreate the namespace, taking every object
+  in it with it. A rename to the `_v1` types is tracked as a separate,
+  deliberate change behind `moved` blocks once the provider supports them.
+  All ten `.terraform.lock.hcl` files (root, seven examples, both
+  submodules) regenerated for `linux_amd64`, `linux_arm64` and
+  `darwin_arm64`.
+
+- CI's `TF_VERSION` pin (`.github/workflows/terraform-tests.yml`) bumped
+  `1.16.6` -> `1.17.0`, the current latest stable release. Read in full
+  against this module: no breaking change applies (Terraform Policy going
+  GA, provider-requirement variables/locals, and ephemeral-resource
+  diagnostics are all features this module does not use). The full
+  `terraform test` suite (root, every example, both submodules) passes
+  identically on `1.17.0`, the `TF_FLOOR_VERSION` floor (`1.11.4`), and the
+  previous pin (`1.16.6`). `TF_FLOOR_VERSION` is unchanged: the floor stays
+  the floor.
+
+- `CHECKOV_VERSION` (`.github/workflows/terraform-tests.yml`) bumped
+  `3.3.9` -> `3.3.30`, the latest release. No new findings: the tree still
+  scans 14 passed, 0 failed, 0 skipped, with and without the `tests/`
+  `skip-path` exclusion, matching the baseline `.checkov.yaml` already
+  documented. No `checkov:skip` annotation was needed.
+
+### Fixed
+
+- `n8n_chart_repository` set to an `https://` mirror now resolves correctly.
+  `helm_release.n8n` built the OCI shape unconditionally regardless of
+  scheme; the Helm provider resolves an `https://` repository through its
+  index.yaml, which needs the repository and the bare chart name as separate
+  arguments (the shape `helm_release.valkey` already used), not a single
+  interpolated URL. The `oci://` branch (the default) is unchanged.
+- An explicit `null` on `n8n_webhook_cpu_request` / `_cpu_limit` /
+  `_memory_request` / `_memory_limit` or `n8n_reinstall_missing_packages` no
+  longer aborts the plan with a template error from inside the warn-only
+  `check.webhook_resources_sized_for_reinstall_missing_packages`. All five
+  now carry `nullable = false`, so an explicit `null` falls back to the
+  declared default instead of propagating into the module.
+- `valkey_password_rotation_roll_enabled` (new, default **false**): turns on
+  a `checksum/valkey-password` podAnnotation on both the n8n release and the
+  Valkey release, so rotating the module-generated Valkey password rolls
+  both sides in one apply. The password reaches n8n pods through a
+  `secretKeyRef` resolved once at start and reaches Valkey as an ACL file
+  loaded once at start, so without this a rotation updates the Secret and
+  restarts nothing: every pod keeps the old credential until an unrelated
+  restart lands on one side first, breaking the queue until the other side
+  catches up. **Off by default, not just gated on the backend.** Introducing
+  the checksum key into `podAnnotations` for the first time is itself a
+  pod-template change, and with `deploymentStrategy = "Recreate"` (below)
+  already in place, that first change takes Valkey fully down and back up
+  once rather than overlapping, since the standalone PVC is `ReadWriteOnce`.
+  A caller who has rotated nothing and asked for nothing should not eat that
+  outage as a side effect of taking this module version; turn this on
+  deliberately to get rotation-triggered rolls, and expect that one apply to
+  interrupt the queue briefly. The external-redis path renders unchanged
+  regardless of the toggle, since there is no module-generated credential to
+  hash.
+- `task_runners_config.tf`'s header now names the coupling between the
+  mounted launcher config and the `n8nio/runners` image's own interpreter
+  and entrypoint paths: the ConfigMap replaces the image's config wholesale,
+  so an image release that moves those paths breaks both runners at once,
+  silently. `docs/upgrading-n8n.md` gains a pre-bump step to diff the new
+  image's own config against what this file renders before rolling out a
+  runner-image change.
+
+- The Valkey release no longer uses the chart's default `RollingUpdate`
+  deployment strategy. In standalone mode (`replica.enabled = false`, the
+  chart default and this module's only supported shape) the chart renders a
+  Deployment against a `ReadWriteOnce` data PVC, so a rolling update starts
+  the new pod while the old one still holds the volume: the new pod
+  deadlocks on a Multi-Attach error and the rollout hangs until someone
+  deletes a pod by hand. `deploymentStrategy = "Recreate"` is now rendered
+  unconditionally, since `RollingUpdate` can never work against a
+  single-attach volume on this chart; there is no input, because there is
+  no working alternative to withhold it for. Latent until the first
+  in-place Valkey values change, which `valkey_append_only_enabled` above
+  is exactly such a change.
+- **`n8n_timezone`, when set away from its default (`"UTC"`), now also
+  drives `GENERIC_TIMEZONE`, not only `TZ`.** The chart renders `TZ` (the
+  process clock, log timestamps) from `config.timezone`, but no template in
+  the pinned chart renders `GENERIC_TIMEZONE`, which is the setting n8n's
+  scheduler actually reads for Schedule Triggers; n8n's own default for it
+  is `America/New_York`, not `UTC`. Any deployment that set `n8n_timezone`
+  to a non-UTC value has therefore been firing scheduled workflows on US
+  Eastern time regardless of that setting, while the log timestamps made the
+  configuration look honored. **Effect on an existing deployment:** a
+  deployment at the default `"UTC"` (set or unset) renders identically, no
+  pod rolls. A deployment with a non-UTC `n8n_timezone` rolls once on the
+  next `apply` as the new env var is added, and every Schedule Trigger
+  starts firing at the time `n8n_timezone` actually names instead of US
+  Eastern. If such a workflow's schedule was tuned, even unknowingly, to
+  land at the right wall-clock time under the old US-Eastern behavior, that
+  workflow's effective firing time moves on this upgrade; review schedules
+  before applying if timing is load-bearing and `n8n_timezone` is not
+  `"UTC"`.
+
+- The `shared_storage_class` validation in all seven examples is now written
+  `x == null ? true : (...)` instead of `x == null || (...)`. On Terraform
+  1.11.4, the module's declared floor, the `||` form evaluates its right side
+  even when `x` is null, so `length(null)` and `trimspace(null)` raised
+  "argument must not be null" and every example's `terraform test` failed
+  before its first run. Terraform short-circuits `&&`/`||` from 1.12 onward,
+  which is why CI (which pins a newer version) never saw it. No behavior
+  change on any version that worked before. Found by running the whole suite
+  on 1.11.4.
+
+- `examples/homelab-cloudflare` now exposes `proxy_hops`, defaulting to `2`,
+  and passes it to `n8n_proxy_hops`. It had no such input and so inherited
+  the module default of `1`, which is right behind ingress-nginx alone and one
+  short behind the Cloudflare edge and `cloudflared`, the same chain
+  `examples/homelab-cloudflare-split-ingress` already counts as `2`. With the
+  count one too low n8n treats a proxy address as the client, which collapses
+  every rate limit and IP restriction keyed on the client address onto one
+  source, with no error. Found in a live test (`N8N_PROXY_HOPS=1` observed on
+  all three pod types). An existing deployment of this example gets
+  `N8N_PROXY_HOPS=2` on its next apply, which rolls the n8n pods once; set
+  `proxy_hops = 1` to keep the old value.
+
+- `n8n_compression_max_decompressed_size_bytes` and
+  `n8n_compression_max_zip_entries` now render the environment variable
+  names n8n actually reads: `N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES`
+  and `N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES`. The module previously emitted
+  both names without the `NODE_` infix, which n8n does not recognize, so a
+  workflow unzipping an archive larger than the configured limit was never
+  actually bounded, and a smaller limit intended as hardening was never
+  applied. The two previously-reserved correct names were also free for a
+  caller to set through `n8n_extra_env`, which would have produced a
+  duplicate environment entry and failed the next `helm upgrade`, once the
+  rendered names were aligned to match. Neither input's default changed
+  (both remain `null`); this only affects a deployment that already sets
+  one of them.
+
+- `n8n_webhook_hpa_scale_up_stabilization_window_seconds` now governs the
+  supplementary webhook HPA this module renders itself
+  (`kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook_processor`) whenever
+  `k8s_keda_installed = true`. That autoscaler exists because the chart
+  renders no webhook HPA of its own while KEDA is enabled, and it previously
+  hardcoded `stabilization_window_seconds = 0`, so the input worked on the
+  chart's own HPA path only. Following `docs/troubleshooting.md`'s own
+  advice to raise this value and fix a scale-up-on-every-rollout loop had no
+  effect at all on a cluster with KEDA attested. The input's default (`0`)
+  is unchanged, so this only affects a deployment that already sets a
+  non-zero value with KEDA attested.
+- `n8n_task_runner_cpu_request`, `_cpu_limit`, `_memory_request` and
+  `_memory_limit` now reach the task-runner sidecar container. The chart
+  reads the sidecar's resources exclusively from `taskRunners.resources`
+  (`_helpers.tpl`'s `n8n.taskRunnerContainer` helper); this module rendered
+  them under `resources.taskRunner` instead, a key the top-level `resources`
+  block does not define and no template reads, so every sidecar ran on the
+  chart's own `100m`/`256Mi` defaults regardless of these four inputs'
+  values. **Effect on an existing deployment:** on the next `apply`, the
+  task-runner sidecar's actual CPU/memory requests and limits move from the
+  chart's defaults to whatever these four inputs are set to (`200m`/`1`
+  CPU, `512Mi`/`1Gi` at this module's own defaults), which rolls the worker
+  pod (queue mode always runs the sidecar on worker, not main). No input's
+  default changed; this restores the resource sizing the variables'
+  descriptions have always documented.
+
+- `n8n_domain` and `k8s_ingress_host_effective` (the local `k8s_ingress_host`
+  falls back to) are now lower-cased once at their single definition, rather
+  than only where `k8s_ingress_hosts` built the chart's own Ingress host
+  list. A mixed-case hostname passes both inputs' FQDN validations (DNS is
+  case-insensitive), but it previously reached `N8N_HOST`, the editor base
+  URL, the webhook URL fallback, the `n8n_url` output and the derived TLS
+  Secret name verbatim, in whatever case the caller typed, while only the
+  routed Ingress host was normalized. A Kubernetes Secret name is a
+  lowercase-only RFC 1123 subdomain, so a mixed-case `k8s_ingress_host`
+  previously failed the apply on a generated internal name with an error
+  that never mentioned casing; the URL mismatches were silent, since DNS and
+  most OAuth providers tolerate case but a byte-for-byte comparison (e.g. a
+  split-ingress mode decision keyed on whether two URLs are equal) does not.
+  No deployment with an already-lowercase `n8n_domain`/`k8s_ingress_host`
+  (the overwhelming majority, since a mixed-case `k8s_ingress_host` could not
+  previously deploy at all) sees any rendered value change.
+
+- `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS` and
+  `N8N_EXTERNAL_SECRETS_UPDATE_INTERVAL` are no longer reserved names. Both
+  sat in `n8n_managed_env_names` under a comment implying the module sets
+  them; neither was ever rendered anywhere, so the reservation only blocked
+  a caller from setting either through `n8n_extra_env`. Both are now
+  settable there.
+- The KEDA worker `ScaledObject`'s Redis triggers no longer carry an
+  `authenticationRef = { name = "" }` key. `passwordFromEnv` already
+  resolves the queue password from the worker container directly, so there
+  was no `TriggerAuthentication` object for the empty name to reference.
+  KEDA has tolerated the empty value in practice; this removes a rendered
+  value that named a nonexistent object before a future KEDA version
+  starts validating it.
+- Two `coalesce()` calls in `metrics_lan.tf` and `postgres_lan.tf` guarded
+  `var.*_lan_expose.enabled` against `null`, but that attribute is declared
+  `optional(bool, false)`, so Terraform substitutes the default for an
+  absent or null value before `coalesce()` ever runs. Read directly now;
+  no behavior change.
+- `kubernetes_secret.n8n`'s `N8N_PORT` value now derives from
+  `local.n8n_service_port` instead of a second, independent hardcoded
+  `"5678"` literal. Renders the same value today; the two could previously
+  drift independently.
+- `examples/homelab-cloudflare`, `examples/homelab-cloudflare-split-ingress`
+  and `examples/homelab-godaddy` now plan with no DNS credentials in the
+  environment. Each example's DNS provider block was configured
+  unconditionally, and a provider block cannot be made conditional, so the
+  plugin initialized and rejected an empty credential on every plan, even
+  on the documented no-DNS path where the zone/domain variable is left
+  `null` because records are managed elsewhere: `must provide exactly one
+  of "api_key", "api_token" or "api_user_service_key"`. Each provider now
+  takes a placeholder credential only on that path; `dns.tf` creates no
+  record without the gating variable, so the placeholder is never sent
+  anywhere. The `GODADDY_API_KEY`/`GODADDY_API_SECRET` stub requirement
+  for `terraform test`/`terraform plan` on the default path is gone with
+  it; dropped from `Taskfile.yml`, the CI workflow, `AGENTS.md` and
+  `CONTRIBUTING.md`. A real `apply` against GoDaddy still needs real
+  credentials, unchanged.
+
+- `examples/homelab-split-ingress` and
+  `examples/homelab-cloudflare-split-ingress` now set their own Ingress's
+  `nginx.ingress.kubernetes.io/proxy-body-size` annotation from
+  `module.n8n.ingress_proxy_body_size` instead of a hardcoded `"32m"`
+  literal, so the example and the module's own derivation cannot drift
+  apart. The output defaults to the same `"32m"` while
+  `n8n_payload_size_max` is left null, so both examples render identically
+  until a caller sets that input.
+
 ### Removed
 
 - `N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input 0.3.1 added. The
   variable is deprecated in n8n 2.x and inert: setting it logs a deprecation
   warning and nothing else. `n8n_task_runners_enabled` renders the sidecar and
   the request timeout, as it did in 0.3.0.
+
+### Added (tooling)
+
+- `tests/scripts/chart-values-diff.sh`: diffs the pinned and a candidate
+  n8n chart version's `values.yaml`. `task chart-diff CANDIDATE=<version>`.
+- `tests/scripts/check-n8n-chart.sh`: renders this module's own values
+  tree through the pinned chart offline and asserts the chart-render
+  behaviors above, so a future chart bump catches regressions in any of
+  them before `n8n_chart_version`'s default moves. `task chart-check`.
+- `tests/scripts/check-helm-chart-coverage.sh`: fails when
+  `docs/helm-chart-coverage.md`'s version line goes stale, or the chart
+  grows a top-level key the doc never mentions. `task chart-coverage`.
+- `tests/scripts/lib/tf-defaults.sh`: shared helper the three scripts
+  above use to read a variable's default out of `variables.tf`.
+- `tests/scripts/check-n8n-chart.sh` gained a Postgres TLS CA scenario:
+  proves against the real pinned chart that exactly one
+  `DB_POSTGRESDB_SSL_ENABLED` and one `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED`
+  reach the main Deployment's env once `db_postgresdb_ssl_ca_pem` is active,
+  alongside `DB_POSTGRESDB_SSL_CA` itself.
 
 ## [0.3.1], The AI Assistant example and the broker that never started
 

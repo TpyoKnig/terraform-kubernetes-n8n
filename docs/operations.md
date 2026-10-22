@@ -21,7 +21,7 @@ apply the cluster needs:
 | --- | --- | --- |
 | **CloudNativePG operator** | Reconciles the `Cluster` CR this module renders | `helm install cnpg cnpg/cloudnative-pg -n cnpg-system --create-namespace`. Only needed for `postgres_backend = "cnpg"`. |
 | **ingress-nginx** (or another controller) | Serves the `Ingress` | Set `k8s_ingress_class_name` to match. |
-| **cert-manager + a `ClusterIssuer`** | Issues the TLS certificate | Named via `k8s_ingress_cluster_issuer`. [`modules/tls-letsencrypt`](../modules/tls-letsencrypt/) creates a Let's Encrypt one if you have none. |
+| **cert-manager + a `ClusterIssuer`** | Issues the TLS certificate | Named via `k8s_ingress_cluster_issuer`. [`modules/tls-letsencrypt`](../modules/tls-letsencrypt/) creates a Let's Encrypt one if you have none, solving HTTP-01, which needs the hostname publicly reachable on port 80. Tunnel-only clusters need a DNS-01 issuer arranged separately. |
 | **A default `StorageClass`** | Backs the CNPG and Valkey PVCs | Or name one explicitly with `cnpg_storage_class` / `valkey_storage_class`. |
 | **DNS** | Resolves `k8s_ingress_host` to the ingress controller's address | Yours to manage; see below. |
 | **A `LoadBalancer` IP allocator** | Only if you enable `cnpg_lan_expose` or `metrics_lan_expose` | Cilium LB-IPAM, MetalLB, kube-vip or a cloud controller. Any of them will allocate an address; *requesting a specific one* is allocator-specific - see below. |
@@ -71,6 +71,30 @@ condition.
 > unaffected: the CPU HPA is never created, so there is nothing to conflict
 > with. Turning KEDA back off is also clean: the `ScaledObject` is removed and
 > the CPU HPA recreated in the same apply.
+
+### How worker concurrency and scale-out interact
+
+Effective per-worker concurrency equals `n8n_worker_concurrency` only while
+`n8n_execution_concurrency_limit` stays at its default of `-1`. Any other
+value renders `N8N_CONCURRENCY_PRODUCTION_LIMIT` and overrides
+`n8n_worker_concurrency` on every worker instance-wide (n8n 2.44.5's
+`worker.ts`), capping total in-flight production executions across the whole
+pool at that one number no matter how many replicas KEDA adds: new workers
+come up but receive no jobs once the pool is already at the limit.
+
+At the default, total in-flight capacity is `replicas x n8n_worker_concurrency`,
+which is what lets the queue-depth triggers above actually spread a burst:
+KEDA adds a replica once `bull:jobs:wait` / `bull:jobs:active` cross
+`n8n_worker_keda_jobs_per_replica`, and the new worker has concurrency
+headroom to take jobs immediately instead of sitting behind a pool already
+saturated.
+
+Scale-down is governed by Kubernetes' own HPA stabilization window, 300
+seconds by default, not by the `ScaledObject`'s `cooldownPeriod`:
+`cooldownPeriod` only governs scale-to-zero, which this module's worker
+ScaledObject never reaches (`n8n_worker_keda_min_replicas` is validated
+`>= 1`), so it has nothing to govern here. See the comment above
+`k8s_values_keda` in `locals.tf`.
 
 ## No licence, and one main pod
 
@@ -278,6 +302,15 @@ but the webhook prefixes.
 queue-mode behaviour, which n8n ships in the Community edition. The split is
 two hostnames pointed at pools that already exist.
 
+One trap with a caller-owned Ingress on this path: set its
+`nginx.ingress.kubernetes.io/proxy-body-size` annotation from the module's
+`ingress_proxy_body_size` output, not a literal. The output is derived from
+`n8n_payload_size_max`, the same arithmetic the module uses on the Ingress it
+owns; a hand-written number drifts, and a proxy that admits more than n8n
+accepts turns an oversized payload into a 413 from inside the application
+instead of a clear refusal at the front door. Both split-ingress examples
+consume the output.
+
 ## Sizing
 
 Start from `examples/homelab` and change values, not structure. The inputs
@@ -286,7 +319,7 @@ that actually move capacity:
 | Input | Lab default | What to change it for |
 | --- | --- | --- |
 | `n8n_worker_keda_min_replicas` / `_max_replicas` | `1` / `10` | Sustained execution throughput |
-| `n8n_worker_concurrency` | `10` | Executions in flight per worker pod; raise before raising replica count if each execution is light |
+| `n8n_worker_concurrency` | `10` | Executions in flight per worker pod, while `n8n_execution_concurrency_limit` stays at its default of `-1`; raise before raising replica count if each execution is light |
 | `n8n_webhook_hpa_min_replicas` / `_max_replicas` | `2` / `8` | Inbound webhook rate |
 | `n8n_*_cpu_request` / `_memory_request` | Module defaults | The floor the scheduler packs against - get these right before touching HPA bounds |
 | `cnpg_instances` | `1` | `3` for a primary plus two replicas with automatic failover |
@@ -530,6 +563,28 @@ n8n's encryption key matters as much as the database: workflow credentials
 are encrypted with it, and a database restored without the matching key
 has unreadable credentials. Capture `terraform output -raw
 n8n_encryption_key` somewhere outside the cluster before you need it.
+
+## Database failover and node drains
+
+Measured with `cnpg_instances = 2` on a cluster running CloudNativePG and
+Longhorn. These are observations of one cluster, not guarantees.
+
+- **Deleting the primary pod.** CloudNativePG took about three minutes to name a
+  new primary: the deleted pod's PostgreSQL shuts down gracefully for up to its
+  termination grace period (1800 seconds on the Cluster's pods), and the
+  failover waits for it. n8n saw only about five seconds of trouble, because the
+  dying primary kept serving existing connections for that whole time. No n8n
+  pod restarted.
+- **Draining the node that hosts the primary.** CloudNativePG's cordon-aware
+  switchover promoted the replica in about five seconds, and the module's pods
+  on that node were evicted within ten seconds.
+- **The drain itself can still fail to finish.** On Longhorn, the node's
+  `instance-manager` pod has its own PodDisruptionBudget with no disruptions
+  allowed, so `kubectl drain` retried that eviction until its timeout. That is
+  Longhorn's behavior, not this module's: use Longhorn's node drain policy
+  settings or drain with the volumes' replicas elsewhere. The single primary's
+  PDB (`n8n-pg-primary`) also shows no allowed disruptions with one instance, by
+  design.
 
 ## Network policy
 

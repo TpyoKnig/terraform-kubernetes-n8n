@@ -10,7 +10,7 @@ terraform {
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
+      version = "~> 3.0"
     }
     helm = {
       source  = "hashicorp/helm"
@@ -24,16 +24,20 @@ terraform {
       source  = "gavinbunney/kubectl"
       version = "~> 1.14"
     }
-    # Only used when cloudflare_zone_id is set (dns.tf). Pinned below 4.52.7 to
-    # match examples/cloudflare: that release broke api_token when the value
-    # comes from a sensitive Terraform variable.
+    # Only used when cloudflare_zone_id is set (dns.tf). The 4.0-4.52.6 cap
+    # that used to live here (matching examples/cloudflare: 4.52.7 was
+    # thought to break api_token sourced from a sensitive Terraform
+    # variable) was live-tested stale against a real zone on 2026-10-21:
+    # 4.52.7 through 4.52.9 all configure and apply correctly with a
+    # sensitive-variable api_token. The module moved straight past the dead
+    # cap to the v5 rewrite instead of re-pinning a live 4.x floor.
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = ">= 4.0, < 4.52.7"
+      version = "~> 5.0"
     }
     time = {
       source  = "hashicorp/time"
-      version = "~> 0.12"
+      version = "~> 0.14"
     }
   }
 }

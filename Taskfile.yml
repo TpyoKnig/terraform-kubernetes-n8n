@@ -20,11 +20,6 @@ vars:
   # fails on push.
   SUBMODULES: cluster-capacity tls-letsencrypt
 
-env:
-  # The veksh/godaddy-dns provider requires credentials even in plan-time tests.
-  GODADDY_API_KEY: stub
-  GODADDY_API_SECRET: stub
-
 tasks:
   init:
     internal: true
@@ -98,6 +93,83 @@ tasks:
     cmds:
       - ./tests/scripts/check-checkov.sh
 
+  opentofu:
+    desc: >-
+      tofu init -backend=false + tofu test (plan-time, mocked providers) for
+      the module root, every example and both submodules, using OpenTofu's
+      own binary instead of Terraform's. Mirrors the test-opentofu CI job
+      (see .github/workflows/terraform-tests.yml for its two known,
+      non-blocking gaps: root's override_during and
+      modules/cluster-capacity's partial mock metadata). Not part of `task
+      ci`: this module is published to both the Terraform and OpenTofu
+      registries, but most contributors only have one of the two CLIs
+      installed, and CI already runs both unconditionally. Requires `tofu`
+      on PATH at TOFU_VERSION (see .github/workflows/terraform-tests.yml);
+      install from https://github.com/opentofu/opentofu/releases.
+    cmds:
+      - tofu init -backend=false
+      - tofu test -verbose
+      - for:
+          var: EXAMPLES
+          as: EXAMPLE
+        cmd: cd examples/{{.EXAMPLE}} && tofu init -backend=false && tofu test -verbose
+      - for:
+          var: SUBMODULES
+          as: SUBMODULE
+        cmd: cd modules/{{.SUBMODULE}} && tofu init -backend=false && tofu test -verbose
+
+  chart-diff:
+    desc: >-
+      Diff the pinned n8n chart's values.yaml against a candidate version.
+      Requires helm. No terraform, no cluster, no credentials. Usage:
+      `task chart-diff CANDIDATE=1.17.0`.
+    cmds:
+      - ./tests/scripts/chart-values-diff.sh {{.CANDIDATE}}
+
+  chart-coverage:
+    desc: >-
+      Check docs/helm-chart-coverage.md isn't stale relative to the pinned
+      chart version. Requires helm. No terraform, no cluster, no credentials.
+    cmds:
+      - ./tests/scripts/check-helm-chart-coverage.sh
+
+  chart-check:
+    desc: >-
+      Render this module's own values tree through the pinned n8n Helm chart
+      and assert the behaviors this module's code and tests depend on.
+      Requires terraform init -backend=false at the module root (see the
+      `init` task), helm and jq. No cluster, no credentials, no plan or apply.
+    deps: [init]
+    cmds:
+      - ./tests/scripts/check-n8n-chart.sh
+
+  version-drift:
+    desc: >-
+      Report every pinned version (Terraform providers, CI toolchain, the n8n
+      and Valkey charts, the n8n application image, the CloudNativePG Postgres
+      image) that has fallen behind upstream. Requires curl, jq and python3.
+      No terraform, no cloud credentials, no cluster. Report-only: never
+      bumps anything and always exits 0 unless a required tool is missing.
+      See docs/versioning.md.
+    cmds:
+      - ./tests/scripts/check-version-drift.sh
+
+  terraform-floor:
+    desc: >-
+      Check TF_FLOOR_VERSION in .github/workflows/terraform-tests.yml still
+      matches every required_version declaration (root, modules/*,
+      examples/*). No terraform, no network.
+    cmds:
+      - ./tests/scripts/check-terraform-floor.sh
+
+  example-parity:
+    desc: >-
+      Check the seven homelab examples' variable surfaces and shared-storage
+      documentation haven't silently drifted apart. Local-only, not CI-gated.
+      No terraform, no network.
+    cmds:
+      - ./scripts/check-example-parity.sh
+
   banners:
     desc: >-
       Check every variable/output block in variables.tf and outputs.tf sits under
@@ -159,5 +231,6 @@ tasks:
       - task: lint
       - task: banners
       - task: naming
+      - task: terraform-floor
       - task: docs
       - task: markdown

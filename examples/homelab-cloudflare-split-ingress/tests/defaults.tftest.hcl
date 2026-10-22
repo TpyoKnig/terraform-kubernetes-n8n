@@ -31,8 +31,8 @@ run "no_dns_records_without_a_zone" {
   # against a cluster whose DNS lives somewhere else, so the records are opt-in
   # rather than required.
   assert {
-    condition     = length(cloudflare_record.n8n) == 0
-    error_message = "No DNS records should be planned when cloudflare_zone_id is null; got ${length(cloudflare_record.n8n)}."
+    condition     = length(cloudflare_dns_record.n8n) == 0
+    error_message = "No DNS records should be planned when cloudflare_zone_id is null; got ${length(cloudflare_dns_record.n8n)}."
   }
 }
 
@@ -49,26 +49,26 @@ run "a_zone_produces_one_record_per_hostname" {
   # publishing only the editor here would leave every production webhook
   # unresolvable while the deployment looked healthy.
   assert {
-    condition     = length(cloudflare_record.n8n) == 2
-    error_message = "Expected one record per hostname (2); got ${length(cloudflare_record.n8n)}."
+    condition     = length(cloudflare_dns_record.n8n) == 2
+    error_message = "Expected one record per hostname (2); got ${length(cloudflare_dns_record.n8n)}."
   }
 
   assert {
     condition = alltrue([
-      for r in cloudflare_record.n8n : r.proxied == true
+      for r in cloudflare_dns_record.n8n : r.proxied == true
     ])
     error_message = "Every record must be proxied: an unproxied CNAME to cfargotunnel.com does not resolve, because that hostname exists only inside Cloudflare's edge."
   }
 
   assert {
     condition = alltrue([
-      for r in cloudflare_record.n8n : endswith(r.content, ".cfargotunnel.com")
+      for r in cloudflare_dns_record.n8n : endswith(r.content, ".cfargotunnel.com")
     ])
     error_message = "Records must be CNAMEs at the tunnel, not A records at the ingress LoadBalancer: a homelab ingress address is usually private."
   }
 
   assert {
-    condition     = length(setsubtract([for r in cloudflare_record.n8n : r.name], [var.editor_host, var.webhook_host])) == 0
+    condition     = length(setsubtract([for r in cloudflare_dns_record.n8n : r.name], [var.editor_host, var.webhook_host])) == 0
     error_message = "The records must name exactly the two hostnames the Ingresses serve."
   }
 }

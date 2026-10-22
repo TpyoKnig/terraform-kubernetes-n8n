@@ -1,7 +1,7 @@
 # Copyright (c) 2026 TpyoKnig
 # SPDX-License-Identifier: MIT
 
-# Plan-time tests for the homelab example using mocked providers.
+# Plan-time tests for the homelab-godaddy example using mocked providers.
 #
 # Exercises the example end-to-end with the in-cluster backing services
 # selected: postgres_backend = "cnpg" + redis_backend = "valkey".
@@ -17,7 +17,7 @@
 # reaching into resources whose attributes the mock provider defers.
 #
 # Run: terraform test
-#   (from examples/homelab/, mocks require terraform >= 1.11)
+#   (from examples/homelab-godaddy/, mocks require terraform >= 1.11)
 
 mock_provider "kubernetes" {}
 mock_provider "helm" {}
@@ -25,10 +25,12 @@ mock_provider "kubectl" {}
 mock_provider "random" {}
 mock_provider "time" {}
 
-# Required even though this example plans no GoDaddy resource by default: the
-# provider block in providers.tf is configured unconditionally, so the real
-# plugin would be initialised (and would reject empty credentials) before it
-# ever reaches the question of whether a resource uses it.
+# Mocked even though this example plans no GoDaddy resource by default: the
+# provider block in providers.tf is configured unconditionally, because a
+# provider block cannot be made conditional. The real plugin used to reject the
+# empty credentials here, and providers.tf now hands it placeholders on the
+# no-DNS path, so this mock is no longer what makes the run possible. It stays
+# because a test suite should not be able to reach the GoDaddy API at all.
 mock_provider "godaddy-dns" {}
 
 run "backing_services_output_populated_on_k8s_backend" {

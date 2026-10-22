@@ -24,6 +24,21 @@ provider "kubectl" {
 # and GODADDY_API_SECRET environment variables over putting either in
 # terraform.tfvars.
 provider "godaddy-dns" {
-  api_key    = var.godaddy_api_key
-  api_secret = var.godaddy_api_secret
+  # A provider block cannot be made conditional, and the plugin refuses to
+  # configure without both halves of the credential, before anything asks
+  # whether a resource uses them. That failed every plan on the documented
+  # no-DNS path, where the caller leaves godaddy_domain null because their
+  # records are managed elsewhere.
+  #
+  # So on that path the plugin is handed placeholders purely to let it
+  # configure. dns.tf creates no record without a domain, so neither value is
+  # ever sent anywhere.
+  #
+  # Gated on the domain rather than defaulting the variables, which would look
+  # simpler and would break the lines above: explicit values take precedence
+  # over GODADDY_API_KEY and GODADDY_API_SECRET, so placeholder defaults would
+  # shadow the environment variables the comment tells callers to prefer. Null
+  # is what lets the plugin fall back to them.
+  api_key    = var.godaddy_domain == null ? "placeholder_unused_no_dns_record_managed" : var.godaddy_api_key
+  api_secret = var.godaddy_domain == null ? "placeholder_unused_no_dns_record_managed" : var.godaddy_api_secret
 }

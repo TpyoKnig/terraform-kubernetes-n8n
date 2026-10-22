@@ -54,6 +54,12 @@ variable "metrics_lan_ip" {
   default     = null
 }
 
+variable "otel_endpoint" {
+  description = "Base URL of an OTLP HTTP collector to export traces to, e.g. http://otel-collector.observability.svc.cluster.local:4318 for a Grafana Alloy in the cluster. Point at the base URL, not the traces path: n8n appends /v1/traces itself. Defaults to this lab's own collector, matching what this example has always exported to; set it to a different collector or to null (tracing off entirely) to change that. The collector is yours to run; this example installs none and nothing verifies one is listening, so a wrong address means traces are exported into the void with no error anywhere. Metrics are unaffected either way: /metrics is scraped rather than pushed, so it needs no collector."
+  type        = string
+  default     = "http://alloy-otlp.monitoring.svc.cluster.local:4318"
+}
+
 variable "keda_installed" {
   description = "Set true when the KEDA operator is already installed cluster-wide. Workers then scale on Redis queue depth rather than CPU, and the chart's CPU worker HPA is disabled so the two never both own the worker Deployment. Leave false if you are unsure: a ScaledObject with no operator behind it never reconciles and workers stay at their minimum replica count without anything failing."
   type        = bool
@@ -62,12 +68,12 @@ variable "keda_installed" {
 }
 
 variable "shared_storage_class" {
-  description = "An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not."
+  description = "An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (Longhorn RWX, NFS, SMB, CephFS, or whatever the cluster offers). Longhorn does serve ReadWriteMany, through a share-manager pod that exports the volume over NFSv4, so every node that may run an n8n pod needs an NFSv4 client installed first: on Talos that is a system extension, not something present by default, and without it the volume never mounts. The module does not wait for the claim, so the symptom is pods stuck pending a mount rather than anything naming storage. Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not."
   type        = string
   default     = null
 
   validation {
-    condition     = var.shared_storage_class == null || (length(var.shared_storage_class) > 0 && var.shared_storage_class == trimspace(var.shared_storage_class))
+    condition     = var.shared_storage_class == null ? true : (length(var.shared_storage_class) > 0 && var.shared_storage_class == trimspace(var.shared_storage_class))
     error_message = "shared_storage_class must be null to disable shared storage, or a class name with no leading or trailing whitespace to enable it. An empty string is neither: it enables the claim and then asks Kubernetes for no class at all, rather than for the default one. A padded name is the same failure wearing a disguise, because the claim is created with the value as given and no class matches it. Either way the claim sits Pending with nothing explaining why."
   }
 }

@@ -89,9 +89,15 @@ resource "kubernetes_namespace" "n8n" {
     name = var.k8s_namespace
     # Managed-by label lets `kubectl get ns -l app.kubernetes.io/managed-by=...`
     # reliably find the module-owned namespace.
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform-kubernetes-n8n"
-    }
+    #
+    # Caller labels merge last and win, matching how every other extra-
+    # annotations input in this module behaves. The main thing they are for is
+    # Pod Security Admission: the enforce label has to sit on the namespace,
+    # which is an object the caller could not otherwise reach on the path
+    # where this module creates it, so the only route to a PSS-enforced
+    # deployment was to stop letting the module create the namespace at all.
+    labels      = merge({ "app.kubernetes.io/managed-by" = "terraform-kubernetes-n8n" }, var.k8s_namespace_labels)
+    annotations = var.k8s_namespace_annotations
   }
 
   # Deleting a namespace does not return until every object inside it has
@@ -169,7 +175,7 @@ resource "kubernetes_secret" "n8n" {
   data = {
     N8N_ENCRYPTION_KEY = local.n8n_encryption_key
     N8N_HOST           = local.n8n_domain
-    N8N_PORT           = "5678"
+    N8N_PORT           = tostring(local.n8n_service_port)
     N8N_PROTOCOL       = "http"
   }
 }
@@ -227,6 +233,25 @@ resource "kubernetes_secret" "n8n_redis" {
 
 }
 
+# ── Extra CA bundle ──────────────────────────────────────────────────────────
+# Caller-supplied CA certificate(s) (n8n_extra_ca_pem), mounted on every n8n
+# role and pointed at by NODE_EXTRA_CA_CERTS. Public certificates only; the
+# variable itself rejects a private key block at plan time.
+
+resource "kubernetes_secret" "n8n_ca_bundle" {
+  count = local.n8n_extra_ca_enabled ? 1 : 0
+
+  metadata {
+    name      = "n8n-ca-bundle-secret"
+    namespace = local.namespace_name
+  }
+
+  data = {
+    "ca.crt" = local.n8n_ca_bundle_pem
+  }
+
+}
+
 # ── Service account ───────────────────────────────────────────────────────────
 # Only created when var.n8n_image_pull_secrets is non-empty. Otherwise the chart
 # creates the account and this resource does not exist; see the note on
@@ -269,9 +294,18 @@ resource "kubernetes_service_account_v1" "n8n" {
 # typed inputs.
 
 resource "helm_release" "n8n" {
-  name             = "n8n"
-  repository       = null
-  chart            = "${var.n8n_chart_repository}/n8n"
+  name = "n8n"
+
+  # Two repository schemes, two shapes. An oci:// reference is resolved
+  # directly against the registry and carries the path in the chart
+  # argument. An https:// repository is resolved through its index.yaml,
+  # which needs the repository and the bare chart name as separate
+  # arguments, exactly as helm_release.valkey passes them in
+  # redis_valkey.tf. n8n_chart_repository validates both schemes, but only
+  # the oci:// shape was ever built: an https:// mirror rendered an
+  # unresolvable reference no index-backed repository serves.
+  repository       = startswith(var.n8n_chart_repository, "oci://") ? null : var.n8n_chart_repository
+  chart            = startswith(var.n8n_chart_repository, "oci://") ? "${var.n8n_chart_repository}/n8n" : "n8n"
   version          = var.n8n_chart_version
   namespace        = local.namespace_name
   create_namespace = false
@@ -298,6 +332,7 @@ resource "helm_release" "n8n" {
     kubernetes_secret.n8n,
     kubernetes_secret.n8n_db,
     kubernetes_secret.n8n_redis,
+    kubernetes_secret.n8n_ca_bundle, # empty list unless n8n_extra_ca_pem is set
     # The ordering the two-name scheme in locals.tf depends on, and which was
     # described there while nothing enforced it. On the apply that first sets
     # n8n_image_pull_secrets, the release switches serviceAccount.create to
@@ -308,7 +343,11 @@ resource "helm_release" "n8n" {
     # a local.
     kubernetes_service_account_v1.n8n,
     helm_release.valkey,
-    kubectl_manifest.cnpg_cluster,
+    # Not the Cluster manifest: applying it only tells the API server what to
+    # build. The Job is the barrier that waits for the database to answer, and
+    # it depends on the manifest itself, so this single edge carries both. See
+    # the readiness-barrier block in postgres_cnpg.tf.
+    kubernetes_job_v1.cnpg_ready,
     # Ordering, not just tidiness. When the pooler is enabled the release's
     # DB host points at the Pooler Service, so a release that rolls with no
     # Pooler at all starts pods against a name that will never resolve. They
@@ -373,7 +412,7 @@ check "otel_tuning_requires_master_switch" {
 check "custom_image_repository_needs_an_explicit_tag" {
   assert {
     condition     = var.n8n_image_repository != null ? var.n8n_image_tag != null : true
-    error_message = "n8n_image_repository is set but n8n_image_tag is null, so the chart appends its own default and the release resolves to <repository>:stable. A custom registry rarely publishes a `stable` tag, and the pods then fail with ImagePullBackOff. Set n8n_image_tag to a tag that exists in this repository. Ignore this warning if the repository is a mirror that does publish `stable`."
+    error_message = "n8n_image_repository is set but n8n_image_tag is null, so the chart appends its own default tag, which resolves to the pinned chart's appVersion (not a floating tag). A custom registry rarely publishes that exact version string, and the pods then fail with ImagePullBackOff. Set n8n_image_tag to a tag that exists in this repository. Ignore this warning only if the repository is a mirror that does publish the pinned chart's appVersion."
   }
 }
 
@@ -400,7 +439,7 @@ check "custom_image_tag_needs_a_task_runner_tag" {
         var.n8n_image_tag == null ? true : can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.n8n_image_tag))
       ) : true
     ) : true
-    error_message = "A custom n8n image is set with task runners enabled, n8n_task_runner_image_tag is null, and n8n_image_tag (\"${coalesce(var.n8n_image_tag, "null")}\") is not a bare n8n version number. The chart tags the runner sidecar from the app image, so the sidecar resolves to n8nio/runners:${coalesce(var.n8n_image_tag, "null")} and every main and worker pod fails with ImagePullBackOff unless that exact tag exists upstream, which fails the apply rather than completing with broken pods. Set n8n_task_runner_image_tag to the n8n version the custom image is built from."
+    error_message = "A custom n8n image is set with task runners enabled, n8n_task_runner_image_tag is null, and n8n_image_tag (\"${coalesce(var.n8n_image_tag, "null")}\") is not a bare n8n version number. The chart tags the runner sidecar from the app image, so the sidecar resolves to n8nio/runners:${coalesce(var.n8n_image_tag, "null")} and every worker pod (the only pod carrying the sidecar in this module's always-on queue mode) fails with ImagePullBackOff unless that exact tag exists upstream, which fails the apply rather than completing with broken pods. Set n8n_task_runner_image_tag to the n8n version the custom image is built from."
   }
 }
 
@@ -468,6 +507,38 @@ check "network_policy_blocks_the_otel_collector" {
   }
 }
 
+check "lan_expose_ip_is_allocator_specific" {
+  assert {
+    # One check for both LAN-exposure objects, because they are structural
+    # twins and the trap is identical: `ip` renders exactly one annotation,
+    # whatever key the allocator this was written against reads
+    # (metrics_lan.tf, postgres_lan.tf both name it in their own comments), so
+    # every OTHER allocator ignores the key entirely. On a cluster running a
+    # different LB-IPAM implementation the request is silently dropped, the
+    # Service comes up healthy at an arbitrary address instead, and nothing
+    # anywhere reports that the address you asked for was not the one you
+    # got. The Service that comes up healthy at the wrong address is the
+    # shape that gets noticed by whatever was pointed at the old one.
+    #
+    # Silent as soon as annotations carries anything, on the reasoning that a
+    # caller who has written an allocator annotation by hand has met their
+    # allocator and knows which key theirs reads, whichever allocator that
+    # is. This stays quiet for every allocator equally, `ip`'s own
+    # convenience included, and warns only when a caller asked for a
+    # specific address and gave the allocator no way to read the request.
+    #
+    # The rendering is deliberately untouched. Both objects merge `ip` and
+    # `annotations` in a fixed order that tests/defaults.tftest.hcl pins on
+    # purpose, and changing which key wins would move deployments that are
+    # working today.
+    condition = alltrue([
+      for expose in [var.metrics_lan_expose, var.cnpg_lan_expose] :
+      length(expose.ip) > 0 && length(expose.annotations) == 0 ? false : true
+    ])
+    error_message = "metrics_lan_expose.ip or cnpg_lan_expose.ip is set with no annotations alongside it. That field renders exactly one annotation, for whichever LB-IPAM allocator it was written against (see the comment on the resource in metrics_lan.tf / postgres_lan.tf for which key); every other allocator ignores that key, so the Service is created, an address is allocated anyway, and nothing reports that the one you asked for was dropped. If your allocator reads that key, this is working as intended and the warning can be ignored. Otherwise set the key your allocator actually reads (for example metallb.universe.tf/loadBalancerIPs on MetalLB, kube-vip.io/loadbalancerIPs on kube-vip, or your cloud controller's own annotation) through the annotations field on the same object, and leave ip empty."
+  }
+}
+
 check "an_ingress_in_front_means_at_least_one_proxy_hop" {
   assert {
     # n8n_proxy_hops = 0 says nothing proxies to the pods, so no
@@ -514,19 +585,29 @@ check "rolling_update_still_overlaps_two_mains" {
   }
 }
 
-check "main_pdb_blocks_the_main_pod_node_drain" {
-  assert {
-    # Two ways in, because the typed input is not the only one. Helm gives the
-    # last values file precedence and n8n_extra_helm_values is merged after
-    # local.k8s_values_final, so `pdb: {enabled: true}` through the escape
-    # hatch re-creates exactly what this check exists to warn about, and
-    # would do it without tripping a check that only read the input.
-    # Precedent for reading the overlay at plan time is the config.extraEnv
-    # validation on n8n_extra_helm_values itself.
-    condition     = !local.n8n_main_pdb_rendered
-    error_message = "n8n_main_pdb_enabled is true, which renders the chart's PodDisruptionBudget (minAvailable = 1) over a main Deployment this module pins to a single replica. Allowed disruptions is then zero permanently: `kubectl drain` on the node holding the main pod never completes, and a Talos node upgrade stalls in drain rather than failing, so it reads as a hung upgrade rather than a policy decision. A PDB keeps N replicas up while a node goes away, and with one replica there is no N to keep. Set n8n_main_pdb_enabled = false unless you are deliberately trading node maintenance against the main pod's availability."
-  }
-}
+# There used to be a check here, "main_pdb_blocks_the_main_pod_node_drain",
+# warning that n8n_main_pdb_enabled = true renders a PodDisruptionBudget
+# (minAvailable = 1) over a main Deployment pinned to one replica, setting
+# allowed disruptions to zero permanently and stalling `kubectl drain` on
+# whichever node holds the main pod. That was true through chart 1.10.0.
+#
+# Chart 1.16.0 closed the hazard structurally (n8n-io/n8n-hosting#228):
+# templates/pdb.yaml now renders only when main runs more than one replica,
+# gated on `multiMain.replicas`/`replicaCount` or `hpa.main.minReplicas`
+# exceeding 1. This module never does either (no multiMain, and
+# local.k8s_values_hpa always sets hpa.main.enabled = false), so setting
+# n8n_main_pdb_enabled = true no longer creates a PodDisruptionBudget at all
+# under the pinned chart: the warning would now fire on a configuration that
+# cannot do the thing it warned about. A mocked `terraform test` plan cannot
+# see that, because it never asks Helm to render a template; proving it needs
+# the real chart, which is what tests/scripts/check-n8n-chart.sh does: it
+# renders this module's exact values (pdb.enabled = true, replicaCount = 1,
+# hpa.main.enabled = false) through the pinned chart and asserts no
+# PodDisruptionBudget comes out.
+#
+# n8n_main_pdb_enabled stays as an input regardless, in case this module ever
+# grows multi-main support, at which point the chart's own gate becomes live
+# again and a check here would be worth restoring.
 
 check "task_runner_image_tag_requires_task_runners" {
   assert {
@@ -535,69 +616,49 @@ check "task_runner_image_tag_requires_task_runners" {
   }
 }
 
-# ── Supplementary webhook routing ─────────────────────────────────────────────
-# The chart's webhook Ingress hardcodes its path list and renders four of the
-# five prefixes n8n serves from the webhook processors, omitting /mcp. Values
-# cannot extend it: ingress.webhookProcessor takes only enabled, className,
-# annotations and tls.
-#
-# So the gap is real and silent: an MCP Server Trigger URL falls through to the
-# main pods, which have no handler registered for it, and the editor's SPA
-# route answers 200 with HTML. The caller sees a success and no execution.
-# Verified live against chart 1.10.0 before this resource existed.
-#
-# Same host list, class, annotations and TLS secret as the chart's own, so the
-# certificate is shared rather than duplicated and cert-manager still issues
-# once. Only the paths differ.
-#
-# This disappears by itself when the chart starts rendering /mcp: add it to
-# local.n8n_chart_routed_webhook_prefixes and the set this iterates goes empty.
-resource "kubernetes_ingress_v1" "n8n_mcp" {
-  count = var.create_ingress && length(local.n8n_unrouted_webhook_prefixes) > 0 ? 1 : 0
+# Two non-blocking warnings covering the ways db_postgresdb_ssl_reject_unauthorized
+# and db_postgresdb_ssl_ca_pem (variables.tf) can be set to something that
+# renders but does nothing, mirroring the guard-style checks above.
 
-  metadata {
-    name        = "n8n-webhook-processor-supplementary"
-    namespace   = local.namespace_name
-    annotations = local.k8s_ingress_annotations
-    labels = {
-      "app.kubernetes.io/name"       = "n8n"
-      "app.kubernetes.io/component"  = "webhook-processor"
-      "app.kubernetes.io/managed-by" = "Terraform"
-    }
+check "db_postgresdb_ssl_ca_pem_requires_verification" {
+  assert {
+    condition = var.db_postgresdb_ssl_ca_pem != null ? (
+      var.db_postgresdb_ssl_enabled && var.db_postgresdb_ssl_reject_unauthorized
+    ) : true
+    # The "still delivered, for nothing" clause only ever applies on the
+    # reject_unauthorized = false branch: there, db_postgresdb_ssl_enabled is
+    # true, so the CA reaches the chart's database.ssl.ca value
+    # (local.postgres_ssl_ca_values in locals.tf), just unused. On the
+    # ssl_enabled = false branch the chart value is never rendered at all
+    # (gated on local.postgres_ssl_ca_active in locals.tf), so saying it is
+    # delivered would send a caller hunting for a value that was never set.
+    error_message = var.db_postgresdb_ssl_enabled ? join("", [
+      "db_postgresdb_ssl_ca_pem is set, but db_postgresdb_ssl_reject_unauthorized is false, so n8n never ",
+      "validates the database server certificate against it: the CA still reaches the chart's database.ssl.ca ",
+      "value, for nothing. Set db_postgresdb_ssl_reject_unauthorized = true to actually verify the certificate, or ",
+      "remove db_postgresdb_ssl_ca_pem.",
+      ]) : join("", [
+      "db_postgresdb_ssl_ca_pem is set, but db_postgresdb_ssl_enabled is false, so there is no TLS connection ",
+      "for n8n to verify a certificate on: the CA is not passed to the chart. Set ",
+      "db_postgresdb_ssl_enabled = true and db_postgresdb_ssl_reject_unauthorized = true to actually verify ",
+      "the certificate, or remove db_postgresdb_ssl_ca_pem.",
+    ])
   }
+}
 
-  spec {
-    ingress_class_name = var.k8s_ingress_class_name
-
-    dynamic "rule" {
-      for_each = local.k8s_ingress_hosts
-      content {
-        host = rule.value
-        http {
-          dynamic "path" {
-            for_each = local.n8n_unrouted_webhook_prefixes
-            content {
-              path      = "${path.value}/"
-              path_type = "Prefix"
-              backend {
-                service {
-                  name = local.n8n_webhook_service_name
-                  port {
-                    number = local.n8n_service_port
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    tls {
-      hosts       = local.k8s_ingress_hosts
-      secret_name = local.k8s_ingress_tls_secret
-    }
+# Without a CA bundle, n8n only builds an explicit TLS options object when
+# db_postgresdb_ssl_reject_unauthorized is false (see the source excerpt this
+# cites in docs/postgresql-tls.md): with it true and no CA, n8n passes
+# `ssl: true` instead, so the certificate check follows Node's process-wide
+# default, which NODE_TLS_REJECT_UNAUTHORIZED=0 turns off. With a CA bundle,
+# n8n passes an explicit rejectUnauthorized and the variable has no effect on
+# this connection.
+check "postgres_ssl_verification_disabled_by_node_tls_env" {
+  assert {
+    condition = (var.db_postgresdb_ssl_reject_unauthorized && var.db_postgresdb_ssl_ca_pem == null) ? !anytrue([
+      for e in var.n8n_extra_env :
+      e.name == "NODE_TLS_REJECT_UNAUTHORIZED" && e.value == "0"
+    ]) : true
+    error_message = "db_postgresdb_ssl_reject_unauthorized = true without db_postgresdb_ssl_ca_pem, but n8n_extra_env sets NODE_TLS_REJECT_UNAUTHORIZED=0. Node then skips the PostgreSQL server-certificate check on every n8n pod. Remove that entry, or supply the CA through db_postgresdb_ssl_ca_pem so n8n passes an explicit rejectUnauthorized."
   }
-
-  depends_on = [helm_release.n8n]
 }

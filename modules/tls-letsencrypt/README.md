@@ -54,7 +54,7 @@ The two issuers can coexist: the account-key Secret name defaults off the issuer
 
 **No DNS-01 solver, so no wildcard certificates.** DNS-01 needs a provider-specific solver and credentials for the zone, which would give this module a DNS opinion: the one thing the rest of it deliberately refuses to have. HTTP-01 needs only that the name already resolves here.
 
-**No private clusters.** HTTP-01 requires Let's Encrypt's validation servers to reach the hostname on port 80. A cluster reachable only over a private network, or behind an authenticating proxy, cannot use this issuer and needs a DNS-01 solver configured out of band.
+**No private clusters, and that includes tunnel-only ones.** HTTP-01 requires Let's Encrypt's validation servers to reach the hostname on port 80. A cluster reachable only over a private network, behind an authenticating proxy, or through a Cloudflare Tunnel (which two of this repository's examples ship as a first-class strategy) cannot use this issuer and needs a DNS-01 solver configured out of band. The failure is quiet: cert-manager keeps retrying, the ingress controller goes on serving its own self-signed certificate, and the only symptom is a browser warning.
 
 ## Reference
 

@@ -10,7 +10,7 @@ terraform {
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
+      version = "~> 3.0"
     }
     helm = {
       source  = "hashicorp/helm"
@@ -29,13 +29,22 @@ terraform {
     #
     # Pinned to the 0.3.x line: it is a community provider on a 0.x release
     # train, so minor bumps may be breaking. Re-evaluate when 1.0 ships.
+    #
+    # Source is the fully qualified registry.terraform.io hostname, not the
+    # shorthand "veksh/godaddy-dns": OpenTofu resolves an unqualified source
+    # against registry.opentofu.org by default, which does not mirror this
+    # provider ("provider registry registry.opentofu.org does not have a
+    # provider named ... veksh/godaddy-dns"), failing `tofu init` outright.
+    # registry.terraform.io is already Terraform's own default for an
+    # unqualified source, so this is a no-op there and a real fix for
+    # OpenTofu, not a workaround.
     godaddy-dns = {
-      source  = "veksh/godaddy-dns"
+      source  = "registry.terraform.io/veksh/godaddy-dns"
       version = "~> 0.3"
     }
     time = {
       source  = "hashicorp/time"
-      version = "~> 0.12"
+      version = "~> 0.14"
     }
   }
 }

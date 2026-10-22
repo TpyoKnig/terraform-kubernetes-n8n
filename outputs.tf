@@ -45,6 +45,11 @@ output "n8n_oauth_callback_url" {
   value       = "${local.k8s_editor_base_url}/rest/oauth2-credential/callback"
 }
 
+output "ingress_proxy_body_size" {
+  description = "The nginx proxy-body-size value the module derives from n8n_payload_size_max (the payload ceiling plus 2 MiB of multipart-framing headroom, as an \"NNm\" string), or the literal \"32m\" while n8n_payload_size_max is left at its null default. For callers running create_ingress = false: put this in your own Ingress's nginx.ingress.kubernetes.io/proxy-body-size annotation instead of a literal, so your proxy's limit and n8n's limit cannot disagree."
+  value       = local.ingress_proxy_body_size
+}
+
 output "namespace" {
   description = "Kubernetes namespace n8n is deployed into."
   # Deliberately sourced from local.namespace_name rather than var.k8s_namespace

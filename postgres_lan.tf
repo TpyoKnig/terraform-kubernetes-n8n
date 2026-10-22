@@ -8,7 +8,7 @@
 # same selector and requests the given IP from Cilium's LB pool.
 
 resource "kubernetes_service_v1" "cnpg_lan" {
-  count = local.cnpg_enabled && coalesce(var.cnpg_lan_expose.enabled, false) ? 1 : 0
+  count = local.cnpg_enabled && var.cnpg_lan_expose.enabled ? 1 : 0
 
   metadata {
     name      = coalesce(var.cnpg_lan_expose.service_name, "${local.cnpg_cluster_name}-lan")

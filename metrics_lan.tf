@@ -16,7 +16,7 @@
 # what it exposes.
 
 resource "kubernetes_service_v1" "n8n_main_metrics_lan" {
-  count = coalesce(var.metrics_lan_expose.enabled, false) ? 1 : 0
+  count = var.metrics_lan_expose.enabled ? 1 : 0
 
   metadata {
     name      = coalesce(var.metrics_lan_expose.service_name, "${local.cnpg_release_name}-main-metrics-lan")

@@ -49,6 +49,30 @@ locals {
     )
   }
 
+  # The in-cluster backends are constant demand rather than autoscaled, but
+  # they schedule out of the same allocatable CPU the ceilings above compete
+  # for. Counted only while the corresponding sizing input is actually set
+  # (F-072): all three default null, which renders no resources block at all
+  # (see postgres_cnpg.tf / redis_valkey.tf), so an unset backend contributes
+  # nothing here either, matching the rendered reality rather than assuming a
+  # size nobody asked for. Zero on the external paths too, where the demand is
+  # not this cluster's problem.
+  n8n_backend_cpu_requests = {
+    postgres = (local.cnpg_enabled && var.cnpg_cpu_request != null) ? var.cnpg_cpu_request : null
+    pooler   = (local.cnpg_pooler_enabled && var.cnpg_pooler_cpu_request != null) ? var.cnpg_pooler_cpu_request : null
+    valkey   = (local.valkey_enabled && var.valkey_cpu_request != null) ? var.valkey_cpu_request : null
+  }
+
+  n8n_backend_cpu_request_millis = {
+    for name, quantity in local.n8n_backend_cpu_requests : name => (
+      quantity == null ? 0 : (
+        can(tonumber(trimsuffix(quantity, "m")))
+        ? (endswith(quantity, "m") ? tonumber(trimsuffix(quantity, "m")) : tonumber(quantity) * 1000)
+        : 0
+      )
+    )
+  }
+
   # What the three pod families request when every autoscaler sits at its
   # ceiling simultaneously. Not a forecast: the point is that this number must
   # be schedulable at all, because each autoscaler can independently reach its
@@ -56,7 +80,10 @@ locals {
   n8n_peak_cpu_request_millis = local.n8n_cpu_requests_readable ? (
     1 * (local.n8n_cpu_request_millis["main"] + local.n8n_cpu_request_millis["task_runner"]) +
     var.n8n_worker_keda_max_replicas * (local.n8n_cpu_request_millis["worker"] + local.n8n_cpu_request_millis["task_runner"]) +
-    var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis["webhook"]
+    var.n8n_webhook_hpa_max_replicas * local.n8n_cpu_request_millis["webhook"] +
+    var.cnpg_instances * local.n8n_backend_cpu_request_millis["postgres"] +
+    var.cnpg_pooler_instances * local.n8n_backend_cpu_request_millis["pooler"] +
+    local.n8n_backend_cpu_request_millis["valkey"]
   ) : 0
 
 }
@@ -84,6 +111,9 @@ module "cluster_capacity" {
     "main 1 × ${local.n8n_cpu_request_millis["main"] + local.n8n_cpu_request_millis["task_runner"]}m, ",
     "worker ${var.n8n_worker_keda_max_replicas} × ${local.n8n_cpu_request_millis["worker"] + local.n8n_cpu_request_millis["task_runner"]}m, ",
     "webhook ${var.n8n_webhook_hpa_max_replicas} × ${local.n8n_cpu_request_millis["webhook"]}m",
+    local.n8n_backend_cpu_requests["postgres"] != null ? ", postgres ${var.cnpg_instances} × ${local.n8n_backend_cpu_request_millis["postgres"]}m" : "",
+    local.n8n_backend_cpu_requests["pooler"] != null ? ", pooler ${var.cnpg_pooler_instances} × ${local.n8n_backend_cpu_request_millis["pooler"]}m" : "",
+    local.n8n_backend_cpu_requests["valkey"] != null ? ", valkey 1 × ${local.n8n_backend_cpu_request_millis["valkey"]}m" : "",
   ])
 
   # No explicit `providers` map, deliberately. Passing one makes this module
@@ -254,11 +284,16 @@ resource "kubernetes_horizontal_pod_autoscaler_v2" "n8n_webhook_processor" {
     }
 
     # Matches the chart's own webhook behaviour block: a webhook burst needs
-    # capacity now, and the default 300s stabilisation window would spend it
-    # waiting.
+    # capacity now, and the default 0s stabilisation window spends none
+    # waiting. Driven by the same input the chart's own HPA path reads, so the
+    # setting behaves identically whether or not KEDA is attested: this
+    # autoscaler only exists because the chart renders no webhook HPA at all
+    # while KEDA is enabled, and reading a hardcoded 0 here left
+    # n8n_webhook_hpa_scale_up_stabilization_window_seconds silently dead on
+    # exactly the path the troubleshooting guide tells callers to raise it on.
     behavior {
       scale_up {
-        stabilization_window_seconds = 0
+        stabilization_window_seconds = var.n8n_webhook_hpa_scale_up_stabilization_window_seconds
 
         # Kubernetes' own defaults, restated because the provider requires at
         # least one policy once a behavior block is present.

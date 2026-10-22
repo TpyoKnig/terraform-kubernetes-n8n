@@ -120,6 +120,19 @@ kubectl -n n8n create secret generic ai-assistant-secrets \
 
 `sandbox-api-key` must equal the `$API_KEY` the sandbox's `auth.generated.apiKeys` was set to above. Rotate one without the other and only code execution breaks - the editor and the assistant chat keep working, which reads as a sandbox outage rather than the credential mismatch it is.
 
+## Web search (optional)
+
+Set `searxng_url` to an in-cluster SearXNG and the example emits `N8N_INSTANCE_AI_SEARXNG_URL`. It is null by default, so nothing is added unless you ask. Find the Service name from an n8n pod first, because it depends on your SearXNG chart and is not always `searxng`:
+
+```bash
+kubectl -n n8n exec deploy/n8n-main -c n8n-main -- \
+  wget -q -O - 'http://searxng-http.searxng.svc.cluster.local:8080/search?q=n8n&format=json'
+```
+
+That must print JSON results; if it errors on `format=json`, SearXNG is missing `json` in its `search.formats`. Even once the variable is set, n8n asks an owner to approve web search in an "Add web search" dialog the first time the assistant wants the web, and the example cannot answer that for you. Brave Search is the alternative, through a `brave-api-key` in `ai-assistant-secrets`; see [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md).
+
+Verified live on n8n 2.44.4 with SearXNG: asking "Search the web for the latest stable n8n release" ran the assistant's `research` tool with `action: web-search` and the answer matched the GitHub release.
+
 ## Apply
 
 ```bash
@@ -163,6 +176,10 @@ kubectl -n n8n delete secret ai-assistant-secrets
 
 CNPG and Valkey PVCs are removed or retained according to their `StorageClass` reclaim policy, not by Terraform - see [`homelab`](../homelab/)'s teardown note.
 
+## Shared storage across the pods
+
+Identical to [`../homelab`](../homelab#shared-storage-across-the-pods), including the inputs and the two settings that make it take effect. Set `shared_storage_class` to an RWX-capable class and this example creates a claim and mounts it into the main, worker and webhook-processor pods; leave it null and binary data stays in Postgres. Read that section rather than a copy of it here, so the two cannot drift.
+
 ## Production considerations
 
 See [`homelab`](../homelab/)'s table first; it all still applies. Specific to the sandbox:
@@ -182,15 +199,15 @@ See [`homelab`](../homelab/)'s table first; it all still applies. Specific to th
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | ~> 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
 
 ## Modules
 
@@ -218,8 +235,9 @@ See [`homelab`](../homelab/)'s table first; it all still applies. Specific to th
 | <a name="input_postgres_lan_ip"></a> [postgres\_lan\_ip](#input\_postgres\_lan\_ip) | Address to publish the CNPG rw endpoint on, for LAN clients that are not in the cluster - a Grafana instance querying n8n's execution tables, a DB client. Rendered as an io.cilium/lb-ipam-ips annotation, so it pins the address on Cilium LB-IPAM only; other allocators (MetalLB, kube-vip) ignore that key and will allocate an arbitrary address instead. To pin on those, call the module directly and use cnpg\_lan\_expose.annotations / metrics\_lan\_expose.annotations with the key your allocator honours. Leave null (the default) and no LoadBalancer Service is created. Postgres is exposed without a proxy in front of it, so only set this on a network you trust. | `string` | `null` | no |
 | <a name="input_sandbox_namespace"></a> [sandbox\_namespace](#input\_sandbox\_namespace) | Namespace the n8n-sandbox-service Helm release runs in. This example does not create that release (see README) - it only builds N8N\_SANDBOX\_SERVICE\_URL from this and sandbox\_release\_name, so the value has to match wherever you actually installed it. | `string` | `"n8n-sandbox"` | no |
 | <a name="input_sandbox_release_name"></a> [sandbox\_release\_name](#input\_sandbox\_release\_name) | Helm release name the n8n-sandbox-service chart was installed under, which must also be the chart's fullnameOverride (the README's install command sets both to "sandbox"). N8N\_SANDBOX\_SERVICE\_URL is built as "<release>-api", and that is the API Service's name only when fullnameOverride pins the fullname to the release name; without the override the chart concatenates release and chart name and the Service renders as "<release>-n8n-sandbox-service-api" instead. Get the pair wrong and n8n reaches for a Service that does not exist: the assistant loads normally and every code execution request times out. | `string` | `"sandbox"` | no |
+| <a name="input_searxng_url"></a> [searxng\_url](#input\_searxng\_url) | In-cluster address of a SearXNG instance for the assistant's web search, rendered as N8N\_INSTANCE\_AI\_SEARXNG\_URL. Null (the default) sets nothing and the assistant has no web search until an owner configures one in the UI. The Service name depends on your SearXNG chart and is not always "searxng": check it from an n8n pod with wget against `<url>/search?q=n8n&format=json`, which must return JSON (SearXNG needs `json` in its search.formats). Even with this set, n8n shows an "Add web search" approval dialog to an owner the first time the assistant wants the web. Verified live against n8n 2.44.4. Brave Search is the alternative: put its key in the ai-assistant-secrets Secret (see docs/ai-assistant.md). | `string` | `null` | no |
 | <a name="input_shared_mount_path"></a> [shared\_mount\_path](#input\_shared\_mount\_path) | Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n\_extra\_volume\_mounts reaches the n8n container only. | `string` | `"/opt/n8n-shared"` | no |
-| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
+| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (Longhorn RWX, NFS, SMB, CephFS, or whatever the cluster offers). Longhorn does serve ReadWriteMany, through a share-manager pod that exports the volume over NFSv4, so every node that may run an n8n pod needs an NFSv4 client installed first: on Talos that is a system extension, not something present by default, and without it the volume never mounts. The module does not wait for the claim, so the symptom is pods stuck pending a mount rather than anything naming storage. Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
 | <a name="input_shared_storage_size"></a> [shared\_storage\_size](#input\_shared\_storage\_size) | Size of the shared RWX claim. Only used when shared\_storage\_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow. | `string` | `"20Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the CNPG and Valkey PVCs. Empty uses whatever the cluster's default StorageClass is. | `string` | `""` | no |
 | <a name="input_ui_host"></a> [ui\_host](#input\_ui\_host) | Hostname served by ingress. A DNS record for it has to reach the cluster's ingress controller, and creating that record is yours to do - this example manages no DNS, because how a name reaches a self-hosted cluster depends entirely on the setup (a tunnel, a public LoadBalancer, split-horizon DNS on the LAN, a reverse proxy). See examples/homelab-cloudflare for one worked version. | `string` | `"n8n.example.com"` | no |

@@ -1,11 +1,11 @@
 # Copy this file to terraform.tfvars and fill in your values.
 
 # Hostname the n8n editor UI and webhooks are served on. A DNS record for this
-# name has to reach the cluster's ingress. Creating it is yours to do: there is
-# no Route 53 equivalent on a self-hosted cluster, and how the name gets there
-# depends entirely on your setup: a tunnel, a public LoadBalancer, split-horizon
-# DNS on the LAN, a reverse proxy in front. examples/homelab-cloudflare is one
-# worked version (a Cloudflare Tunnel), not the assumed one.
+# name has to reach the cluster's ingress. Creating it is yours to do: the
+# module creates no DNS records, and how the name gets there depends entirely on
+# your setup: a tunnel, a public LoadBalancer, split-horizon DNS on the LAN, a
+# reverse proxy in front. examples/homelab-cloudflare is one worked version (a
+# Cloudflare Tunnel), not the assumed one.
 ui_host = "n8n.example.com"
 
 # Set true only if the KEDA operator is already installed cluster-wide. Workers
@@ -61,3 +61,7 @@ ui_host = "n8n.example.com"
 # Must match wherever you actually installed the n8n-sandbox-service chart.
 # sandbox_namespace     = "n8n-sandbox"
 # sandbox_release_name  = "sandbox"
+
+# In-cluster SearXNG for the assistant's web search (optional). Check the
+# Service name from an n8n pod first; it is not always "searxng".
+# searxng_url = "http://searxng.searxng.svc.cluster.local:8080"

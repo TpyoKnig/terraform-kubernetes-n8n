@@ -1,6 +1,54 @@
-# Post-deployment scripts
+# Scripts
 
-Two manual verification scripts. Neither runs in CI: both need a live cluster, which a pull request check cannot provide.
+Two manual verification scripts, plus three offline chart-bump tools.
+
+## Offline, no cluster needed
+
+| Script | Use it when |
+|---|---|
+| [`chart-values-diff.sh`](#chart-values-diff) | Considering a candidate `n8n_chart_version`. Diffs the pinned and candidate `values.yaml` text. |
+| [`check-n8n-chart.sh`](#chart-render-check) | Verifying a chart bump before moving `n8n_chart_version`'s default. Renders this module's own values through the real chart and asserts the behaviors the module's code depends on. |
+| [`check-helm-chart-coverage.sh`](#chart-coverage-check) | After moving `n8n_chart_version`'s default. Fails if `docs/helm-chart-coverage.md` still claims the old version, or if the chart grew a top-level key the doc never mentions. |
+
+All three need only `helm` (the render check also needs `terraform` and `jq`); none touches a cluster or credentials. `Taskfile.yml` wraps them as `task chart-diff CANDIDATE=<version>`, `task chart-check` and `task chart-coverage`.
+
+### Chart values diff
+
+```bash
+tests/scripts/chart-values-diff.sh 1.17.0
+```
+
+Prints a text diff of `values.yaml` between the pinned `n8n_chart_version` and the candidate, via `helm show values`. Read it to decide whether a key this module sets moved, was renamed, or changed its default; it does not inspect this module's own values or templates, only the chart's documented defaults.
+
+### Chart render check
+
+```bash
+task chart-check
+# or: terraform init -backend=false && tests/scripts/check-n8n-chart.sh
+```
+
+`tests/defaults.tftest.hcl` runs against the mocked providers, so it can pin the *shape* of `local.k8s_values_final` at plan time, but `helm_release.values` is unknown under plan-time mocks (AGENTS.md) and the mocked suite never calls Helm. This script does: it reads this module's real chart pin and values tree via `terraform console` against an empty throwaway state, pulls that exact chart version, and runs `helm template` against it to check things only a real render can answer, for example:
+
+- whether `n8n_main_pdb_enabled = true` actually renders a `PodDisruptionBudget` against this module's single-replica main (chart 1.16.0 stopped doing that; earlier versions did);
+- which pods carry the task-runner sidecar in this module's always-on queue mode;
+- whether the worker Deployment's `spec.replicas` is still rendered once an autoscaler owns the count;
+- what an unset `n8n_image_tag` actually resolves to;
+- whether the chart's own webhook Ingress still routes every prefix this module advertises (`/mcp` included).
+
+Run it as part of evaluating a chart bump, before moving `n8n_chart_version`'s default. It is not in CI: like the checkov task, it needs tools CI does not guarantee (`helm`, network egress to pull the chart), and unlike `terraform test` it is not deterministic across chart releases by design, since its whole purpose is to catch when a chart release changes one of these behaviors.
+It exits non-zero if any assertion fails, after printing every `PASS`/`FAIL` line rather than stopping at the first one, so one run tells you everything a bump needs to look at.
+
+### Chart coverage check
+
+```bash
+tests/scripts/check-helm-chart-coverage.sh
+```
+
+A stale-doc tripwire for `docs/helm-chart-coverage.md`, not a content auditor. It checks two things only: the doc's "Measured against chart **X**" line matches `n8n_chart_version`'s default, and every top-level key in that chart version's `values.yaml` appears somewhere in the doc's coverage table or its "Not currently configurable" list. It cannot tell you a row's *description* is still accurate, only that the version claim isn't stale and that the chart hasn't grown a whole new section nobody has looked at yet.
+
+## Two manual, post-deployment scripts
+
+Neither runs in CI: both need a live cluster, which a pull request check cannot provide.
 
 | Script | Use it when |
 |---|---|
