@@ -627,17 +627,18 @@ locals {
   # True only when the pinned chart is known to render DB_POSTGRESDB_SSL_ENABLED
   # from database.ssl.enabled: upstream fixed this at chart 1.15.0
   # (n8n-io/n8n-hosting#175; earlier charts rendered DB_POSTGRESDB_SSL, which
-  # n8n does not read, see the comment on k8s_values_database below). For any
-  # other repository, or a prerelease (a SemVer "-" segment, which may predate
-  # the fix), the chart contents cannot be verified, and the safe failure is a
-  # duplicate "true" entry rather than a missing one, so the extraEnv block
-  # below keeps emitting its own in that case. Same gate as
-  # terraform-aws-n8n, terraform-google-n8n#39 and terraform-azurerm-n8n#77.
-  n8n_chart_renders_postgres_ssl_enabled = var.n8n_chart_repository != "oci://ghcr.io/n8n-io/n8n-helm-chart" ? false : (
-    strcontains(split("+", var.n8n_chart_version)[0], "-") ? false : (
-      tonumber(local.n8n_chart_version_parts[0]) > 1 ? true : (
-        tonumber(local.n8n_chart_version_parts[0]) < 1 ? false : tonumber(local.n8n_chart_version_parts[1]) >= 15
-      )
+  # n8n does not read, see the comment on k8s_values_database below). Decided
+  # by the chart version alone, not by the repository host: a mirror has to
+  # serve the exact chart version named by n8n_chart_version (see that
+  # input's description), so a mirrored 1.15 or later renders the entry just
+  # as the upstream one does, and gating on the host would leave a duplicate
+  # entry, the failure that breaks every later helm upgrade, on every mirror.
+  # A prerelease (a SemVer "-" segment) may predate the fix, so it cannot be
+  # verified and keeps the extraEnv entry: the safe failure is a duplicate
+  # "true" entry rather than a missing one.
+  n8n_chart_renders_postgres_ssl_enabled = strcontains(split("+", var.n8n_chart_version)[0], "-") ? false : (
+    tonumber(local.n8n_chart_version_parts[0]) > 1 ? true : (
+      tonumber(local.n8n_chart_version_parts[0]) < 1 ? false : tonumber(local.n8n_chart_version_parts[1]) >= 15
     )
   )
 

@@ -497,6 +497,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- A chart mirror (`n8n_chart_repository` pointed at anything but the upstream
+  registry) no longer renders `DB_POSTGRESDB_SSL_ENABLED` twice when a CA is
+  supplied. The decision whether the chart already renders that entry used to
+  depend on the repository address, so every mirror was treated as unverified
+  and kept the module's own entry beside the chart's, the duplicate name that
+  fails every later `helm upgrade`. It now depends on `n8n_chart_version`
+  alone (1.15.0 or later, prereleases excluded), and `n8n_chart_repository`'s
+  description states that a mirror must serve the pinned chart unmodified.
 - `n8n_chart_repository` set to an `https://` mirror now resolves correctly.
   `helm_release.n8n` built the OCI shape unconditionally regardless of
   scheme; the Helm provider resolves an `https://` repository through its

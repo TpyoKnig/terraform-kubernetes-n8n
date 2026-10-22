@@ -4463,11 +4463,13 @@ run "a_ca_bundle_reaches_the_chart_without_duplicating_ssl_enabled" {
   }
 }
 
-# A chart repository the module cannot verify (a mirror, here) falls back to
-# keeping config.extraEnv's own DB_POSTGRESDB_SSL_ENABLED even while a CA is
-# active, trading a possible duplicate for a possible missing entry: the safer
-# direction per local.n8n_chart_renders_postgres_ssl_enabled in locals.tf.
-run "an_unverifiable_chart_repository_keeps_its_own_ssl_enabled_entry" {
+# A chart repository mirror is gated by the chart version alone, like the
+# upstream registry: a mirror must serve the pinned version verbatim (see
+# n8n_chart_repository), so a mirrored chart at 1.15 or later renders
+# DB_POSTGRESDB_SSL_ENABLED from database.ssl.enabled and config.extraEnv must
+# not carry a second one. Gating on the host instead left the duplicate entry
+# that fails every later helm upgrade on every mirror.
+run "a_mirrored_chart_is_gated_by_its_version_not_its_host" {
   command = plan
 
   variables {
@@ -4478,11 +4480,45 @@ run "an_unverifiable_chart_repository_keeps_its_own_ssl_enabled_entry" {
   }
 
   assert {
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled
+    error_message = "A mirror serving the pinned chart (1.15 or later by default) must be treated as rendering DB_POSTGRESDB_SSL_ENABLED itself, exactly like the upstream repository."
+  }
+
+  assert {
+    condition = !contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "DB_POSTGRESDB_SSL_ENABLED",
+    )
+    error_message = "A mirrored chart at 1.15 or later renders DB_POSTGRESDB_SSL_ENABLED from database.ssl.enabled, so config.extraEnv must not carry a duplicate."
+  }
+}
+
+# A chart the module cannot verify (a prerelease, which may predate the 1.15
+# fix) falls back to keeping config.extraEnv's own DB_POSTGRESDB_SSL_ENABLED
+# even while a CA is active, trading a possible duplicate for a possible
+# missing entry: the safer direction per
+# local.n8n_chart_renders_postgres_ssl_enabled in locals.tf.
+run "an_unverifiable_prerelease_chart_keeps_its_own_ssl_enabled_entry" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+    n8n_chart_version                     = "1.17.0-rc.1"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled
+    error_message = "A prerelease chart cannot be verified to carry the 1.15 fix, so the gate must stay false."
+  }
+
+  assert {
     condition = contains(
       [for e in local.k8s_values_config.config.extraEnv : e.name],
       "DB_POSTGRESDB_SSL_ENABLED",
     )
-    error_message = "An unverified chart repository must keep config.extraEnv's own DB_POSTGRESDB_SSL_ENABLED entry rather than assume the mirrored chart renders it from database.ssl.enabled."
+    error_message = "An unverifiable chart must keep config.extraEnv's own DB_POSTGRESDB_SSL_ENABLED entry rather than assume it renders from database.ssl.enabled."
   }
 }
 
