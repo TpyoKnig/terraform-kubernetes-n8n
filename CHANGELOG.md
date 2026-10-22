@@ -128,10 +128,13 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   chart's `database.ssl.ca` value, the one case this module uses that key;
   `config.extraEnv` still owns `DB_POSTGRESDB_SSL_ENABLED` /
   `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` on every other path, and a
-  chart-version check keeps the two from ever duplicating a name once a CA
-  is active. Two new `check` blocks warn, non-blocking, when a CA is set
-  without verification on, or when `NODE_TLS_REJECT_UNAUTHORIZED=0` in
-  `n8n_extra_env` would silently defeat verification with no CA supplied.
+  chart-version check (the pinned `n8n_chart_version` alone, 1.15.0 or later,
+  prereleases excluded, whichever repository serves it) keeps the two from
+  ever duplicating a name once a CA is active; a mirror must therefore serve
+  the pinned chart unmodified. Two new `check` blocks warn, non-blocking,
+  when a CA is set without verification on, or when
+  `NODE_TLS_REJECT_UNAUTHORIZED=0` in `n8n_extra_env` would silently defeat
+  verification with no CA supplied.
   See [`docs/postgresql-tls.md`](./docs/postgresql-tls.md) (new this
   release) for the CNPG path's per-cluster CA and how to extract it.
 - `n8n_node_max_old_space_size_mb`: V8 old-space heap ceiling in MB, emitted
@@ -497,14 +500,6 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
-- A chart mirror (`n8n_chart_repository` pointed at anything but the upstream
-  registry) no longer renders `DB_POSTGRESDB_SSL_ENABLED` twice when a CA is
-  supplied. The decision whether the chart already renders that entry used to
-  depend on the repository address, so every mirror was treated as unverified
-  and kept the module's own entry beside the chart's, the duplicate name that
-  fails every later `helm upgrade`. It now depends on `n8n_chart_version`
-  alone (1.15.0 or later, prereleases excluded), and `n8n_chart_repository`'s
-  description states that a mirror must serve the pinned chart unmodified.
 - `n8n_chart_repository` set to an `https://` mirror now resolves correctly.
   `helm_release.n8n` built the OCI shape unconditionally regardless of
   scheme; the Helm provider resolves an `https://` repository through its
