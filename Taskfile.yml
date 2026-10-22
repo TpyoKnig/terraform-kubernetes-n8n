@@ -93,30 +93,58 @@ tasks:
     cmds:
       - ./tests/scripts/check-checkov.sh
 
+  opentofu-tolerant:
+    internal: true
+    desc: >-
+      Runs tofu init + tofu test in DIR and warns instead of aborting the
+      task on failure. Only called for the two targets test-opentofu's CI
+      job marks continue-on-error (see .github/workflows/terraform-tests.yml):
+      known OpenTofu testing-framework gaps, not defects in this module's
+      own resources or variables.
+    cmds:
+      - |
+        set -e
+        cd "{{.DIR}}"
+        init_status=0
+        tofu init -backend=false || init_status=$?
+        test_status=0
+        if [ "$init_status" -eq 0 ]; then
+          tofu test -verbose || test_status=$?
+        fi
+        if [ "$init_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
+          echo "WARNING: tofu test failed for {{.DIR}} (init=$init_status test=$test_status): known non-blocking OpenTofu gap, see test-opentofu's continue-on-error comment in .github/workflows/terraform-tests.yml" >&2
+        fi
+
   opentofu:
     desc: >-
       tofu init -backend=false + tofu test (plan-time, mocked providers) for
       the module root, every example and both submodules, using OpenTofu's
-      own binary instead of Terraform's. Mirrors the test-opentofu CI job
-      (see .github/workflows/terraform-tests.yml for its two known,
-      non-blocking gaps: root's override_during and
-      modules/cluster-capacity's partial mock metadata). Not part of `task
-      ci`: this module is published to both the Terraform and OpenTofu
-      registries, but most contributors only have one of the two CLIs
-      installed, and CI already runs both unconditionally. Requires `tofu`
-      on PATH at TOFU_VERSION (see .github/workflows/terraform-tests.yml);
-      install from https://github.com/opentofu/opentofu/releases.
+      own binary instead of Terraform's. Mirrors the test-opentofu CI job,
+      including its per-target tolerance: the root and
+      modules/cluster-capacity warn and continue past a failure instead of
+      aborting the rest of the matrix (two known OpenTofu
+      testing-framework gaps, override_during and partial mock metadata;
+      see the comments beside test-opentofu in
+      .github/workflows/terraform-tests.yml), every other target still
+      aborts the task on failure the same way `task test` does. Not part
+      of `task ci`: this module is published to both the Terraform and
+      OpenTofu registries, but most contributors only have one of the two
+      CLIs installed, and CI already runs both unconditionally. Requires
+      `tofu` on PATH at TOFU_VERSION (see
+      .github/workflows/terraform-tests.yml); install from
+      https://github.com/opentofu/opentofu/releases.
     cmds:
-      - tofu init -backend=false
-      - tofu test -verbose
+      - task: opentofu-tolerant
+        vars:
+          DIR: "."
       - for:
           var: EXAMPLES
           as: EXAMPLE
         cmd: cd examples/{{.EXAMPLE}} && tofu init -backend=false && tofu test -verbose
-      - for:
-          var: SUBMODULES
-          as: SUBMODULE
-        cmd: cd modules/{{.SUBMODULE}} && tofu init -backend=false && tofu test -verbose
+      - task: opentofu-tolerant
+        vars:
+          DIR: "modules/cluster-capacity"
+      - cd modules/tls-letsencrypt && tofu init -backend=false && tofu test -verbose
 
   chart-diff:
     desc: >-

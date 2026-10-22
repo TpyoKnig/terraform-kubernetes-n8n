@@ -62,16 +62,16 @@ locals {
 
 check "valkey_resource_request_not_above_limit" {
   assert {
-    # guard ? true : body, per AGENTS.md: this module's floor (>= 1.11) does
+    # guard ? body : true, per AGENTS.md: this module's floor (>= 1.11) does
     # not short-circuit ||, so the comparison on the right must never run
     # while either side is null.
     condition = alltrue([
-      (local.valkey_cpu_request_millicores == null || local.valkey_cpu_limit_millicores == null) ? true : (
+      (local.valkey_cpu_request_millicores != null && local.valkey_cpu_limit_millicores != null) ? (
         local.valkey_cpu_request_millicores <= local.valkey_cpu_limit_millicores
-      ),
-      (local.valkey_memory_request_bytes == null || local.valkey_memory_limit_bytes == null) ? true : (
+      ) : true,
+      (local.valkey_memory_request_bytes != null && local.valkey_memory_limit_bytes != null) ? (
         local.valkey_memory_request_bytes <= local.valkey_memory_limit_bytes
-      ),
+      ) : true,
     ])
     error_message = "valkey_cpu_request/valkey_cpu_limit or valkey_memory_request/valkey_memory_limit set a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so the Valkey Helm release fails at apply time with a validating-webhook error rather than anything this module's own plan surfaces. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
   }
