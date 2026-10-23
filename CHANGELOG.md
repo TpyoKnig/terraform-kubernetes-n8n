@@ -7,6 +7,40 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.4.1], The namespace rename
+
+Finishes a change `0.4.0` described but did not contain: the namespace rename
+to `kubernetes_namespace_v1` behind `moved` blocks, which merged after the
+`0.4.0` tag. It raises the `hashicorp/kubernetes` floor to `3.3`, so a caller
+who pins the provider lower in their own root module must raise it before
+taking this version. A plan on an existing deployment shows the namespace as
+moved, with no destroy, provided an example-owned namespace has first had the
+`terraform state mv` documented in its `storage.tf` and
+`docs/upgrading-n8n.md`; without it the plan destroys and recreates the
+namespace.
+
+### Changed
+
+- **`kubernetes_namespace.n8n` renamed to `kubernetes_namespace_v1.n8n`**
+  (root module and the `storage.tf` of all seven examples), each behind a
+  `moved` block, and the `hashicorp/kubernetes` constraint raised
+  `~> 3.0` -> `~> 3.3` in the root and all seven examples. 3.3.0 is the first
+  release where `kubernetes_namespace_v1` implements move-state
+  (terraform-provider-kubernetes#2979); earlier 3.x releases fail the `moved`
+  block with `Move Resource State Not Supported`, which is why the rename was
+  deferred. The four `kubernetes_secret` resources stay unversioned: that
+  provider has no move support for them yet (#2812 stays open), so their
+  "Deprecated Resource" warnings remain. **Effect on an existing deployment:**
+  the plan shows the namespace as moved with no destroy. Explicitly empty
+  `metadata` maps may show a one-time in-place update. An example-owned
+  namespace that still needs the `state mv` documented in its `storage.tf`
+  must run it before upgrading, because `state mv` cannot change a resource's
+  type; see `docs/upgrading-n8n.md`. A caller who pins `kubernetes` below
+  `3.3.0` in their own root module must raise it first.
+
+- README badges for the Terraform and OpenTofu registries, the latest
+  release, CI and the license. The registry pages show them from this tag on.
+
 ## [0.4.0], The chart 1.17.0 round
 
 Moves the pinned n8n Helm chart from `1.10.0` to `1.17.0` (n8n `2.44.5`) and the
@@ -488,23 +522,6 @@ passing, an execution run by a worker and not main.
     as its probes and the new `QUEUE_HEALTH_CHECK_ACTIVE` env var change;
     see `docs/upgrading-n8n.md`.
 
-- **`kubernetes_namespace.n8n` renamed to `kubernetes_namespace_v1.n8n`**
-  (root module and the `storage.tf` of all seven examples), each behind a
-  `moved` block, and the `hashicorp/kubernetes` constraint raised
-  `~> 3.0` -> `~> 3.3` in the root and all seven examples. 3.3.0 is the first
-  release where `kubernetes_namespace_v1` implements move-state
-  (terraform-provider-kubernetes#2979); earlier 3.x releases fail the `moved`
-  block with `Move Resource State Not Supported`, which is why the rename was
-  deferred. The four `kubernetes_secret` resources stay unversioned: that
-  provider has no move support for them yet (#2812 stays open), so their
-  "Deprecated Resource" warnings remain. **Effect on an existing deployment:**
-  the plan shows the namespace as moved with no destroy. Explicitly empty
-  `metadata` maps may show a one-time in-place update. An example-owned
-  namespace that still needs the `state mv` documented in its `storage.tf`
-  must run it before upgrading, because `state mv` cannot change a resource's
-  type; see `docs/upgrading-n8n.md`. A caller who pins `kubernetes` below
-  `3.3.0` in their own root module must raise it first.
-
 - **Provider constraints widened to the v3 line: `hashicorp/kubernetes`
   `~> 2.0` -> `~> 3.0`, `hashicorp/time` `~> 0.12` -> `~> 0.14`** (root, all
   seven examples, and `modules/cluster-capacity`; `modules/tls-letsencrypt`
@@ -515,14 +532,14 @@ passing, an execution run by a worker and not main.
   requirement must move to `~> 3.0` (or an unconstrained/wider range) before
   picking up this version; see `docs/upgrading-n8n.md`. `terraform validate`
   now prints a cosmetic "Deprecated Resource" warning for
-  the four unversioned `kubernetes_secret`
+  `kubernetes_namespace.n8n` and the four unversioned `kubernetes_secret`
   resources in `n8n.tf` (`n8n`, `n8n_db`, `n8n_redis`, `n8n_ca_bundle`):
   kubernetes provider 3.x deprecates the unversioned resource types in favor
-  of their `_v1` equivalents. The Secrets are not renamed here: the provider
+  of their `_v1` equivalents. The four Secrets are not renamed: the provider
   has no `moved` support across that rename for them
   (`hashicorp/terraform-provider-kubernetes` issue #2812), and renaming
-  without one would destroy and recreate them. The namespace is renamed in
-  the entry above, once the provider gained that support for it.
+  without one would destroy and recreate them. The namespace rename waited on
+  the same support and ships in 0.4.1.
   All ten `.terraform.lock.hcl` files (root, seven examples, both
   submodules) regenerated for `linux_amd64`, `linux_arm64` and
   `darwin_arm64`.
@@ -1985,7 +2002,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.1...HEAD
+[0.4.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.1
 [0.4.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.0
 [0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
 [0.3.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.0
