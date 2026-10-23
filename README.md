@@ -102,7 +102,7 @@ The module doesn't verify any of this up front, and what a missing piece looks l
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "~> 0.3"
+  version = "~> 0.4"
 
   n8n_domain = "n8n.example.com"
 
@@ -117,7 +117,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.1"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -246,11 +246,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.3.1` is the current release: the `homelab-ai-assistant` example (n8n's AI Assistant and Agents module wired to an in-cluster `n8n-sandbox-service` on the `runner.isolation: privileged` path that works on Talos), a rewrite of `docs/ai-assistant.md`'s stale Sandbox section, and a fix for task runners — `n8n_task_runners_enabled` rendered the runner sidecar without emitting `N8N_RUNNERS_ENABLED`, so the task broker never started and Code nodes silently ran in n8n's own process. Upgrading a deployment with task runners enabled rolls main, worker and webhook-processor, and code execution moves into the sidecar. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
+`0.4.0` is the current release: the n8n Helm chart pin moves `1.10.0` -> `1.17.0` (n8n `2.44.5`, so an upgrade runs database migrations: back up first and read `docs/upgrading-n8n.md`), the Kubernetes provider moves to the `~> 3.0` line, `n8n_execution_concurrency_limit` defaults to `-1` so `n8n_worker_concurrency` takes effect, and a batch of new tuning inputs (pruning, payload size, readiness barrier and Valkey timeouts) plus the `SMOKE_RESOLVE_IP` smoke-test setting land. Worker readiness now checks real health over HTTP, so first-ready is slower. `N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input `0.3.1` added are removed. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
 
-Still pre-1.0, so a minor bump may break the input surface. `~> 0.3` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
+Still pre-1.0, so a minor bump may break the input surface. `~> 0.4` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
