@@ -113,7 +113,7 @@ module "n8n" {
 
 That's the whole required surface: a hostname and how to serve it. Everything else has a default that works on an ordinary cluster.
 
-**On OpenTofu, use the git source instead.** OpenTofu resolves registry modules against `registry.opentofu.org`, which is a separate index from HashiCorp's `registry.terraform.io`. This module is published to the latter only, so the address above fails with `Module not found`:
+**OpenTofu uses the same address.** The module is also published to `registry.opentofu.org`, a separate index from HashiCorp's `registry.terraform.io`, and new tags are indexed there too. If you prefer to bypass either registry, the git source resolves the same commit:
 
 ```hcl
 module "n8n" {
@@ -124,7 +124,7 @@ module "n8n" {
 }
 ```
 
-That resolves the same commit the registry serves. There is no `version` argument on a git source, so the `?ref=` **is** the pin, and a range constraint is not available: see [Stability and versioning](#stability-and-versioning).
+There is no `version` argument on a git source, so the `?ref=` **is** the pin, and a range constraint is not available: see [Stability and versioning](#stability-and-versioning).
 
 Providers are yours to configure. The module declares no `provider` blocks:
 
@@ -250,7 +250,7 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 Still pre-1.0, so a minor bump may break the input surface. `~> 0.4` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, on Terraform and OpenTofu alike: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
