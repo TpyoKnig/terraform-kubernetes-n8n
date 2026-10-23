@@ -2,32 +2,61 @@
 
 This covers bumping the deployed n8n version on an existing deployment. It does not cover upgrading this module or its providers; see [Stability and versioning](../README.md#stability-and-versioning).
 
-## `kubernetes` provider requirement `~> 2.0` -> `~> 3.0`
+## `kubernetes` provider requirement `~> 2.0` -> `~> 3.3`
 
 Not an n8n version change, but something an existing deployment's own root
 module needs to account for on its next `terraform init`. This module's
-`required_providers` constraint on `hashicorp/kubernetes` changed to
-`~> 3.0` (alongside `hashicorp/time`'s to `~> 0.14`), matching the AWS,
-Google and Azure siblings.
+`required_providers` constraint on `hashicorp/kubernetes` changed from
+`~> 2.0` to `~> 3.0` (alongside `hashicorp/time`'s to `~> 0.14`), matching
+the AWS, Google and Azure siblings, and was later raised to `~> 3.3` for the
+namespace rename below.
 
 **Effect on an existing deployment:** if your own root module also declares
-a `kubernetes` provider requirement, for example at `~> 2.0`, and that range
-does not admit `~> 3.0`, `terraform init` fails with a version constraint
-conflict. Widen your own constraint to `~> 3.0` (or an unconstrained range)
-before picking up this module version. If you never declared your own
+a `kubernetes` provider requirement, for example at `~> 2.0` or `~> 3.0`,
+and that range does not admit `~> 3.3`, `terraform init` fails with a version
+constraint conflict. Widen your own constraint to `~> 3.3` (or an unconstrained
+range) before picking up this module version. If you never declared your own
 `kubernetes` requirement and only relied on this module's, nothing to do
 beyond letting `terraform init -upgrade` resolve the new provider version.
 
 The next `terraform plan`/`apply` prints a cosmetic "Deprecated Resource"
-warning for `kubernetes_namespace.n8n` and four `kubernetes_secret`
-resources (`n8n`, `n8n_db`, `n8n_redis`, `n8n_ca_bundle`): kubernetes
-provider 3.x deprecates the unversioned resource types in favor of their
-`_v1` equivalents. No plan diff and no object changes follow from the
-warning alone. The module does not rename these resources: the provider has
-no `moved` support across that rename
+warning for four `kubernetes_secret` resources (`n8n`, `n8n_db`, `n8n_redis`,
+`n8n_ca_bundle`): kubernetes provider 3.x deprecates the unversioned
+resource types in favor of their `_v1` equivalents. No plan diff and no
+object changes follow from the warning alone. The module does not rename the
+Secrets: the provider has no `moved` support for that rename
 (`hashicorp/terraform-provider-kubernetes` issue #2812), and renaming
-without one would destroy and recreate the namespace, taking every object
-in it with it.
+without one would destroy and recreate them.
+
+## `kubernetes_namespace` renamed to `kubernetes_namespace_v1`, provider `~> 3.3`
+
+The namespace the module creates (`create_namespace = true`) and the
+namespace each example's `storage.tf` owns are now `kubernetes_namespace_v1.n8n`,
+each behind a `moved` block. The module's `kubernetes` constraint is
+`~> 3.3`: 3.3.0 is the first release where the `_v1` namespace supports
+`moved` from the unversioned type. Older 3.x releases fail the plan with
+`Move Resource State Not Supported`.
+
+**Effect on an existing deployment:** `terraform init -upgrade`, then plan.
+The namespace appears as moved, with no destroy. Confirm that before
+applying: a plan that destroys a namespace is never routine. A one-time
+in-place update for explicitly empty `metadata` maps is expected and safe.
+
+Before upgrading an existing example, find where its namespace sits in state:
+
+```bash
+terraform state list | grep kubernetes_namespace.n8n
+```
+
+Then run the `terraform state mv` from the example's `storage.tf` for
+whichever address exists: `module.n8n.kubernetes_namespace.n8n[0]` (module-owned,
+every deployment with `shared_storage_class` unset) or
+`kubernetes_namespace.n8n[0]` (example-owned and indexed). Both move to the
+unindexed `kubernetes_namespace.n8n`. Run it before upgrading: `state mv`
+cannot change a resource's type, so it targets the old address, and the
+`moved` block then renames it to `kubernetes_namespace_v1.n8n` on the next
+apply. Skipping it plans a destroy and recreate of the namespace. A namespace
+already at the unindexed `kubernetes_namespace.n8n` needs no `state mv`.
 
 ## Version inputs
 

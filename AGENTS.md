@@ -202,7 +202,7 @@ file. Use `command = plan` unless you specifically need apply semantics.
 
 - **`helm_release.values` is unknown at plan time.** The `values` argument is
   a locally-computed `yamlencode()` block, but because it belongs to a
-  resource that depends on `kubernetes_namespace` (whose attributes are
+  resource that depends on `kubernetes_namespace_v1` (whose attributes are
   `(known after apply)` under the mock provider), the whole resource, including its inputs, is deferred. You cannot assert on Helm values
   content in `command = plan` tests.
 - **Mocks do not enforce dependency ordering or server-side preconditions.**
@@ -211,7 +211,7 @@ file. Use `command = plan` unless you specifically need apply semantics.
   plan-time assert and then fails on a real apply with
   `namespaces "n8n" not found`. This is not hypothetical: `output "namespace"`
   once returned `var.k8s_namespace`, a plan-time constant, which left callers'
-  `kubernetes_*` resources with no edge to `kubernetes_namespace.n8n`. The full
+  `kubernetes_*` resources with no edge to `kubernetes_namespace_v1.n8n`. The full
   suite was green and the first live apply failed. Whenever an output is
   intended to order a caller's resources, return the **resource attribute**
   rather than the variable, and treat "did the graph actually serialise these"

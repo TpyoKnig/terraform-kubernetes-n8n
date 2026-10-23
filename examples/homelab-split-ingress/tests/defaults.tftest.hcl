@@ -10,7 +10,7 @@
 # already tests.
 #
 # The mocked-provider limitations documented in AGENTS.md apply: planned
-# resource attributes that flow through the mocked kubernetes_namespace chain
+# resource attributes that flow through the mocked kubernetes_namespace_v1 chain
 # resolve to (known after apply), so these assert on inputs and module outputs
 # rather than on the rendered Ingress objects.
 #
@@ -242,7 +242,7 @@ run "no_shared_claim_without_a_class" {
   # that turning shared storage on later cannot move it between two resource
   # addresses. See storage.tf for what that used to cost.
   assert {
-    condition     = kubernetes_namespace.n8n.metadata[0].name == var.namespace
+    condition     = kubernetes_namespace_v1.n8n.metadata[0].name == var.namespace
     error_message = "The example must own the namespace on every path, shared claim or not; its name should equal var.namespace."
   }
 }
@@ -275,7 +275,7 @@ run "a_class_produces_one_rwx_claim" {
   # Same namespace resource as the run above, unconditional now, which is what
   # the claim needs to be created into before the release.
   assert {
-    condition     = kubernetes_namespace.n8n.metadata[0].name == var.namespace
+    condition     = kubernetes_namespace_v1.n8n.metadata[0].name == var.namespace
     error_message = "The example must own the namespace when it owns the claim; its name should equal var.namespace."
   }
 }

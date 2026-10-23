@@ -8,7 +8,7 @@
 #
 # The mocked-provider limitations documented in AGENTS.md apply here too:
 # helm_release.values (and the k8s helm_release block itself) resolves to
-# (known after apply) through the mocked kubernetes_namespace attribute chain,
+# (known after apply) through the mocked kubernetes_namespace_v1 attribute chain,
 # so asserts on the planned helm_release.n8n attributes (name, chart,
 # namespace) are not possible under mocks. What IS assertable is that the
 # module-level backing_services output resolves through local.k8s_pg_host /
@@ -214,7 +214,7 @@ run "no_shared_claim_without_a_class" {
   # that turning shared storage on later cannot move it between two resource
   # addresses. See storage.tf for what that used to cost.
   assert {
-    condition     = kubernetes_namespace.n8n.metadata[0].name == var.namespace
+    condition     = kubernetes_namespace_v1.n8n.metadata[0].name == var.namespace
     error_message = "The example must own the namespace on every path, shared claim or not; its name should equal var.namespace."
   }
 }
@@ -247,7 +247,7 @@ run "a_class_produces_one_rwx_claim" {
   # Same namespace resource as the run above, unconditional now, which is what
   # the claim needs to be created into before the release.
   assert {
-    condition     = kubernetes_namespace.n8n.metadata[0].name == var.namespace
+    condition     = kubernetes_namespace_v1.n8n.metadata[0].name == var.namespace
     error_message = "The example must own the namespace when it owns the claim; its name should equal var.namespace."
   }
 }

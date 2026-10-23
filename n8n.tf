@@ -82,7 +82,15 @@ locals {
 # every other reference to the namespace name goes through that local, not
 # through this resource, so it works on either path.
 
-resource "kubernetes_namespace" "n8n" {
+# Renamed from kubernetes_namespace.n8n. The moved block carries existing state
+# across without a destroy; it needs hashicorp/kubernetes >= 3.3.0, the first
+# release where kubernetes_namespace_v1 implements move-state (versions.tf).
+moved {
+  from = kubernetes_namespace.n8n
+  to   = kubernetes_namespace_v1.n8n
+}
+
+resource "kubernetes_namespace_v1" "n8n" {
   count = var.create_namespace ? 1 : 0
 
   metadata {
@@ -125,7 +133,7 @@ resource "kubernetes_namespace" "n8n" {
 }
 
 locals {
-  namespace_name = var.create_namespace ? kubernetes_namespace.n8n[0].metadata[0].name : var.k8s_namespace
+  namespace_name = var.create_namespace ? kubernetes_namespace_v1.n8n[0].metadata[0].name : var.k8s_namespace
 }
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -328,7 +336,7 @@ resource "helm_release" "n8n" {
   cleanup_on_fail = true
 
   depends_on = [
-    kubernetes_namespace.n8n,
+    kubernetes_namespace_v1.n8n,
     kubernetes_secret.n8n,
     kubernetes_secret.n8n_db,
     kubernetes_secret.n8n_redis,

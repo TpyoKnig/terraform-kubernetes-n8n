@@ -267,7 +267,7 @@ resource "kubectl_manifest" "cnpg_cluster" {
   # (An earlier version of this comment cited
   # existing_eks_cluster_prerequisites_confirmed, an input that belongs to this
   # module's AWS sibling and has never existed here.)
-  depends_on = [kubernetes_namespace.n8n]
+  depends_on = [kubernetes_namespace_v1.n8n]
 }
 
 # ── Postgres readiness barrier ────────────────────────────────────────────────
