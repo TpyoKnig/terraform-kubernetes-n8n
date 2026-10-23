@@ -14,8 +14,8 @@ Kubernetes provider to the `~> 3.0` line, with a sweep of new tuning inputs and
 bug fixes. Several things change a running deployment on the next apply, among
 them: n8n upgrades and runs database migrations (back up the database and pin
 `n8n_image_tag` first if you want a chart-only change), every worker rolls onto
-HTTP health probes and takes longer to become Ready, the Valkey release is
-replaced (a short Redis outage that restarts the n8n pods), the worker pool
+HTTP health probes and takes longer to become Ready, the Valkey pod is
+replaced in place (a short Redis outage that restarts the n8n pods), the worker pool
 drops to one replica until the autoscaler restores the floor, the
 module-managed MCP Ingress is destroyed (the chart's own webhook Ingress now
 routes `/mcp`), and `n8n_execution_concurrency_limit` now defaults to `-1`.
