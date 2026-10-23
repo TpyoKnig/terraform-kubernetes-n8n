@@ -34,20 +34,45 @@ variable "n8n_domain" {
   description = "Fully-qualified domain name for n8n (e.g. n8n.example.com). Becomes the Ingress host and the base of the webhook URLs n8n advertises, and must be covered by whatever certificate the named ClusterIssuer issues. The module creates no DNS record for it; see the examples for two worked strategies."
   type        = string
 
+  # One or more labels, each starting and ending alphanumeric with hyphens only
+  # inside (so no leading/trailing hyphen and no empty label, which also rules
+  # out a doubled dot), then an alphabetic TLD. Length limits are the next
+  # block's job. Tightened from a looser single-class regex that accepted
+  # "a--b..com" and similar, to match this module's AWS sibling's grammar for
+  # the same input.
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", var.n8n_domain))
-    error_message = "Value must be a valid fully qualified domain name (e.g. n8n.example.com)."
+    condition     = can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", var.n8n_domain))
+    error_message = "Value must be a valid fully qualified domain name (e.g. n8n.example.com): dot-separated labels of letters, digits and hyphens, no label starting or ending with a hyphen, ending in an alphabetic TLD."
+  }
+
+  # DNS limits, not enforced by the regex above: the Ingress host, n8n's own
+  # N8N_HOST/N8N_WEBHOOK_URL, and whatever certificate the ClusterIssuer issues
+  # all carry these same limits.
+  validation {
+    condition = (
+      length(var.n8n_domain) <= 253 &&
+      alltrue([for label in split(".", var.n8n_domain) : length(label) <= 63])
+    )
+    error_message = "n8n_domain must be 253 characters or fewer with every dot-separated label 63 characters or fewer, the DNS limits the Ingress host and n8n's own hostname handling both enforce."
   }
 }
 
 variable "n8n_additional_domains" {
-  description = "Extra fully-qualified hostnames n8n should answer on, beyond n8n_domain. Each becomes an additional host rule on both Ingresses the chart renders (the webhook Ingress derives its hosts from the main one, so the webhook prefixes are routed for every name too) and is added to the single TLS block, so cert-manager issues one Certificate covering all of them. The module creates no DNS records: every name has to resolve to this ingress controller by some means you arrange. It also does not inspect the issued certificate's SAN set, so an issuer that refuses one of the names fails at the Certificate rather than at plan time. n8n_domain stays canonical: it is what n8n advertises as WEBHOOK_URL and N8N_HOST unless n8n_webhook_url overrides the former. Names are normalized to lowercase, because Kubernetes rejects an uppercase Ingress host and DNS is case-insensitive."
+  description = "Extra fully-qualified hostnames n8n should answer on, beyond n8n_domain. Each becomes an additional host rule on both Ingresses the chart renders (the webhook Ingress derives its hosts from the main one, so the webhook prefixes are routed for every name too) and is added to the single TLS block, so cert-manager issues one Certificate covering all of them. The module creates no DNS records: every name has to resolve to this ingress controller by some means you arrange. It also does not inspect the issued certificate's SAN set, so an issuer that refuses one of the names fails at the Certificate rather than at plan time. n8n_domain stays canonical: it is what n8n advertises as N8N_WEBHOOK_URL and N8N_HOST unless n8n_webhook_url overrides the former. Names are normalized to lowercase, because Kubernetes rejects an uppercase Ingress host and DNS is case-insensitive."
   type        = list(string)
   default     = []
 
   validation {
-    condition     = alltrue([for d in var.n8n_additional_domains : can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$", d))])
-    error_message = "Every entry must be a valid fully qualified domain name (e.g. hooks.example.com)."
+    condition     = alltrue([for d in var.n8n_additional_domains : can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", d))])
+    error_message = "Every entry must be a valid fully qualified domain name (e.g. hooks.example.com): dot-separated labels of letters, digits and hyphens, no label starting or ending with a hyphen, ending in an alphabetic TLD."
+  }
+
+  validation {
+    condition = alltrue([
+      for d in var.n8n_additional_domains :
+      length(d) <= 253 && alltrue([for label in split(".", d) : length(label) <= 63])
+    ])
+    error_message = "Every entry must be 253 characters or fewer with every dot-separated label 63 characters or fewer, the same DNS limits n8n_domain enforces."
   }
 
   validation {
@@ -125,12 +150,118 @@ variable "n8n_encryption_key_secret_ref" {
 
 }
 
+variable "n8n_credentials_overwrite_secret_ref" {
+  description = <<-EOT
+    Existing Kubernetes Secret containing n8n credential overwrite JSON. The
+    module mounts only the selected key, read-only, at
+    `/etc/n8n/credentials-overwrite/<key>` on main, worker, and webhook-processor
+    pods and sets CREDENTIALS_OVERWRITE_DATA_FILE to that path. name is the
+    Secret's name in var.k8s_namespace; key defaults to
+    "credentials-overwrite.json". The module accepts only this reference and
+    never reads the JSON, so the payload does not enter this module's Helm
+    values or managed resources. If Terraform creates the Secret, its payload
+    can still enter the caller's state.
+
+    n8n reads the file at startup. Updating the caller-managed Secret does not
+    roll pods, and the module cannot add a content checksum without reading
+    the payload into state. After each rotation, manually restart the n8n
+    main, worker, and webhook-processor Deployments.
+
+    When this input is set, n8n_extra_env may not set
+    CREDENTIALS_OVERWRITE_DATA or CREDENTIALS_OVERWRITE_DATA_FILE,
+    n8n_extra_volumes may not use the reserved name "credentials-overwrite",
+    and n8n_extra_volume_mounts may not use the reserved mount path
+    "/etc/n8n/credentials-overwrite". Null (the default) leaves the
+    escape-hatch behavior and rendered Helm values unchanged.
+  EOT
+
+  type = object({
+    name = string
+    key  = optional(string, "credentials-overwrite.json")
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.n8n_credentials_overwrite_secret_ref == null ? true :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", var.n8n_credentials_overwrite_secret_ref.name))
+      && length(var.n8n_credentials_overwrite_secret_ref.name) <= 253
+    )
+    error_message = "n8n_credentials_overwrite_secret_ref.name must be a DNS-1123 subdomain of 253 characters or fewer, which is what Kubernetes requires of a Secret name: lowercase alphanumerics, hyphens and dots, starting and ending with an alphanumeric, with no empty label (e.g. \"n8n-credentials-overwrite\")."
+  }
+
+  validation {
+    condition = (
+      var.n8n_credentials_overwrite_secret_ref == null ? true :
+      can(regex("^[-._a-zA-Z0-9]+$", var.n8n_credentials_overwrite_secret_ref.key))
+      && length(var.n8n_credentials_overwrite_secret_ref.key) <= 253
+      && !contains([".", ".."], var.n8n_credentials_overwrite_secret_ref.key)
+      && !startswith(var.n8n_credentials_overwrite_secret_ref.key, "..")
+    )
+    error_message = "n8n_credentials_overwrite_secret_ref.key must be a valid Secret key of 253 characters or fewer: alphanumerics, '-', '_' and '.' only, and not \".\", \"..\" or a name starting with \"..\"."
+  }
+
+  validation {
+    # config.extraEnv is appended last in every n8n container's env list
+    # (last-wins), and this input's own CREDENTIALS_OVERWRITE_DATA_FILE entry
+    # rides on it, so a caller entry with either name would either collide or
+    # silently replace the module's.
+    condition = var.n8n_credentials_overwrite_secret_ref == null ? true : alltrue([
+      for env in var.n8n_extra_env :
+      !contains(["CREDENTIALS_OVERWRITE_DATA", "CREDENTIALS_OVERWRITE_DATA_FILE"], env.name)
+    ])
+    error_message = "n8n_credentials_overwrite_secret_ref conflicts with CREDENTIALS_OVERWRITE_DATA or CREDENTIALS_OVERWRITE_DATA_FILE in n8n_extra_env. Remove the escape-hatch entry and let the dedicated input set the file path."
+  }
+
+  validation {
+    # Same collision as the n8n_extra_env check just above, but against
+    # n8n_extra_env_from_secret: both inputs render into the same
+    # config.extraEnv list, so a caller using the Secret-backed escape hatch
+    # instead of the plain one hits the same silent override, and had no
+    # guard here at all until this validation was added.
+    condition = var.n8n_credentials_overwrite_secret_ref == null ? true : alltrue([
+      for env in var.n8n_extra_env_from_secret :
+      !contains(["CREDENTIALS_OVERWRITE_DATA", "CREDENTIALS_OVERWRITE_DATA_FILE"], env.name)
+    ])
+    error_message = "n8n_credentials_overwrite_secret_ref conflicts with CREDENTIALS_OVERWRITE_DATA or CREDENTIALS_OVERWRITE_DATA_FILE in n8n_extra_env_from_secret. Remove the escape-hatch entry and let the dedicated input set the file path."
+  }
+
+
+  validation {
+    condition = var.n8n_credentials_overwrite_secret_ref == null ? true : alltrue([
+      for volume in var.n8n_extra_volumes : volume.name != "credentials-overwrite"
+    ])
+    error_message = "n8n_credentials_overwrite_secret_ref reserves the volume name \"credentials-overwrite\". Rename or remove the conflicting n8n_extra_volumes entry."
+  }
+
+  validation {
+    condition = var.n8n_credentials_overwrite_secret_ref == null ? true : alltrue([
+      for mount in var.n8n_extra_volume_mounts : mount.mount_path != "/etc/n8n/credentials-overwrite"
+    ])
+    error_message = "n8n_credentials_overwrite_secret_ref reserves the mount path \"/etc/n8n/credentials-overwrite\". Move or remove the conflicting n8n_extra_volume_mounts entry."
+  }
+}
+
 # ── Cluster ───────────────────────────────────────────────────────────────────
 
 variable "create_namespace" {
   description = "When true (the default), the module creates the Kubernetes namespace named by var.k8s_namespace. Set to false to deploy into a namespace that already exists, e.g. one a platform team created with its own resource quotas, labels, or network policies. The module does not validate that the namespace exists; the apply fails on the first resource that references it if it does not. Kept as a static boolean rather than checking for the namespace's existence because count expressions cannot depend on values computed at apply time."
   type        = bool
   default     = true
+  nullable    = false
+}
+
+variable "k8s_namespace_labels" {
+  description = "Labels stamped on the namespace the module creates, merged over its own (last write wins). Ignored when create_namespace = false, where the namespace and its labels belong to whoever made it. This is the route to Pod Security Admission: {\"pod-security.kubernetes.io/enforce\" = \"restricted\", \"pod-security.kubernetes.io/enforce-version\" = \"latest\"}. The enforce label has to sit on the namespace, an object the caller could not otherwise reach on the path where this module creates it, so the only route to a PSS-enforced deployment was to stop letting the module create the namespace at all."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}
+
+variable "k8s_namespace_annotations" {
+  description = "Annotations stamped on the namespace the module creates. Ignored when create_namespace = false. Separate from k8s_namespace_labels because the two are not interchangeable in Kubernetes: label selectors and admission controllers read labels, while quota tooling, cost allocation and GitOps controllers usually read annotations."
+  type        = map(string)
+  default     = {}
   nullable    = false
 }
 
@@ -161,6 +292,14 @@ variable "k8s_ingress_host" {
   type        = string
   default     = ""
   nullable    = false
+
+  validation {
+    # Same FQDN shape n8n_domain enforces, with an escape for the empty
+    # string, which is this variable's documented "fall back to n8n_domain"
+    # spelling rather than a hostname.
+    condition     = var.k8s_ingress_host == "" || can(regex("^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$", var.k8s_ingress_host))
+    error_message = "k8s_ingress_host must be a fully qualified domain name (e.g. editor.example.com), or the empty string to fall back to n8n_domain. It becomes an Ingress host and the webhook fallback address, so a typo here is served rather than caught."
+  }
 }
 
 variable "k8s_ingress_cluster_issuer" {
@@ -193,6 +332,17 @@ variable "n8n_proxy_hops" {
   validation {
     condition     = var.n8n_proxy_hops == floor(var.n8n_proxy_hops) && var.n8n_proxy_hops >= 0 && var.n8n_proxy_hops <= 10
     error_message = "n8n_proxy_hops must be a whole number between 0 and 10. It counts proxies in front of the pods, so a fraction is not a hop, and a value past 10 is a typo rather than a topology: each hop tells n8n to trust one more entry in a header the client controls."
+  }
+}
+
+variable "n8n_payload_size_max" {
+  description = "Largest request body n8n accepts, in MiB, wired to N8N_PAYLOAD_SIZE_MAX on every pod type. Null (the default) omits the env var so n8n's own default (16 MiB) applies, and the Ingress proxy-body-size annotation stays at its own literal (32m). Setting this derives the annotation from the same value (plus 2 MiB of multipart-framing headroom) so the proxy's limit and n8n's limit cannot disagree: left at the two independent defaults, a payload between 16 MiB and 32m clears nginx only to be rejected inside n8n with an error that points at the application instead of the front door. Raise it for workflows that receive large webhook payloads; the oversized request is then refused at the proxy with a 413 that names the limit instead. See the ingress_proxy_body_size output for create_ingress = false callers."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_payload_size_max == null ? true : (var.n8n_payload_size_max == floor(var.n8n_payload_size_max) && var.n8n_payload_size_max >= 1)
+    error_message = "n8n_payload_size_max must be a whole number of MiB of at least 1, or null to leave n8n's default (16 MiB) and the Ingress annotation's own literal (32m) in place. It sizes both n8n's body limit and the Ingress annotation derived from it."
   }
 }
 
@@ -247,13 +397,13 @@ variable "n8n_extra_helm_values" {
 # repository.
 
 variable "n8n_chart_repository" {
-  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Point this at a private mirror, e.g. a Harbor or Zot OCI registry inside the network, for a cluster with no egress to ghcr.io. The mirror must serve the exact chart version named by n8n_chart_version; this module does not verify that a mirrored repository actually carries it."
+  description = "Helm chart repository for the n8n chart. Defaults to the public upstream (oci://ghcr.io/n8n-io/n8n-helm-chart). Point this at a private mirror, e.g. a Harbor or Zot OCI registry inside the network, for a cluster with no egress to ghcr.io. The mirror must serve the exact chart version named by n8n_chart_version, byte for byte as upstream published it; this module does not verify that a mirrored repository actually carries it, and it decides chart-version-dependent behavior (such as which pod env entries the chart already renders) from n8n_chart_version alone, never from this repository's address."
   type        = string
   default     = "oci://ghcr.io/n8n-io/n8n-helm-chart"
 
   validation {
-    condition     = can(regex("^(https://|oci://)[A-Za-z0-9._~-]+(:[0-9]+)?(/[^[:space:]]*)?$", var.n8n_chart_repository))
-    error_message = "n8n_chart_repository must be a URL starting with https:// or oci://, with a host and no whitespace."
+    condition     = can(regex("^(https://|oci://)[A-Za-z0-9._~-]+(:[0-9]+)?(/[^[:space:]]*)?$", var.n8n_chart_repository)) && !endswith(var.n8n_chart_repository, "/")
+    error_message = "n8n_chart_repository must be a URL starting with https:// or oci://, with a host, no whitespace and no trailing slash. The module appends /n8n to an OCI repository itself, so a trailing slash renders a double-slash chart reference the registry rejects at apply."
   }
 }
 
@@ -263,8 +413,8 @@ variable "valkey_chart_repository" {
   default     = "https://valkey-io.github.io/valkey-helm"
 
   validation {
-    condition     = can(regex("^(https://|oci://)[A-Za-z0-9._~-]+(:[0-9]+)?(/[^[:space:]]*)?$", var.valkey_chart_repository))
-    error_message = "valkey_chart_repository must be a URL starting with https:// or oci://, with a host and no whitespace."
+    condition     = can(regex("^(https://|oci://)[A-Za-z0-9._~-]+(:[0-9]+)?(/[^[:space:]]*)?$", var.valkey_chart_repository)) && !endswith(var.valkey_chart_repository, "/")
+    error_message = "valkey_chart_repository must be a URL starting with https:// or oci://, with a host, no whitespace and no trailing slash, the same rule n8n_chart_repository enforces."
   }
 }
 
@@ -290,7 +440,7 @@ variable "valkey_chart_repository" {
 variable "n8n_chart_version" {
   description = "n8n Helm chart version to deploy. Must be an exact version, not a constraint: the Helm provider resolves this literally."
   type        = string
-  default     = "1.10.0"
+  default     = "1.17.0"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", var.n8n_chart_version))
@@ -299,13 +449,13 @@ variable "n8n_chart_version" {
 }
 
 variable "n8n_image_tag" {
-  description = "n8n application image tag to deploy. Defaults to a concrete published version, which the module bumps deliberately with a CHANGELOG entry, on the same policy as the chart version pins above. Set it to null to hand the decision back to the chart, whose own default is the floating `stable` tag: that resolves to whatever n8n version is latest at the moment a node pulls the image, and because the chart hardcodes an IfNotPresent pull policy, a node that already holds a cached layer keeps running the version it pulled whenever that was. The running version therefore follows each node's pull history rather than the configuration, and a pod rescheduled onto a node with no cached layer can silently cross a major-version boundary, run n8n's one-way startup migrations, and leave the other pods on the old version against the new schema. Nothing about that path is visible in a plan, which is why the module pins rather than defers. Pin a different version here to upgrade on your own schedule; see docs/upgrading-n8n.md for the order that upgrade has to follow, and <https://docs.n8n.io/2-0-breaking-changes/> for the n8n 2.x migration guide."
+  description = "n8n application image tag to deploy. Defaults to a concrete published version, which the module bumps deliberately with a CHANGELOG entry, on the same policy as the chart version pins above. Set it to null to hand the decision back to the chart, whose own default is empty, which resolves to the pinned chart's own appVersion (the n8n version that chart release was built and tested against) rather than to a floating tag. Before chart 1.12.0 the chart's own default was the floating `stable` tag, which resolved to whatever n8n version was latest at the moment a node pulled the image, and because the chart hardcodes an IfNotPresent pull policy, a node that already held a cached layer kept running the version it pulled whenever that was: the running version followed each node's pull history rather than the configuration. Handing the choice back to the chart today no longer has that failure mode, but it does mean an upgrade of n8n_chart_version alone, with this input left null, silently moves the running n8n version along with it. Nothing about either path is visible in a plan, which is why the module pins rather than defers. Pin a different version here to upgrade on your own schedule; see docs/upgrading-n8n.md for the order that upgrade has to follow, and <https://docs.n8n.io/2-0-breaking-changes/> for the n8n 2.x migration guide."
   type        = string
-  default     = "2.36.2"
+  default     = "2.44.5"
 
   validation {
     condition     = var.n8n_image_tag == null ? true : can(regex("^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$", var.n8n_image_tag))
-    error_message = "n8n_image_tag must be a non-empty string with no whitespace, containing only alphanumeric characters, dots, underscores, and hyphens (e.g. \"1.2.3\", \"1.2.3-alpine\"). Set to null to use the chart's default (stable)."
+    error_message = "n8n_image_tag must be a non-empty string with no whitespace, containing only alphanumeric characters, dots, underscores, and hyphens (e.g. \"1.2.3\", \"1.2.3-alpine\"). Set to null to use the chart's default (its own appVersion)."
   }
 }
 
@@ -404,15 +554,25 @@ variable "n8n_helm_timeout" {
   default     = 600
 
   validation {
-    condition     = var.n8n_helm_timeout >= 60
-    error_message = "n8n_helm_timeout must be at least 60 seconds."
+    condition     = var.n8n_helm_timeout == floor(var.n8n_helm_timeout) && var.n8n_helm_timeout >= 60
+    error_message = "n8n_helm_timeout must be a whole number of at least 60 seconds. The Helm provider types the timeout as an integer, so a fraction fails at apply after the plan has said yes."
   }
 }
 
 variable "n8n_timezone" {
-  description = "Timezone for n8n (e.g. UTC, America/New_York, Europe/London)"
+  description = "Timezone for n8n (e.g. UTC, America/New_York, Europe/London). Drives two env vars that are not the same setting once this is set away from \"UTC\": TZ (rendered by the chart from config.timezone, the process clock and log timestamps) and GENERIC_TIMEZONE (emitted by the module only when this differs from \"UTC\", the timezone Schedule Triggers actually fire in, whose n8n default is America/New_York). The chart renders only TZ, so a non-UTC value here without the module's own GENERIC_TIMEZONE emission would leave schedules firing on US Eastern regardless, while the logs looked correct; leaving this at the default \"UTC\" renders exactly as before. Must be an IANA zone name: n8n passes it to the JavaScript runtime, which falls back to the container's own zone (UTC) for a name it does not recognise, so a typo changes every schedule trigger's firing time without erroring."
   type        = string
   default     = "UTC"
+  nullable    = false
+
+  validation {
+    # Shape only. The IANA database is not readable from Terraform, so this
+    # catches the malformed value ("", "GMT+2", "New York") and not the merely
+    # wrong one ("America/New_Yrok"). Three segments because zones like
+    # America/Argentina/Buenos_Aires exist; + and - because Etc/GMT+5 is legal.
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$", var.n8n_timezone))
+    error_message = "n8n_timezone must be an IANA timezone name such as \"UTC\", \"Europe/London\" or \"America/Argentina/Buenos_Aires\". Spaces and an empty string are not accepted. This checks the shape only; a well-formed name that is not in the timezone database is silently ignored by n8n and falls back to UTC."
+  }
 }
 
 variable "n8n_log_level" {
@@ -437,11 +597,49 @@ variable "n8n_log_output" {
   }
 }
 
+variable "n8n_smtp" {
+  description = "SMTP server n8n sends user-management email through: invites, password resets, workflow-shared notifications. Null (the default) configures no mail and those emails are silently not sent, which is n8n's own behavior with no SMTP host set; the invite flow still works via copyable invite links. Set host and sender to enable it. port defaults to 465 and ssl to true (implicit TLS); for a STARTTLS server use port 587 with ssl = false, and starttls (true by default) then upgrades the connection. user is optional for unauthenticated relays. The password never passes through this input: password_secret_ref names a Secret and key (key defaults to \"password\") that must already exist in the release namespace, read by the pods as a secretKeyRef, so the value never lands in Terraform state or the Helm release values."
+  type = object({
+    host     = string
+    sender   = string
+    port     = optional(number, 465)
+    ssl      = optional(bool, true)
+    starttls = optional(bool, true)
+    user     = optional(string)
+    password_secret_ref = optional(object({
+      name = string
+      key  = optional(string)
+    }))
+  })
+  default = null
+
+  validation {
+    condition     = var.n8n_smtp == null ? true : length(var.n8n_smtp.host) > 0
+    error_message = "n8n_smtp.host must be a non-empty hostname when n8n_smtp is set."
+  }
+
+  validation {
+    condition     = var.n8n_smtp == null ? true : length(var.n8n_smtp.sender) > 0
+    error_message = "n8n_smtp.sender must be a non-empty address when n8n_smtp is set."
+  }
+}
+
+variable "n8n_diagnostics_enabled" {
+  description = "Whether n8n sends anonymous diagnostics and telemetry to n8n's own endpoints (telemetry.n8n.io and PostHog). Maps to N8N_DIAGNOSTICS_ENABLED. Null (the default) omits the env var and n8n's own default applies, which is true: a self-hosted instance phones home unless told otherwise. Set false for the telemetry off switch, which is the usual reason this input exists; set true to pin the current behavior against a future n8n default change."
+  type        = bool
+  default     = null
+}
+
 variable "valkey_chart_version" {
   description = "Version of the valkey-io/valkey-helm chart to install. Only used when redis_backend = \"valkey\"."
   type        = string
-  default     = "0.11.0"
+  default     = "0.12.0"
   nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", var.valkey_chart_version))
+    error_message = "valkey_chart_version must be an exact SemVer 2 version such as \"0.12.0\", the same rule n8n_chart_version enforces. Helm resolves chart versions literally here, so a range or a leading \"v\" is not accepted."
+  }
 }
 
 # ── n8n resource requests and limits ──────────────────────────────────────────
@@ -562,6 +760,14 @@ variable "n8n_webhook_cpu_request" {
   description = "CPU request for n8n webhook processor pods (e.g. 300m, 500m). This default is sized for typical webhook traffic, not for n8n_reinstall_missing_packages = true: a low request against an npm-install CPU spike is what drives the CPU-based HPA into a scale-up-on-every-rollout loop. Raise to at least 800m when that toggle is on; see n8n_reinstall_missing_packages and docs/troubleshooting.md."
   type        = string
   default     = "300m"
+  # nullable = false on this and the three quantity variables below because
+  # check.webhook_resources_sized_for_reinstall_missing_packages interpolates
+  # all four in its error_message, and Terraform evaluates that message
+  # alongside the condition, not lazily on failure. Without it, an explicit
+  # null propagates into the interpolation and aborts the plan from inside a
+  # block whose entire purpose is to warn without failing; with it, Terraform
+  # substitutes the default at the variable boundary.
+  nullable = false
 
   validation {
     # The subset of Kubernetes' quantity grammar that scaling.tf's capacity
@@ -579,6 +785,8 @@ variable "n8n_webhook_cpu_limit" {
   description = "CPU limit for n8n webhook processor pods (e.g. 800m, 1000m). Raise to at least 1500m when n8n_reinstall_missing_packages = true; see that variable and docs/troubleshooting.md."
   type        = string
   default     = "800m"
+  # See n8n_webhook_cpu_request for why the four quantity variables carry this.
+  nullable = false
 
   validation {
     # The subset of Kubernetes' quantity grammar that scaling.tf's capacity
@@ -596,6 +804,8 @@ variable "n8n_webhook_memory_request" {
   description = "Memory request for n8n webhook processor pods (e.g. 512Mi, 1Gi). Raise to at least 1Gi when n8n_reinstall_missing_packages = true; see that variable and docs/troubleshooting.md."
   type        = string
   default     = "512Mi"
+  # See n8n_webhook_cpu_request for why the four quantity variables carry this.
+  nullable = false
 
   validation {
     condition     = can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.n8n_webhook_memory_request))
@@ -607,6 +817,8 @@ variable "n8n_webhook_memory_limit" {
   description = "Memory limit for n8n webhook processor pods (e.g. 1Gi, 2Gi). This default is too low for n8n_reinstall_missing_packages = true: concurrent npm installs plus the n8n baseline can exceed it and OOMKill the pod mid-install into a reinstall/broadcast crash loop. Raise to at least 2Gi when that toggle is on; see that variable and docs/troubleshooting.md."
   type        = string
   default     = "1Gi"
+  # See n8n_webhook_cpu_request for why the four quantity variables carry this.
+  nullable = false
 
   validation {
     condition     = can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.n8n_webhook_memory_limit))
@@ -614,10 +826,42 @@ variable "n8n_webhook_memory_limit" {
   }
 }
 
+variable "n8n_node_max_old_space_size_mb" {
+  description = <<-EOT
+    V8 old-space heap ceiling in MB, emitted as
+    `NODE_OPTIONS=--max-old-space-size=<value>` on every n8n container (main,
+    worker, and webhook processor; the chart has no per-tier env path).
+    Defaults to null: no NODE_OPTIONS is set and V8 sizes the heap itself, at
+    roughly half the container memory limit up to a fixed cap of about 2 GiB.
+
+    Size it against the SMALLEST of n8n_main_memory_limit,
+    n8n_worker_memory_limit and n8n_webhook_memory_limit, leaving roughly 25%
+    of that limit for non-heap memory (buffers, stacks, binary data in
+    flight). Example: limits of 4Gi across the board support a value around
+    3072.
+  EOT
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_node_max_old_space_size_mb == null ? true : var.n8n_node_max_old_space_size_mb >= 256
+    error_message = "n8n_node_max_old_space_size_mb must be at least 256 (MB), or null to leave V8's own default in place."
+  }
+
+  # Rejected rather than truncated: --max-old-space-size takes an integer, and
+  # Node parses a fractional value by discarding everything from the decimal
+  # point on. 3072.9 would silently become 3072 and 0.5 would become 0, which
+  # is a heap ceiling of zero on every pod.
+  validation {
+    condition     = var.n8n_node_max_old_space_size_mb == null ? true : floor(var.n8n_node_max_old_space_size_mb) == var.n8n_node_max_old_space_size_mb
+    error_message = "n8n_node_max_old_space_size_mb must be a whole number of MB. Node truncates a fractional --max-old-space-size at the decimal point rather than rounding it."
+  }
+}
+
 # ── Execution settings ────────────────────────────────────────────────────────
 
 variable "n8n_worker_concurrency" {
-  description = "Number of jobs each worker pod can process simultaneously"
+  description = "Number of jobs each worker pod can process simultaneously, passed as the worker process's --concurrency flag. Only takes effect while n8n_execution_concurrency_limit is -1: n8n 2.44.5's worker.ts reads N8N_CONCURRENCY_PRODUCTION_LIMIT first and falls back to this flag only when that value is -1, so any other value overrides this input on every worker regardless of replica count."
   type        = number
   default     = 10
 
@@ -628,33 +872,110 @@ variable "n8n_worker_concurrency" {
 }
 
 variable "n8n_execution_timeout" {
-  description = "Default execution timeout in seconds (-1 to disable)"
+  description = "Default execution timeout in seconds (-1 to disable). The chart emits no env var at -1, which is n8n's own spelling for no limit."
   type        = number
   default     = 7200
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_execution_timeout == floor(var.n8n_execution_timeout) && (var.n8n_execution_timeout == -1 || var.n8n_execution_timeout > 0)
+    error_message = "n8n_execution_timeout must be a whole number of seconds greater than 0, or exactly -1 to disable the timeout. 0 and negative values other than -1 are not a shorter timeout, they are a value n8n does not define."
+  }
 }
 
 variable "n8n_execution_timeout_max" {
-  description = "Maximum execution timeout users can configure in seconds"
+  description = "Maximum execution timeout users can configure in seconds (-1 to disable). Must not be below n8n_execution_timeout, which is the value it is meant to cap."
   type        = number
   default     = 7200
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_execution_timeout_max == floor(var.n8n_execution_timeout_max) && (var.n8n_execution_timeout_max == -1 || var.n8n_execution_timeout_max > 0)
+    error_message = "n8n_execution_timeout_max must be a whole number of seconds greater than 0, or exactly -1 to disable the cap."
+  }
+
+  validation {
+    # Skipped when either side is -1: an unlimited cap is above every finite
+    # default, and an unlimited default under a finite cap is the caller's
+    # business to reconcile, not a contradiction this module can settle.
+    condition     = var.n8n_execution_timeout_max == -1 || var.n8n_execution_timeout == -1 || var.n8n_execution_timeout_max >= var.n8n_execution_timeout
+    error_message = "n8n_execution_timeout_max must be at least n8n_execution_timeout: it is the ceiling users may raise the default to, so a ceiling below the default describes a range with nothing in it."
+  }
 }
 
 variable "n8n_execution_concurrency_limit" {
-  description = "Maximum concurrent production executions (-1 to disable)"
+  description = "Maximum concurrent production executions per worker process, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker independently (n8n 2.44.5 worker.ts, see docs/operations.md's \"How worker concurrency and scale-out interact\" section): it is still a per-worker ceiling, not a shared pool-wide one, so total in-flight production executions across the pool becomes replicas x n8n_execution_concurrency_limit, scaling with however many replicas KEDA adds, the same way n8n_worker_concurrency itself scales. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
   type        = number
-  default     = 100
+  default     = -1
+
+  validation {
+    condition     = var.n8n_execution_concurrency_limit == -1 || (var.n8n_execution_concurrency_limit == floor(var.n8n_execution_concurrency_limit) && var.n8n_execution_concurrency_limit >= 1)
+    error_message = "n8n_execution_concurrency_limit must be -1 (disabled, n8n_worker_concurrency governs instead) or a whole number of 1 or greater."
+  }
 }
 
 variable "n8n_pruning_max_age" {
   description = "Maximum age of execution records to retain, in hours (336 = 14 days)"
   type        = number
   default     = 336
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_pruning_max_age == floor(var.n8n_pruning_max_age) && var.n8n_pruning_max_age >= 1
+    error_message = "n8n_pruning_max_age must be a whole number of hours of at least 1."
+  }
 }
 
 variable "n8n_pruning_max_count" {
   description = "Maximum number of execution records to retain (0 = no limit)"
   type        = number
   default     = 10000
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_pruning_max_count == floor(var.n8n_pruning_max_count) && var.n8n_pruning_max_count >= 0
+    error_message = "n8n_pruning_max_count must be a whole number of at least 0, where 0 means no count limit."
+  }
+}
+
+variable "n8n_pruning_enabled" {
+  description = "Whether n8n deletes old execution records on a schedule, rendered as the chart's executions.pruning.enabled. True by default, matching today's hardcoded behavior and n8n's own default, which keeps the execution tables from growing without bound. Set false to retain every execution indefinitely, which is what a compliance requirement to keep execution records needs; budget the storage for it, because nothing else trims those tables. n8n_pruning_max_age and n8n_pruning_max_count still render alongside enabled = false: the chart gates both on pruning.enabled itself, so they cost nothing there and stay visible in the rendered values as the policy that resumes if pruning is switched back on."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "n8n_pruning_soft_delete_interval" {
+  description = "Minutes between the sweeps that mark executions past the retention policy as deleted, rendered as EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL through the chart's executions.pruning.softDeleteInterval. Null (the default) omits the key, leaving the chart's own default (60) in place, matching what this module has always rendered. This is the cadence at which n8n_pruning_max_age and n8n_pruning_max_count are actually enforced; the records then wait out n8n_pruning_hard_delete_buffer before the hard-delete sweep removes them for good. Only meaningful while n8n_pruning_enabled is true."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_pruning_soft_delete_interval == null ? true : (var.n8n_pruning_soft_delete_interval == floor(var.n8n_pruning_soft_delete_interval) && var.n8n_pruning_soft_delete_interval >= 1)
+    error_message = "n8n_pruning_soft_delete_interval must be a whole number of minutes of at least 1, or null to leave the chart's own default (60) in place. The chart omits the env var at 0, which silently reverts to that default rather than disabling the sweep, so 0 is not offered."
+  }
+}
+
+variable "n8n_pruning_hard_delete_interval" {
+  description = "Minutes between the sweeps that permanently remove soft-deleted executions, rendered as EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL through the chart's executions.pruning.hardDeleteInterval. Null (the default) omits the key, leaving the chart's own default (15) in place, matching what this module has always rendered. Shorter intervals reclaim database space sooner at the cost of more frequent delete load; longer ones batch the work. Only meaningful while n8n_pruning_enabled is true."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_pruning_hard_delete_interval == null ? true : (var.n8n_pruning_hard_delete_interval == floor(var.n8n_pruning_hard_delete_interval) && var.n8n_pruning_hard_delete_interval >= 1)
+    error_message = "n8n_pruning_hard_delete_interval must be a whole number of minutes of at least 1, or null to leave the chart's own default (15) in place. The chart omits the env var at 0, which silently reverts to that default rather than disabling the sweep, so 0 is not offered."
+  }
+}
+
+variable "n8n_pruning_hard_delete_buffer" {
+  description = "Hours an execution marked for deletion is kept before it is actually removed from the database, rendered as EXECUTIONS_DATA_HARD_DELETE_BUFFER through the chart's executions.pruning.hardDeleteBuffer. Null (the default) omits the key, leaving the chart's own default (1) in place, matching what this module has always rendered. Pruning is two-phase: records past the retention policy are first soft-deleted (hidden from the UI, recoverable), and only hard-deleted after this buffer, so the buffer is the undo window. Only meaningful while n8n_pruning_enabled is true."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_pruning_hard_delete_buffer == null ? true : (var.n8n_pruning_hard_delete_buffer == floor(var.n8n_pruning_hard_delete_buffer) && var.n8n_pruning_hard_delete_buffer >= 1)
+    error_message = "n8n_pruning_hard_delete_buffer must be a whole number of hours of at least 1, or null to leave the chart's own default (1) in place. The chart omits the env var at 0, which silently reverts to that default rather than meaning no buffer, so 0 is not offered."
+  }
 }
 
 variable "n8n_execution_data_storage_mode" {
@@ -667,6 +988,97 @@ variable "n8n_execution_data_storage_mode" {
     condition     = var.n8n_execution_data_storage_mode == "database"
     error_message = "n8n_execution_data_storage_mode must be \"database\" (n8n's default, execution data in PostgreSQL). \"filesystem\" is unsupported because pod filesystems are ephemeral and unshared in queue mode, and \"s3\" because this module provisions no bucket and disables the chart's object-storage block, so setting it would tell n8n to offload to storage that was never configured. Wire an external bucket by hand instead: see docs/operations.md."
   }
+}
+
+variable "n8n_executions_data_save_on_success" {
+  description = <<-EOT
+    Whether n8n persists execution data for SUCCESSFUL executions: "all" or "none".
+    Verified against n8n's docs (docs.n8n.io, Executions environment variables):
+    EXECUTIONS_DATA_SAVE_ON_SUCCESS is an enum of "all" or "none", defaulting to
+    "all" when unset.
+
+    THE REASON THIS EXISTS AS A VARIABLE. The chart renders
+    EXECUTIONS_DATA_SAVE_ON_SUCCESS from this values path (executions.data.saveOnSuccess)
+    unconditionally. If a caller ALSO sets the same name through n8n_extra_env, the
+    main and worker Deployments end up with the key listed twice in one container's
+    env list. That is not merely untidy, it silently breaks updates: the merge key
+    for a container env list is name, so a duplicated name makes Kubernetes'
+    strategic-merge-patch ambiguous, and a later change can land on one occurrence
+    while leaving the other stale. Kubernetes then honours the LAST entry at
+    container start, so the stale value wins and the pod runs a configuration
+    nobody selected.
+
+    Set the value HERE. n8n_extra_env rejects every EXECUTIONS_DATA_SAVE_* name the
+    chart renders from this values path outright at plan time (see
+    local.n8n_managed_env_names).
+  EOT
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "none"], var.n8n_executions_data_save_on_success)
+    error_message = "n8n_executions_data_save_on_success must be \"all\" or \"none\"."
+  }
+}
+
+variable "n8n_executions_data_save_on_error" {
+  description = <<-EOT
+    Whether n8n persists execution data for FAILED executions: "all" or "none".
+    Verified against n8n's docs (docs.n8n.io, Executions environment variables):
+    EXECUTIONS_DATA_SAVE_ON_ERROR is an enum of "all" or "none", defaulting to
+    "all" when unset.
+
+    Same duplicate-key hazard as n8n_executions_data_save_on_success: set it
+    here, never through n8n_extra_env, which rejects this exact name outright
+    at plan time (see local.n8n_managed_env_names).
+  EOT
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "none"], var.n8n_executions_data_save_on_error)
+    error_message = "n8n_executions_data_save_on_error must be \"all\" or \"none\"."
+  }
+}
+
+variable "n8n_executions_data_save_on_progress" {
+  description = <<-EOT
+    Whether n8n saves execution data as each node executes, not just at the end
+    of the run. Maps to the chart's executions.data.saveOnProgress
+    (EXECUTIONS_DATA_SAVE_ON_PROGRESS on the pods). n8n's own default is false,
+    and this variable defaults to the same, so no existing deployment's
+    rendered values change. Enabling it adds a database write per node
+    execution, which is a real cost at high throughput; it earns that cost
+    when you need mid-run progress to survive a crash.
+
+    Same duplicate-key hazard as n8n_executions_data_save_on_success: the
+    chart renders this key unconditionally, so set it here, never through
+    n8n_extra_env, which rejects this exact name outright at plan time (see
+    local.n8n_managed_env_names).
+  EOT
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "n8n_executions_data_save_manual_executions" {
+  description = <<-EOT
+    Whether n8n persists execution data for MANUAL executions (runs started
+    from the editor). Maps to the chart's executions.data.saveManualExecutions
+    (EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS on the pods). n8n's own default is
+    true, and this variable defaults to the same, so no existing deployment's
+    rendered values change.
+
+    Same duplicate-key hazard as n8n_executions_data_save_on_success: the
+    chart renders this key unconditionally, so set it here, never through
+    n8n_extra_env, which rejects this exact name outright at plan time (see
+    local.n8n_managed_env_names).
+  EOT
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
 # ── Graceful shutdown ─────────────────────────────────────────────────────────
@@ -704,7 +1116,7 @@ variable "n8n_task_runners_enabled" {
 }
 
 variable "n8n_task_runner_image_tag" {
-  description = "Image tag for the task runner sidecar (`n8nio/runners`). When it is null (the default), the chart falls back to the n8n application image's tag, which is the right behavior as long as that tag is a published n8n version. Set this to the underlying n8n version when running a custom application image whose tag is not one (e.g. n8n_image_tag = \"2.27.4-mypackages\" together with n8n_task_runner_image_tag = \"2.27.4\"); otherwise the sidecar tries to pull `n8nio/runners:2.27.4-mypackages` and every main and worker pod stays in ImagePullBackOff. Reproduced on a live cluster, where kubelet reported `docker.io/n8nio/runners:<tag>: not found`; because the release waits for readiness, the apply blocks and then fails rather than completing with broken pods, and webhook processors are unaffected since they run no runner sidecar. The tag should match the n8n version in the application image, since the runner protocol is versioned with n8n. Ignored when n8n_task_runners_enabled = false."
+  description = "Image tag for the task runner sidecar (`n8nio/runners`). When it is null (the default), the chart falls back to the n8n application image's tag, which is the right behavior as long as that tag is a published n8n version. Set this to the underlying n8n version when running a custom application image whose tag is not one (e.g. n8n_image_tag = \"2.27.4-mypackages\" together with n8n_task_runner_image_tag = \"2.27.4\"); otherwise the sidecar tries to pull `n8nio/runners:2.27.4-mypackages` and every worker pod stays in ImagePullBackOff. Reproduced on a live cluster, where kubelet reported `docker.io/n8nio/runners:<tag>: not found`; because the release waits for readiness, the apply blocks and then fails rather than completing with broken pods. Queue mode is always on in this module, and the chart puts the runner sidecar on worker pods only in that mode (main offloads task execution to workers), so main and webhook-processor pods never carry one and are unaffected. The tag should match the n8n version in the application image, since the runner protocol is versioned with n8n. Ignored when n8n_task_runners_enabled = false."
   type        = string
   default     = null
 
@@ -771,9 +1183,15 @@ variable "n8n_task_runner_memory_limit" {
 }
 
 variable "n8n_task_runner_auto_shutdown_timeout" {
-  description = "Seconds of inactivity before an idle task-runner process exits. Maps to taskRunners.launcher.autoShutdownTimeout, which the chart renders into the task-runner SIDECAR's environment as N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT — not into the n8n containers, where the launcher does not run. Set to 0 to disable idle shutdown entirely: the runner process the launcher spawns checks `idleTimeout === 0` and skips arming its timer. The trade is a resident runner process against cold-start latency, and the cold start is not small — a Code node that takes ~17ms on a warm runner takes several seconds on a cold one, because the launcher has to start the Node or Python process before the task can run. Leave the default if runner memory matters more than first-request latency; set 0 for latency-sensitive workflows that fire intermittently."
+  description = "Seconds of inactivity before an idle task-runner process exits. Maps to taskRunners.launcher.autoShutdownTimeout, which the chart renders into the task-runner SIDECAR's environment as N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT, not into the n8n containers, where the launcher does not run. Set to 0 to disable idle shutdown entirely: the runner process the launcher spawns checks `idleTimeout === 0` and skips arming its timer. The trade is a resident runner process against cold-start latency, and the cold start is not small: a Code node that takes ~17ms on a warm runner takes several seconds on a cold one, because the launcher has to start the Node or Python process before the task can run. Leave the default if runner memory matters more than first-request latency; set 0 for latency-sensitive workflows that fire intermittently. The timer is per runner process and resets after each task, not after the sidecar starts: a workflow whose Code nodes fire less often than this many seconds apart pays the cold start on every single execution, even under what looks like constant traffic from the outside, because each gap between tasks is long enough to let the runner shut down before the next one arrives."
   type        = number
   default     = 15
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_task_runner_auto_shutdown_timeout == floor(var.n8n_task_runner_auto_shutdown_timeout) && var.n8n_task_runner_auto_shutdown_timeout >= 0
+    error_message = "n8n_task_runner_auto_shutdown_timeout must be a whole number of seconds of at least 0, where 0 disables idle shutdown and keeps the runner process resident."
+  }
 }
 
 variable "n8n_task_runner_max_concurrency" {
@@ -791,6 +1209,12 @@ variable "n8n_task_runner_request_timeout" {
   description = "Seconds n8n waits for a task runner to accept a Code node task. Wired to the N8N_RUNNERS_TASK_REQUEST_TIMEOUT env var on the main pod. Increase if Code nodes fail with 'task request timed out' under high concurrency (many parallel Code nodes competing for the single runner sidecar). This governs the wait for a runner to pick the task up; n8n_task_runner_timeout governs how long the task may then run."
   type        = number
   default     = 300
+  nullable    = false
+
+  validation {
+    condition     = var.n8n_task_runner_request_timeout == floor(var.n8n_task_runner_request_timeout) && var.n8n_task_runner_request_timeout > 0
+    error_message = "n8n_task_runner_request_timeout must be a whole number of seconds greater than 0. There is no disabled spelling for this one: 0 would abandon every Code node task before a runner could accept it."
+  }
 }
 
 variable "n8n_task_runner_python_enabled" {
@@ -800,10 +1224,15 @@ variable "n8n_task_runner_python_enabled" {
 }
 
 variable "n8n_python_stdlib_allow" {
-  description = "Comma-separated stdlib modules the Python task runner may import. Chart default is empty (blocks everything, including basic modules like time / math). '*' allows all stdlib. Renders into the n8n-task-runners.json ConfigMap the release mounts."
+  description = "Comma-separated stdlib modules the Python task runner may import, or '*' alone for all of stdlib. Chart default is empty (blocks everything, including basic modules like time / math). Renders into the n8n-task-runners.json ConfigMap the release mounts. The wildcard must stand alone: the runner's own parser (parse_allowlist in the task-runner-python package) raises ConfigurationError on '*' mixed with named modules and the runner refuses to start, so that mix is rejected here at plan time instead of surfacing as every main and worker pod crash-looping on the sidecar."
   type        = string
   default     = "*"
   nullable    = false
+
+  validation {
+    condition     = var.n8n_python_stdlib_allow == "*" || !strcontains(var.n8n_python_stdlib_allow, "*")
+    error_message = "n8n_python_stdlib_allow must be exactly \"*\" or a comma-separated list with no wildcard. The Python runner rejects '*' mixed with named modules (ConfigurationError) and refuses to start."
+  }
 }
 
 variable "n8n_python_external_allow" {
@@ -848,8 +1277,8 @@ variable "cnpg_instances" {
   nullable    = false
 
   validation {
-    condition     = var.cnpg_instances >= 1
-    error_message = "cnpg_instances must be at least 1."
+    condition     = var.cnpg_instances == floor(var.cnpg_instances) && var.cnpg_instances >= 1
+    error_message = "cnpg_instances must be a whole number of at least 1. It counts Postgres pods, and the CNPG API types it as an integer, so a fraction is rejected by the cluster at apply rather than here."
   }
 }
 
@@ -858,6 +1287,11 @@ variable "cnpg_storage_size" {
   type        = string
   default     = "10Gi"
   nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.cnpg_storage_size))
+    error_message = "cnpg_storage_size must be a Kubernetes quantity such as \"10Gi\", the same shape every memory input here enforces. A malformed quantity is rejected by the API server at apply, after the plan has said yes."
+  }
 }
 
 variable "cnpg_storage_class" {
@@ -865,6 +1299,50 @@ variable "cnpg_storage_class" {
   type        = string
   default     = ""
   nullable    = false
+}
+
+variable "cnpg_cpu_request" {
+  description = "CPU request for each CNPG Postgres pod (e.g. 500m, 1000m). Only used when postgres_backend = \"cnpg\". Null (the default) renders no CPU request, the BestEffort scheduling this module has always produced; the database then competes for CPU with no claim on it, which is worth sizing deliberately rather than leaving implicit on a cluster you expect to come under memory or CPU pressure. Counted into the capacity model (scaling.tf) only while set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_cpu_request == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.cnpg_cpu_request))
+    error_message = "cnpg_cpu_request must be a CPU quantity: a plain number of cores (\"1\", \"0.5\") or millicores with an m suffix (\"500m\"), or null. Memory suffixes (Mi, Gi), units (\"1 core\"), and whitespace are not accepted."
+  }
+}
+
+variable "cnpg_cpu_limit" {
+  description = "CPU limit for each CNPG Postgres pod (e.g. 2000m). Only used when postgres_backend = \"cnpg\". Null (the default) renders no CPU limit."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_cpu_limit == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.cnpg_cpu_limit))
+    error_message = "cnpg_cpu_limit must be a CPU quantity: a plain number of cores (\"1\", \"0.5\") or millicores with an m suffix (\"2000m\"), or null. Memory suffixes (Mi, Gi), units (\"1 core\"), and whitespace are not accepted."
+  }
+}
+
+variable "cnpg_memory_request" {
+  description = "Memory request for each CNPG Postgres pod (e.g. 1Gi). Only used when postgres_backend = \"cnpg\". Null (the default) renders no memory request."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_memory_request == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.cnpg_memory_request))
+    error_message = "cnpg_memory_request must be a memory quantity: a number with an optional Kubernetes suffix (\"512Mi\", \"2Gi\", \"1G\", or plain bytes), or null. \"GB\"/\"MB\", whitespace, and CPU-style m suffixes are not accepted. Prefer the binary suffixes (Mi, Gi): 2G is 2,000,000,000 bytes while 2Gi is 2,147,483,648."
+  }
+}
+
+variable "cnpg_memory_limit" {
+  description = "Memory limit for each CNPG Postgres pod (e.g. 2Gi). Only used when postgres_backend = \"cnpg\". Null (the default) renders no memory limit."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_memory_limit == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.cnpg_memory_limit))
+    error_message = "cnpg_memory_limit must be a memory quantity: a number with an optional Kubernetes suffix (\"512Mi\", \"2Gi\", \"1G\", or plain bytes), or null. \"GB\"/\"MB\", whitespace, and CPU-style m suffixes are not accepted. Prefer the binary suffixes (Mi, Gi): 2G is 2,000,000,000 bytes while 2Gi is 2,147,483,648."
+  }
 }
 
 variable "cnpg_postgres_image_tag" {
@@ -913,6 +1391,12 @@ variable "cnpg_postgres_image_tag" {
 
 variable "cnpg_pdb_enabled" {
   description = "Whether CloudNativePG maintains a PodDisruptionBudget over the Postgres primary (the Cluster's `spec.enablePDB`). Null (the default) decides from cnpg_instances: off for a single instance, on for two or more. That split is the point. CNPG's budget is minAvailable = 1 over the primary, so on a single-instance cluster, which is this module's default, allowed disruptions is 0 and the node hosting Postgres can never be drained: `kubectl drain` hangs and a Talos node upgrade stalls in drain rather than failing. With replicas the same object earns its keep, stopping a second Postgres node from being drained while the first is still catching up, and CNPG still permits evicting replicas. Set true or false to override the choice; true on a single instance is the configuration that blocks drains, so pick it only if a Postgres restart is genuinely worse than a stuck node upgrade. This field needs CloudNativePG 1.23 or later, which is where spec.enablePDB was added. On anything older the API server prunes it as an unknown field, so the setting is accepted without complaint, the operator carries on creating the budget, and the drain still hangs; nothing in the plan or the applied Cluster reports that the value went nowhere. Every supported CNPG minor is well past 1.23, but check with `kubectl get deployment -n cnpg-system -o jsonpath='{..image}'` if the cluster has been running a while. Only used when postgres_backend = \"cnpg\"."
+  type        = bool
+  default     = null
+}
+
+variable "cnpg_backup_acknowledged" {
+  description = "Records that you have decided how this database is backed up. Null by default, and read by nothing: it renders no value and changes no manifest. With postgres_backend = \"cnpg\" and neither cnpg_backup nor cnpg_plugins set, the deployment has no backups and its only copy of every workflow, credential and execution is one PVC, so the module warns (a non-blocking check, never a plan failure) at plan time. Configuring either input silences the warning by fixing what it is about. Setting this to true or false silences it by saying the trade was deliberate, which it often is: a scratch cluster where losing the database costs nothing, or a deployment whose volumes are snapshotted by something outside this module and therefore invisible to it. The value itself carries no meaning, only that one was set."
   type        = bool
   default     = null
 }
@@ -973,6 +1457,13 @@ variable "cnpg_database_name" {
   type        = string
   default     = "n8n"
   nullable    = false
+
+  validation {
+    # Unquoted-identifier shape, because the module renders the value into
+    # the Cluster CR and a connection string as is, never quoted.
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_$]*$", var.cnpg_database_name)) && length(var.cnpg_database_name) <= 63
+    error_message = "cnpg_database_name must be a Postgres identifier: a letter or underscore followed by letters, digits, underscores or $, at most 63 characters. It is rendered unquoted, so anything else fails inside the operator's initdb rather than here."
+  }
 }
 
 variable "cnpg_database_owner" {
@@ -980,6 +1471,11 @@ variable "cnpg_database_owner" {
   type        = string
   default     = "n8n"
   nullable    = false
+
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_$]*$", var.cnpg_database_owner)) && length(var.cnpg_database_owner) <= 63
+    error_message = "cnpg_database_owner must be a Postgres identifier: a letter or underscore followed by letters, digits, underscores or $, at most 63 characters, the same rule cnpg_database_name enforces."
+  }
 }
 
 variable "cnpg_max_connections" {
@@ -992,6 +1488,13 @@ variable "cnpg_max_connections" {
     condition     = var.cnpg_max_connections == floor(var.cnpg_max_connections) && var.cnpg_max_connections >= 25 && var.cnpg_max_connections <= 262143
     error_message = "cnpg_max_connections must be a whole number between 25 and 262143. Below 25, Postgres's own superuser_reserved_connections and CNPG's instance manager leave too little for n8n to start reliably. Above 262143 is past what Postgres accepts for max_connections at all, and the value goes straight into the Cluster spec, so the instance refuses to start rather than the plan refusing the number. Long before either bound the limit stops being the useful lever: every backend costs memory whether it is busy or not, which is what cnpg_pooler_enabled exists to avoid needing."
   }
+}
+
+variable "postgres_connection_budget_check_enabled" {
+  description = "Enables check.postgres_pool_size_fits_known_max_connections (postgres_cnpg.tf), an advisory plan-time warning (never a hard failure) comparing db_postgresdb_pool_size times the modeled main/worker/webhook-processor replica ceilings against max_connections. On the cnpg path that is cnpg_max_connections, since the module always sets it on the CNPG Cluster's postgresql.parameters; on the external path the module manages nothing on the server, so the comparison falls back to PostgreSQL's own stock default of 100. Off by default: the module's own default autoscaler ceilings already exceed that stock default, so this stays off until a caller has settled on both a database size (cnpg_max_connections, or the external server's own configuration) and replica ceilings and wants this advisory guard against a later regression. See postgres_cnpg.tf for the model's gaps: it does not subtract superuser_reserved_connections, does not see a max_connections a caller or operator set outside this module's cnpg_max_connections, and does not apply at all once cnpg_pooler_enabled fronts the cluster with a pooler."
+  type        = bool
+  default     = false
+  nullable    = false
 }
 
 variable "cnpg_pooler_enabled" {
@@ -1025,6 +1528,50 @@ variable "cnpg_pooler_instances" {
   validation {
     condition     = var.cnpg_pooler_instances == floor(var.cnpg_pooler_instances) && var.cnpg_pooler_instances >= 1
     error_message = "cnpg_pooler_instances must be a whole number of at least 1."
+  }
+}
+
+variable "cnpg_pooler_cpu_request" {
+  description = "CPU request for each PgBouncer pooler pod (e.g. 100m). Only used when cnpg_pooler_enabled is true. Null (the default) renders no CPU request, the BestEffort scheduling this module has always produced. Counted into the capacity model (scaling.tf) only while set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_pooler_cpu_request == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.cnpg_pooler_cpu_request))
+    error_message = "cnpg_pooler_cpu_request must be a CPU quantity: a plain number of cores (\"1\", \"0.5\") or millicores with an m suffix (\"100m\"), or null. Memory suffixes (Mi, Gi), units (\"1 core\"), and whitespace are not accepted."
+  }
+}
+
+variable "cnpg_pooler_cpu_limit" {
+  description = "CPU limit for each PgBouncer pooler pod (e.g. 500m). Only used when cnpg_pooler_enabled is true. Null (the default) renders no CPU limit."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_pooler_cpu_limit == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.cnpg_pooler_cpu_limit))
+    error_message = "cnpg_pooler_cpu_limit must be a CPU quantity: a plain number of cores (\"1\", \"0.5\") or millicores with an m suffix (\"500m\"), or null. Memory suffixes (Mi, Gi), units (\"1 core\"), and whitespace are not accepted."
+  }
+}
+
+variable "cnpg_pooler_memory_request" {
+  description = "Memory request for each PgBouncer pooler pod (e.g. 128Mi). Only used when cnpg_pooler_enabled is true. Null (the default) renders no memory request."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_pooler_memory_request == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.cnpg_pooler_memory_request))
+    error_message = "cnpg_pooler_memory_request must be a memory quantity: a number with an optional Kubernetes suffix (\"512Mi\", \"2Gi\", \"1G\", or plain bytes), or null. \"GB\"/\"MB\", whitespace, and CPU-style m suffixes are not accepted. Prefer the binary suffixes (Mi, Gi): 2G is 2,000,000,000 bytes while 2Gi is 2,147,483,648."
+  }
+}
+
+variable "cnpg_pooler_memory_limit" {
+  description = "Memory limit for each PgBouncer pooler pod (e.g. 256Mi). Only used when cnpg_pooler_enabled is true. Null (the default) renders no memory limit."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cnpg_pooler_memory_limit == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.cnpg_pooler_memory_limit))
+    error_message = "cnpg_pooler_memory_limit must be a memory quantity: a number with an optional Kubernetes suffix (\"512Mi\", \"2Gi\", \"1G\", or plain bytes), or null. \"GB\"/\"MB\", whitespace, and CPU-style m suffixes are not accepted. Prefer the binary suffixes (Mi, Gi): 2G is 2,000,000,000 bytes while 2Gi is 2,147,483,648."
   }
 }
 
@@ -1087,6 +1634,18 @@ variable "cnpg_pooler_max_client_conn" {
   validation {
     condition     = var.cnpg_pooler_max_client_conn == floor(var.cnpg_pooler_max_client_conn) && var.cnpg_pooler_max_client_conn >= 1
     error_message = "cnpg_pooler_max_client_conn must be a whole number of at least 1."
+  }
+}
+
+variable "cnpg_ready_timeout" {
+  description = "Seconds the postgres_cnpg.tf readiness barrier (kubernetes_job_v1.cnpg_ready) polls the CloudNativePG Cluster's rw Service with pg_isready before giving up. Only used when postgres_backend = \"cnpg\". Independent of n8n_helm_timeout: this Job must complete before helm_release.n8n's own wait even starts, so raising n8n_helm_timeout alone cannot give a healthy but slow CNPG bootstrap (large WAL replay, cold storage, a busy cluster) more time here. Default 600 matches this module's original hardcoded 10-minute budget, so a deployment that leaves it unset behaves unchanged."
+  type        = number
+  default     = 600
+  nullable    = false
+
+  validation {
+    condition     = var.cnpg_ready_timeout == floor(var.cnpg_ready_timeout) && var.cnpg_ready_timeout >= 60
+    error_message = "cnpg_ready_timeout must be a whole number of at least 60 seconds, the same rule n8n_helm_timeout enforces."
   }
 }
 
@@ -1170,20 +1729,174 @@ variable "db_password_secret_ref" {
 }
 
 variable "db_postgresdb_pool_size" {
-  description = "Number of TypeORM connection pool slots per n8n pod. Each pod holds this many persistent PostgreSQL connections. Rule of thumb: pool_size >= worker_concurrency / 4. With PgBouncer in transaction mode a lower value (5) is sufficient; without PgBouncer use a value matching concurrency (10-20)."
+  description = "Number of TypeORM connection pool slots per n8n pod. Each pod holds this many persistent PostgreSQL connections. Rule of thumb: pool_size >= worker_concurrency / 4. With PgBouncer in transaction mode a lower value (5) is sufficient; without PgBouncer use a value matching concurrency (10-20). Multiply it by the modeled main/worker/webhook-processor replica ceiling to budget against the database's (or CNPG PgBouncer Pooler's) own maximum-connection limit; postgres_connection_budget_check_enabled turns on check.postgres_pool_size_fits_known_max_connections (postgres_cnpg.tf), which does that arithmetic at plan time."
   type        = number
   default     = 10
 
   validation {
-    condition     = var.db_postgresdb_pool_size >= 1
-    error_message = "db_postgresdb_pool_size must be at least 1."
+    condition     = var.db_postgresdb_pool_size == floor(var.db_postgresdb_pool_size) && var.db_postgresdb_pool_size >= 1
+    error_message = "db_postgresdb_pool_size must be a whole number of at least 1. It counts connection slots, and a fraction of a connection is not a smaller pool."
+  }
+}
+
+variable "db_postgresdb_connection_timeout_ms" {
+  description = <<-EOT
+    Milliseconds pg-pool allows for establishing a PostgreSQL connection or
+    waiting for the per-process pool to free a slot
+    (DB_POSTGRESDB_CONNECTION_TIMEOUT). Leave null for n8n's own default of
+    20000. Zero disables pg-pool's acquisition timeout. Neither the chart nor
+    n8n_extra_env can set this: the chart has no values path for it and DB_
+    is a module-managed prefix.
+
+    This also applies to the database monitor's pool.connect() call. The
+    monitor separately races that call against DB_PING_TIMEOUT_MS, so the two
+    settings are configured separately but are not runtime-independent. The
+    effective health-check acquisition deadline is whichever timeout fires
+    first.
+
+    Raising this is not a fix for pool saturation, only a postponement of the
+    same failure. Size db_postgresdb_pool_size from measured concurrent
+    database operations and pool-wait time, and verify that the aggregate
+    maximum across main, worker and webhook-processor replicas fits the
+    database's (or CNPG PgBouncer Pooler's) connection budget. Exposed here
+    because the knob governing the failure should be settable, including
+    downward for fail-fast behaviour.
+  EOT
+  type        = number
+  default     = null
+
+  validation {
+    condition = var.db_postgresdb_connection_timeout_ms == null ? true : (
+      var.db_postgresdb_connection_timeout_ms >= 0 &&
+      var.db_postgresdb_connection_timeout_ms <= 2147483647
+    )
+    error_message = "db_postgresdb_connection_timeout_ms must be between 0 and 2147483647 milliseconds, or null to use n8n's own default of 20000. Zero disables the pg-pool acquisition timeout. Values above 2147483647 overflow Node.js's timer and are reduced to 1 millisecond."
+  }
+
+  validation {
+    condition     = var.db_postgresdb_connection_timeout_ms == null ? true : var.db_postgresdb_connection_timeout_ms == floor(var.db_postgresdb_connection_timeout_ms)
+    error_message = "db_postgresdb_connection_timeout_ms must be a whole number of milliseconds, or null to use n8n's own default of 20000."
+  }
+}
+
+variable "db_ping_timeout_ms" {
+  description = <<-EOT
+    Milliseconds n8n allows for its database health-check ping before
+    declaring the connection down (DB_PING_TIMEOUT_MS). Leave null for n8n's
+    own default of 5000. Neither the chart nor n8n_extra_env can set this: the
+    chart has no values path for it and DB_ is a module-managed prefix, so
+    this variable is the only way to reach it.
+
+    Raise this when pods return 503s under load while the database itself is
+    idle. n8n's ping acquires a connection from the SAME pool that serves
+    request traffic (pool.connect() in db-connection-monitor.ts, raced
+    against this timeout), so a pool saturated by ordinary load makes the
+    ping time out even though the database is perfectly healthy. One
+    timed-out ping sets connectionState.connected = false, and a global
+    middleware then answers every request to that pod with a 503, creating no
+    execution row and writing no log line at the failure site.
+
+    This ping calls pool.connect(), so it is also subject to
+    db_postgresdb_connection_timeout_ms when that timeout fires first.
+    Raising only this value above the connection timeout does not extend the
+    health check's acquisition deadline.
+
+    Size the pool from measured concurrent database operations and pool-wait
+    time, while keeping aggregate capacity across all replicas within the
+    database's (or CNPG PgBouncer Pooler's) connection budget. Raise this
+    timeout when the queue cannot be removed, or as defence in depth: it
+    costs a slower reaction to a genuinely dead database, which is a far
+    cheaper failure than silently returning 503 for live traffic.
+  EOT
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.db_ping_timeout_ms == null ? true : var.db_ping_timeout_ms > 0
+    error_message = "db_ping_timeout_ms must be greater than 0 milliseconds, or null to use n8n's own default of 5000."
+  }
+}
+
+variable "db_ping_interval_seconds" {
+  description = <<-EOT
+    Seconds between n8n's database health-check pings
+    (DB_PING_INTERVAL_SECONDS). Leave null for n8n's own default of 2.
+    Unsettable through the chart or n8n_extra_env, see db_ping_timeout_ms.
+
+    Each ping consumes a connection from the same pool that serves request
+    traffic, so on a saturated pool a shorter interval adds contention to the
+    resource already under pressure. Lengthening it reduces that contention
+    at the cost of slower detection of a genuinely lost connection.
+  EOT
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.db_ping_interval_seconds == null ? true : var.db_ping_interval_seconds > 0
+    error_message = "db_ping_interval_seconds must be greater than 0 seconds, or null to use n8n's own default of 2."
   }
 }
 
 variable "db_postgresdb_ssl_enabled" {
-  description = "Whether n8n connects to the database over TLS. True (the default) also sets DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false, because an in-cluster CloudNativePG cluster serves a certificate signed by an authority Node.js has no reason to trust, and the traffic never leaves the cluster network. Set false when n8n connects through a connection pooler (e.g. PgBouncer) that terminates TLS on its own upstream leg. Rendered explicitly either way rather than omitted, so the deployed value states the choice instead of falling back to n8n's own default."
+  description = "Whether n8n connects to the database over TLS. True (the default) negotiates TLS; it does not by itself verify the server certificate, see db_postgresdb_ssl_reject_unauthorized for that. Set false when n8n connects through a connection pooler (e.g. PgBouncer) that terminates TLS on its own upstream leg. Rendered explicitly either way rather than omitted, so the deployed value states the choice instead of falling back to n8n's own default."
   type        = bool
   default     = true
+}
+
+variable "db_postgresdb_ssl_reject_unauthorized" {
+  description = "Whether n8n validates the database server's TLS certificate against a trusted CA, instead of only encrypting the connection. Maps to DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED. Defaults to false, preserving this module's original behavior: the CNPG path's certificate is signed by the operator's own per-cluster CA (a Secret named \"n8n-pg-ca\" this module does not read), which Node.js has no reason to trust by default, and an external Postgres's issuing CA is whatever the caller's own server uses. Set true to verify; supply db_postgresdb_ssl_ca_pem with the issuing CA unless the pod image's own trust store already carries it (for example a publicly trusted CA on the external path). Both backends connect by a stable DNS name (the CNPG rw Service's cluster-internal FQDN, or db_host), so hostname verification is not blocked by design the way it is for a cloud database reached only by private IP. Ignored when db_postgresdb_ssl_enabled = false, and moot alongside cnpg_pooler_enabled = true, which already requires db_postgresdb_ssl_enabled = false."
+  type        = bool
+  default     = false
+
+  # null is not meaningful here: a caller writing x = null in a module block
+  # would propagate null into the conditional below rather than falling back
+  # to false, and Terraform rejects a null condition outright ("condition
+  # value must be a boolean"). See AGENTS.md on nullable.
+  nullable = false
+}
+
+variable "db_postgresdb_ssl_ca_pem" {
+  description = "PEM-encoded CA certificate bundle n8n trusts for the database TLS connection, covering both the CNPG path and the external db_host path. When set while db_postgresdb_ssl_enabled is true, the module passes it, with surrounding whitespace trimmed, to the n8n Helm chart's database.ssl.ca value. The chart renders it into its own ConfigMap as DB_POSTGRESDB_SSL_CA for the main, worker, and webhook-processor pods, so a Helm rollback restores the previous CA and a CA change rolls the pods through the chart's checksum/config annotation. For the CNPG path, extract the operator-issued CA with `kubectl get secret n8n-pg-ca -n <namespace> -o jsonpath='{.data.ca\\.crt}'`, base64-decode the result, after the Cluster exists; this module does not read that Secret itself (cluster state is attested by input, never detected by data source). For the external path, supply the bundle your Postgres server's certificate chains to. Setting this while db_postgresdb_ssl_reject_unauthorized is false still delivers the CA to n8n, which never uses it for verification in that case; a non-blocking check in n8n.tf warns about that combination. See docs/postgresql-tls.md."
+  type        = string
+  default     = null
+
+  # Requires PEM certificate framing rather than only rejecting an empty
+  # string: a non-empty value that is not actually PEM-encoded (e.g. a DER
+  # blob, a truncated download, or plain text) would otherwise pass unnoticed
+  # and only surface as a connection failure once n8n tried to parse it. (?s)
+  # makes "." match newlines so a multi-certificate bundle still matches end
+  # to end; this does not parse the certificate itself, only its framing.
+  validation {
+    condition     = var.db_postgresdb_ssl_ca_pem == null ? true : can(regex("(?s)^\\s*-----BEGIN CERTIFICATE-----.*-----END CERTIFICATE-----\\s*$", var.db_postgresdb_ssl_ca_pem))
+    error_message = "db_postgresdb_ssl_ca_pem must be null or a PEM-encoded CA bundle (containing -----BEGIN CERTIFICATE----- / -----END CERTIFICATE----- delimiters)."
+  }
+
+  # PEM is ASCII (RFC 7468), and the size validation below counts characters
+  # while Linux limits bytes. The framing regex above does not stop non-ASCII
+  # text between the delimiters, so without this a bundle with multibyte
+  # characters could pass the size check and still exceed the environment
+  # string limit.
+  validation {
+    condition     = var.db_postgresdb_ssl_ca_pem == null ? true : can(regex("^[[:ascii:]]*$", var.db_postgresdb_ssl_ca_pem))
+    error_message = "db_postgresdb_ssl_ca_pem must contain only ASCII text. A PEM-encoded CA bundle is ASCII; check that the file was not altered or saved with a non-ASCII encoding."
+  }
+
+  # The chart passes database.ssl.ca to every n8n container as the
+  # environment variable DB_POSTGRESDB_SSL_CA (chart 1.16.0,
+  # templates/_configmap-env.tpl). Linux caps a single environment string,
+  # "NAME=value" plus its terminating NUL, at 32 pages (MAX_ARG_STRLEN), which
+  # is 131072 bytes with 4 KiB pages. Above that the container fails to start
+  # with "argument list too long". 131072 minus "DB_POSTGRESDB_SSL_CA=" (21)
+  # minus the NUL leaves 131050, the boundary measured on the AWS sibling.
+  # length() counts characters, not bytes; the ASCII validation above makes
+  # the two equal. Measures the trimmed value, which is what reaches the
+  # chart (local.postgres_ssl_ca_values). Not gated on db_postgresdb_ssl_enabled
+  # or db_postgresdb_ssl_reject_unauthorized: a bundle this large can never
+  # work, so it fails now rather than in the apply that turns verification on.
+  validation {
+    condition     = var.db_postgresdb_ssl_ca_pem == null ? true : length(trimspace(var.db_postgresdb_ssl_ca_pem)) <= 131050
+    error_message = "db_postgresdb_ssl_ca_pem is ${var.db_postgresdb_ssl_ca_pem == null ? 0 : length(trimspace(var.db_postgresdb_ssl_ca_pem))} bytes after trimming, but may be at most 131050: the chart passes it to each n8n container as an environment variable, and Linux refuses to start a container with a larger one."
+  }
 }
 
 # ── Redis / queue ─────────────────────────────────────────────────────────────
@@ -1200,17 +1913,92 @@ variable "redis_backend" {
   }
 }
 
+variable "valkey_helm_timeout" {
+  description = "Seconds Terraform waits for the Valkey Helm release to converge. Only used when redis_backend = \"valkey\". The default matches n8n_helm_timeout's; raise it on storage where the Valkey PVC binds slowly, which is the path that has actually exceeded it (a WaitForFirstConsumer class with no provisioner leaves the PVC Pending into the timeout)."
+  type        = number
+  default     = 600
+  nullable    = false
+
+  validation {
+    condition     = var.valkey_helm_timeout == floor(var.valkey_helm_timeout) && var.valkey_helm_timeout >= 60
+    error_message = "valkey_helm_timeout must be a whole number of at least 60 seconds, the same rule n8n_helm_timeout enforces."
+  }
+}
+
 variable "valkey_storage_size" {
   description = "PVC size for the Valkey standalone instance. Only used when redis_backend = \"valkey\"."
   type        = string
   default     = "8Gi"
   nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.valkey_storage_size))
+    error_message = "valkey_storage_size must be a Kubernetes quantity such as \"8Gi\", the same rule cnpg_storage_size enforces."
+  }
 }
 
 variable "valkey_storage_class" {
   description = "StorageClass for the Valkey PVC. Empty string uses the cluster default. Only used when redis_backend = \"valkey\"."
   type        = string
   default     = ""
+  nullable    = false
+}
+
+variable "valkey_cpu_request" {
+  description = "CPU request for the Valkey pod (e.g. 250m). Only used when redis_backend = \"valkey\". Null (the default) renders no CPU request, the BestEffort scheduling this module has always produced. Counted into the capacity model (scaling.tf) only while set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.valkey_cpu_request == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.valkey_cpu_request))
+    error_message = "valkey_cpu_request must be a CPU quantity: a plain number of cores (\"1\", \"0.5\") or millicores with an m suffix (\"250m\"), or null. Memory suffixes (Mi, Gi), units (\"1 core\"), and whitespace are not accepted."
+  }
+}
+
+variable "valkey_cpu_limit" {
+  description = "CPU limit for the Valkey pod (e.g. 1000m). Only used when redis_backend = \"valkey\". Null (the default) renders no CPU limit."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.valkey_cpu_limit == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?m?$", var.valkey_cpu_limit))
+    error_message = "valkey_cpu_limit must be a CPU quantity: a plain number of cores (\"1\", \"0.5\") or millicores with an m suffix (\"1000m\"), or null. Memory suffixes (Mi, Gi), units (\"1 core\"), and whitespace are not accepted."
+  }
+}
+
+variable "valkey_memory_request" {
+  description = "Memory request for the Valkey pod (e.g. 256Mi). Only used when redis_backend = \"valkey\". Null (the default) renders no memory request."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.valkey_memory_request == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.valkey_memory_request))
+    error_message = "valkey_memory_request must be a memory quantity: a number with an optional Kubernetes suffix (\"512Mi\", \"2Gi\", \"1G\", or plain bytes), or null. \"GB\"/\"MB\", whitespace, and CPU-style m suffixes are not accepted. Prefer the binary suffixes (Mi, Gi): 2G is 2,000,000,000 bytes while 2Gi is 2,147,483,648."
+  }
+}
+
+variable "valkey_memory_limit" {
+  description = "Memory limit for the Valkey pod (e.g. 1Gi). Only used when redis_backend = \"valkey\". Null (the default) renders no memory limit. If you set valkey_append_only_enabled too, size the limit well above the request: an AOF rewrite forks the process and copy-on-write can briefly approach double the resident set, and an OOMKill during the rewrite is exactly the data-loss window the AOF exists to close."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.valkey_memory_limit == null ? true : can(regex("^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$", var.valkey_memory_limit))
+    error_message = "valkey_memory_limit must be a memory quantity: a number with an optional Kubernetes suffix (\"512Mi\", \"2Gi\", \"1G\", or plain bytes), or null. \"GB\"/\"MB\", whitespace, and CPU-style m suffixes are not accepted. Prefer the binary suffixes (Mi, Gi): 2G is 2,000,000,000 bytes while 2Gi is 2,147,483,648."
+  }
+}
+
+variable "valkey_append_only_enabled" {
+  description = "Turn on Valkey's append-only file so the Bull queue survives a crash. Only used when redis_backend = \"valkey\". The chart's generated config carries no persistence directives, so the server runs on its built-in defaults: RDB snapshots only, taken as rarely as once an hour under light write load. A crash or OOM kill between snapshots silently loses every job accepted since the last one, from both ends: the webhook already answered 200 and no worker will ever see the work. False (the default) renders no persistence directives, which is the chart's own behavior unchanged. True appends appendonly yes with appendfsync everysec to the rendered valkey.conf, bounding the loss window to about one second of writes at the cost of AOF files on the same PVC the snapshots use. Off by default because the write-amplification tradeoff has no pre-existing promise to keep; turn it on for any deployment where losing an hour of accepted jobs is not acceptable."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "valkey_password_rotation_roll_enabled" {
+  description = "Turn on a checksum/valkey-password pod annotation on both the n8n release and the Valkey release, so rotating random_password.valkey_default rolls every pod that holds the credential in one apply. Only used when redis_backend = \"valkey\". Without it, rotating the generated password updates the Secret and restarts nothing: n8n pods resolve the password from a secretKeyRef once at start and Valkey loads it into users.acl once at start, so every pod keeps the old credential until something unrelated restarts it, and then meets whichever generation the other side happens to be running. False (the default) renders no checksum annotation on either release, which is this module's existing behavior: the chart's generated podAnnotations is otherwise empty on the Valkey release, and only the extra-CA checksum, if any, reaches the n8n release. Turning this on is a one-time cost as well as an ongoing one: the annotation reaching the pod template for the first time is itself a pod-template change, so the apply that enables it rolls Valkey (via deploymentStrategy = Recreate, a brief full outage since the standalone PVC is ReadWriteOnce and the chart's own replicas cannot overlap it) and every n8n pod once, before any password has actually rotated. Enable it deliberately, not as a side effect of taking a module upgrade, and expect that one apply to interrupt the queue briefly."
+  type        = bool
+  default     = false
   nullable    = false
 }
 
@@ -1230,7 +2018,7 @@ variable "metrics_lan_expose" {
 }
 
 variable "n8n_redis_timeout_threshold" {
-  description = "Milliseconds n8n keeps trying to reach Redis before it gives up and exits the process, wired to QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD. Leave null (the default) to use the chart's 10000, which is n8n's own default. Raise it if you would rather n8n rode out a brief queue outage than restarted: a failover on an external endpoint, or a Valkey pod reschedule. Pick the value deliberately, because the budget is coarser than it looks: n8n does not set ioredis's connectTimeout, so it stays at 10s, and a connect to an endpoint that is up but not serving hangs for that full 10s before failing. Each failed attempt therefore spends about 11.1s of this budget, making the effective values roughly 11.1s, 33.2s and 66.4s for settings of 10s, 30s and 60s. 30000 was measured failing by 1.1 seconds against a 25 second outage; 60000 survived every case measured, with about 20 seconds of headroom against a 48 second one. That is a small number of observed events, so treat it as a good default rather than a guarantee."
+  description = "Milliseconds n8n keeps trying to reach Redis before it gives up and exits the process, wired to QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD. Leave null (the default) to use the chart's 10000, which is n8n's own default. Raise it if you would rather n8n rode out a brief queue outage than restarted: a failover on an external endpoint, or a Valkey pod reschedule. Pick the value deliberately, because the budget is coarser than it looks: n8n does not set ioredis's connectTimeout, so it stays at 10s, and a connect to an endpoint that is up but not serving hangs for that full 10s before failing. Each failed attempt against that kind of endpoint therefore spends about 11.1s of this budget, making the theoretical effective values roughly 11.1s, 33.2s and 66.4s for settings of 10s, 30s and 60s against an endpoint that hangs rather than refuses. A live test against a different failure mode, a deleted Valkey pod, measured a faster cycle than that formula predicts: a connection to a pod that is simply gone fails immediately rather than hanging out the 10s connectTimeout, so each attempt there costs far less than 11.1s and the theoretical ceiling overstates what the setting actually buys. 30000 was measured failing against a 25 second outage of that kind, well short of the formula's 33.2s; 60000 survived every case measured, with about 20 seconds of headroom against a 48 second one. That is a small number of observed events, so treat the 60000 result as a good default rather than a guarantee, and treat the formula above as an upper bound that only holds against a hung, unresponsive endpoint, not a vanished one. With this module's default backend (a single-replica Valkey, redis_backend = \"valkey\"), there is no standby to fail over to: at the default (null, effectively 10000) n8n exits after about 11 seconds of Redis unavailability. A live test that deleted the Valkey pod measured 31 seconds for it to come back, during which every n8n pod crashed on Redis loss, producing about 45 seconds of webhook failures before the deployment self-recovered. Setting this to 60000 rides out an outage of that length (see the measurements above: 30000 failed a 25-second outage, 60000 survived a 48-second one). The default stays null deliberately: raising it module-wide means a real, longer outage leaves pods retrying against a dead endpoint instead of restarting, which is a worse failure mode for callers who never hit the single-replica-Valkey case this note describes."
   type        = number
   default     = null
 
@@ -1391,6 +2179,100 @@ variable "redis_key_prefix" {
   }
 }
 
+variable "n8n_queue_worker_lock_duration" {
+  description = "Milliseconds a worker holds a Bull job lock before it must renew it. Maps to the chart's redis.worker.lockDuration value (QUEUE_WORKER_LOCK_DURATION on the pods); must go through this chart value rather than config.extraEnv: once set, the chart renders its own env entry for this key, config.extraEnv is appended after it, and Kubernetes silently keeps the last of two same-named entries, so a duplicate would override this value with no warning. The QUEUE_ prefix in n8n_managed_env_prefixes rejects every QUEUE_ name from n8n_extra_env for that reason. Leave null for n8n's own default (60000ms). Lowering it to 10000ms or less additionally requires setting n8n_queue_worker_lock_renew_time explicitly below it: the chart's renewal default is 10000ms, so an unset renewal interval would make the lock expire at or before the first renewal ever fires."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_duration == null ? true : var.n8n_queue_worker_lock_duration >= 1000
+    error_message = "n8n_queue_worker_lock_duration must be at least 1000 milliseconds, or null to use n8n's own default. The chart's values.schema.json enforces a minimum of 1000 on redis.worker.lockDuration, so lower values are rejected during Helm schema validation."
+  }
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_duration == null ? true : var.n8n_queue_worker_lock_duration == floor(var.n8n_queue_worker_lock_duration)
+    error_message = "n8n_queue_worker_lock_duration must be a whole number of milliseconds, so this value is rejected at plan time. The chart's values.schema.json declares redis.worker.lockDuration as {\"type\": \"integer\"}, so a fractional value that slipped past this check would only fail later, during Helm schema validation at apply time."
+  }
+}
+
+variable "n8n_queue_worker_lock_renew_time" {
+  description = "Milliseconds between a worker's renewals of its Bull job lock. Maps to the chart's redis.worker.lockRenewTime value (QUEUE_WORKER_LOCK_RENEW_TIME on the pods); like n8n_queue_worker_lock_duration it must go through the chart value rather than config.extraEnv, for the same silent last-entry-wins override reason. Leave null for n8n's own default (10000ms). This must stay comfortably below n8n_queue_worker_lock_duration: the worker renews on a timer, so a renew interval at or above the lock duration guarantees the lock expires before the next renewal ever fires, and every job then looks stalled to Bull's stalled-job check no matter how healthy the worker is. Lowering it increases Redis command volume proportionally to in-flight jobs."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_renew_time == null ? true : var.n8n_queue_worker_lock_renew_time >= 1000
+    error_message = "n8n_queue_worker_lock_renew_time must be at least 1000 milliseconds, or null to use n8n's own default. The chart's values.schema.json enforces a minimum of 1000 on redis.worker.lockRenewTime, so lower values are rejected during Helm schema validation."
+  }
+
+  # Compared against effective values rather than literal ones, so this single
+  # check also covers a lock duration lowered to 10000ms or below while this
+  # variable is left null, where the chart would keep its own 10000ms renewal
+  # default. Terraform forbids two variables' validations from referencing each
+  # other (it reports a cycle), so the whole invariant is hosted here instead of
+  # being split across both variables.
+  validation {
+    condition     = coalesce(var.n8n_queue_worker_lock_renew_time, 10000) < coalesce(var.n8n_queue_worker_lock_duration, 60000)
+    error_message = "The effective Bull lock renewal interval must stay strictly below the effective lock duration, otherwise the lock expires at or before the first renewal ever fires and Bull treats every job as stalled however healthy the worker is. Unset values fall back to the chart's own defaults, 10000ms for n8n_queue_worker_lock_renew_time and 60000ms for n8n_queue_worker_lock_duration, so lowering n8n_queue_worker_lock_duration to 10000ms or less requires setting n8n_queue_worker_lock_renew_time explicitly below it."
+  }
+
+  validation {
+    condition     = var.n8n_queue_worker_lock_renew_time == null ? true : var.n8n_queue_worker_lock_renew_time == floor(var.n8n_queue_worker_lock_renew_time)
+    error_message = "n8n_queue_worker_lock_renew_time must be a whole number of milliseconds, so this value is rejected at plan time. The chart's values.schema.json declares redis.worker.lockRenewTime as {\"type\": \"integer\"}, so a fractional value that slipped past this check would only fail later, during Helm schema validation at apply time."
+  }
+}
+
+variable "n8n_queue_worker_stalled_interval" {
+  description = <<-EOT
+    Milliseconds between Bull's checks for stalled jobs. Maps to the chart's
+    redis.worker.stalledInterval value (QUEUE_WORKER_STALLED_INTERVAL on the
+    pods), not to config.extraEnv, for the same silent last-entry-wins
+    override reason as the two lock variables. Leave null for n8n's own
+    default (30000ms).
+
+    n8n itself documents 0 as "disable stall checking", but THAT IS NOT
+    REACHABLE THROUGH THIS CHART and this variable cannot offer it. The
+    chart's values.schema.json declares redis.worker.stalledInterval as
+    {"type": "integer", "minimum": 1000}, so 0 is rejected during schema
+    validation ("minimum: got 0, want 1,000") and a quoted "0" is rejected as
+    the wrong type ("got string, want integer"). The minimum of 1000 is
+    enforced by the validation below so the failure lands at plan time with
+    this explanation, rather than as a Helm schema error at apply time that
+    names a values path and not a reason.
+
+    Disabling stall checking on this chart therefore requires a chart
+    change, and it is worth raising upstream, because of what stall
+    detection actually does in n8n v2, which is less than the name suggests.
+    n8n hardcodes Bull's maxStalledCount to 0
+    (packages/cli/src/scaling/scaling.service.ts), so a job detected as
+    stalled is failed PERMANENTLY rather than retried, and n8n's own queue
+    recovery only marks such executions "crashed" without re-running them.
+    Stall detection therefore never recovers work: it converts a stalled job
+    into a failure sooner. Disabling it means a slow-but-alive worker
+    finishes its job instead of having it killed, at the cost of a
+    genuinely dead worker's job sitting in the active list until queue
+    recovery notices.
+
+    Note the related QUEUE_WORKER_MAX_STALLED_COUNT is deliberately NOT
+    exposed here. The chart still sets it (redis.worker.maxStalledCount,
+    default 1) but n8n v2 removed the environment variable and ships a
+    breaking-change rule stating it is ignored, so exposing it would offer
+    control that does not exist.
+  EOT
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.n8n_queue_worker_stalled_interval == null ? true : var.n8n_queue_worker_stalled_interval >= 1000
+    error_message = "n8n_queue_worker_stalled_interval must be at least 1000 milliseconds, or null to use n8n's own default. The chart's values.schema.json enforces a minimum of 1000 on redis.worker.stalledInterval, so lower values (including 0 to disable stall checking) are rejected during Helm schema validation and cannot be set through this module."
+  }
+
+  validation {
+    condition     = var.n8n_queue_worker_stalled_interval == null ? true : var.n8n_queue_worker_stalled_interval == floor(var.n8n_queue_worker_stalled_interval)
+    error_message = "n8n_queue_worker_stalled_interval must be a whole number of milliseconds, so this value is rejected at plan time. The chart's values.schema.json declares redis.worker.stalledInterval as {\"type\": \"integer\"}, so a fractional value that slipped past this check would only fail later, during Helm schema validation at apply time."
+  }
+}
+
 # ── Main pod availability ─────────────────────────────────────────────────────
 # The main pod is a deliberate single point of failure: leader election among
 # mains is the licensed piece, so this module runs exactly one and keeps its HPA
@@ -1410,7 +2292,7 @@ variable "n8n_main_strategy" {
 }
 
 variable "n8n_main_pdb_enabled" {
-  description = "Whether the chart renders its PodDisruptionBudget over the single main pod. False by default, which is a change from the chart's own default of true. The chart's PDB is minAvailable = 1 and the module runs replicaCount = 1, so enabling it sets allowed disruptions to zero permanently: `kubectl drain` on whichever node holds the main pod never completes, and a Talos node upgrade of that node stalls in drain until it gives up and proceeds by force. A PDB protects a pod by refusing voluntary evictions, and with one replica every eviction is the last one, so there is nothing for it to protect and a node lifecycle to block. The main going down briefly during a drain is the accepted cost of single-main Community mode; the fix is to make that restart fast and visible, not to forbid it. Set true only if you are deliberately trading node maintenance against main availability and you know how you intend to drain nodes anyway (`--disable-eviction` bypasses the PDB and skips the graceful path with it)."
+  description = "Whether the chart is asked to render its PodDisruptionBudget over the single main pod. False by default, which is a change from the chart's own default of true. Before chart 1.16.0, the PDB's minAvailable = 1 against this module's replicaCount = 1 set allowed disruptions to zero permanently: `kubectl drain` on whichever node held the main pod never completed, and a Talos node upgrade stalled in drain until it gave up and proceeded by force. Chart 1.16.0 closed that structurally (n8n-io/n8n-hosting#228): templates/pdb.yaml now renders only when main runs more than one replica, which this module never does (no multiMain, no hpa.main), so turning this input on no longer creates a PodDisruptionBudget at all under the pinned chart - tests/scripts/check-n8n-chart.sh renders the real chart to prove it. The input is left in place for the day this module might support multiple mains, and to keep a caller's existing tfvars value meaningful rather than silently erroring. Set true only if you are deliberately opting into whatever a future multi-main main pool would need from it; on the single-main topology this module always runs today it is inert either way."
   type        = bool
   default     = false
   nullable    = false
@@ -1471,8 +2353,8 @@ variable "n8n_webhook_hpa_scale_up_stabilization_window_seconds" {
   default     = 0
 
   validation {
-    condition     = var.n8n_webhook_hpa_scale_up_stabilization_window_seconds >= 0 && var.n8n_webhook_hpa_scale_up_stabilization_window_seconds <= 3600
-    error_message = "n8n_webhook_hpa_scale_up_stabilization_window_seconds must be between 0 and 3600 seconds, the range the Kubernetes HPA API enforces."
+    condition     = var.n8n_webhook_hpa_scale_up_stabilization_window_seconds == floor(var.n8n_webhook_hpa_scale_up_stabilization_window_seconds) && var.n8n_webhook_hpa_scale_up_stabilization_window_seconds >= 0 && var.n8n_webhook_hpa_scale_up_stabilization_window_seconds <= 3600
+    error_message = "n8n_webhook_hpa_scale_up_stabilization_window_seconds must be a whole number between 0 and 3600 seconds, the range the Kubernetes HPA API enforces; the API also types it as an integer."
   }
 }
 
@@ -1502,6 +2384,10 @@ variable "n8n_reinstall_missing_packages" {
   description = "Reinstall community packages that are recorded in the database but missing from a pod's local filesystem at startup. Maps to N8N_REINSTALL_MISSING_PACKAGES. n8n stores installed community packages on the pod's filesystem, which is ephemeral, so a rescheduled or newly scaled-up worker comes up without them and nodes installed through the UI fail to load on that pod. Enabling this makes every pod (main, worker and webhook processor) reinstall the recorded packages on boot, which is what lets community nodes work reliably in queue mode. n8n defaults this to false; when false the env var is omitted entirely so n8n's own default applies. When true, size the webhook processor above this module's defaults: every pod runs npm installs at boot and n8n rebroadcasts installs to all pods over pubsub, so a rolling restart makes every webhook pod install repeatedly at once. Against low CPU and memory this causes HPA thrash and OOMKilled crash loops; see n8n_webhook_cpu_request, n8n_webhook_memory_limit and docs/troubleshooting.md."
   type        = bool
   default     = false
+  # check.webhook_resources_sized_for_reinstall_missing_packages branches its
+  # condition on this input; a null condition aborts the plan from a warn-only
+  # block, so an explicit null must fall back to the default instead.
+  nullable = false
 }
 
 variable "n8n_community_packages_registry" {
@@ -1601,12 +2487,13 @@ variable "n8n_binary_data_path" {
     # escape-sequence trap for the next person to touch this.
     condition = alltrue([
       startswith(var.n8n_binary_data_path, "/"),
+      !endswith(var.n8n_binary_data_path, "/"),
       !can(regex("[[:space:]]", var.n8n_binary_data_path)),
       !strcontains(var.n8n_binary_data_path, "//"),
       !contains(split("/", var.n8n_binary_data_path), "."),
       !contains(split("/", var.n8n_binary_data_path), ".."),
     ])
-    error_message = "n8n_binary_data_path must be an absolute path with no whitespace, no empty segments and no . or .. components."
+    error_message = "n8n_binary_data_path must be an absolute path with no trailing slash, no whitespace, no empty segments and no . or .. components."
   }
 }
 
@@ -1727,6 +2614,52 @@ variable "n8n_extra_volume_mounts" {
   validation {
     condition     = length(distinct([for mount in var.n8n_extra_volume_mounts : mount.mount_path])) == length(var.n8n_extra_volume_mounts)
     error_message = "n8n_extra_volume_mounts mount_path values must be unique. Two mounts on one path is a pod spec Kubernetes rejects outright."
+  }
+}
+
+# n8n_extra_ca_pem lives under the "Community packages" banner above, next to
+# n8n_extra_volumes/n8n_extra_volume_mounts it reserves against: no new banner
+# line here, see scripts/check-variable-banners.sh and AGENTS.md's banner
+# table. Ported from the AWS sibling (n8n-io/terraform-aws-n8n#202, itself
+# tracking n8n-io/terraform-aws-n8n#203). Reserves a fixed volume name, mount
+# path and env var name, but only while this input is set: see n8n.tf and
+# locals.tf for the Secret and the translation, and docs/tls-proxy.md for the
+# operational picture.
+
+variable "n8n_extra_ca_pem" {
+  description = "PEM-encoded CA certificate(s) the n8n containers trust for outbound TLS in addition to Node's built-in roots. Use it when egress passes through a TLS-inspecting proxy, or n8n calls endpoints signed by a private CA. The module stores the PEM in a module-managed Secret (public certificates only; a private key block is rejected at plan time), mounts it read-only at /etc/n8n-certs/ca-bundle.crt on main, worker and webhook-processor pods and sets NODE_EXTRA_CA_CERTS to that path. Changing the PEM rolls the pods through a checksum/extra-ca pod annotation, because Node reads the file once at start. Applies to the n8n containers only: the task runner sidecar is a separate container and does not inherit it, nor does it get the mount. Proxy routing itself (HTTP_PROXY, HTTPS_PROXY, NO_PROXY) stays in n8n_extra_env; see docs/tls-proxy.md. While this input is set, n8n_extra_env and n8n_extra_env_from_secret may not set NODE_EXTRA_CA_CERTS, n8n_extra_volumes may not use the volume name \"ca-bundle\", and n8n_extra_volume_mounts may not use the mount path /etc/n8n-certs/ca-bundle.crt. Null (the default) leaves all three free."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : can(regex("-----BEGIN CERTIFICATE-----\\s*[A-Za-z0-9+/=][A-Za-z0-9+/=\\s]*-----END CERTIFICATE-----", var.n8n_extra_ca_pem))
+    error_message = "n8n_extra_ca_pem must contain at least one PEM-encoded certificate: a -----BEGIN CERTIFICATE----- line, non-empty base64 content, and a matching -----END CERTIFICATE----- line."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !can(regex("PRIVATE KEY-----", var.n8n_extra_ca_pem))
+    error_message = "n8n_extra_ca_pem must contain certificates only; remove any private key block."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !contains([for volume in var.n8n_extra_volumes : volume.name], "ca-bundle")
+    error_message = "n8n_extra_ca_pem reserves the volume name \"ca-bundle\" while set. Rename or remove the conflicting n8n_extra_volumes entry."
+  }
+
+  validation {
+    condition     = var.n8n_extra_ca_pem == null ? true : !contains([for mount in var.n8n_extra_volume_mounts : mount.mount_path], "/etc/n8n-certs/ca-bundle.crt")
+    error_message = "n8n_extra_ca_pem reserves the mount path \"/etc/n8n-certs/ca-bundle.crt\" while set. Move or remove the conflicting n8n_extra_volume_mounts entry."
+  }
+
+  validation {
+    condition = var.n8n_extra_ca_pem == null ? true : !contains(
+      concat(
+        [for e in var.n8n_extra_env : e.name],
+        [for e in var.n8n_extra_env_from_secret : e.name],
+      ),
+      "NODE_EXTRA_CA_CERTS",
+    )
+    error_message = "n8n_extra_ca_pem reserves NODE_EXTRA_CA_CERTS, in n8n_extra_env and n8n_extra_env_from_secret alike, while set. It points at the Secret-backed bundle this input mounts; remove the conflicting entry."
   }
 }
 
@@ -1851,8 +2784,8 @@ variable "n8n_task_runner_timeout" {
   default     = 300
 
   validation {
-    condition     = var.n8n_task_runner_timeout > 0
-    error_message = "n8n_task_runner_timeout must be greater than 0 seconds."
+    condition     = var.n8n_task_runner_timeout == floor(var.n8n_task_runner_timeout) && var.n8n_task_runner_timeout > 0
+    error_message = "n8n_task_runner_timeout must be a whole number of seconds greater than 0."
   }
 }
 
@@ -1868,8 +2801,8 @@ variable "n8n_compression_max_decompressed_size_bytes" {
   default     = null
 
   validation {
-    condition     = var.n8n_compression_max_decompressed_size_bytes == null ? true : var.n8n_compression_max_decompressed_size_bytes > 0
-    error_message = "n8n_compression_max_decompressed_size_bytes must be greater than 0 bytes when set."
+    condition     = var.n8n_compression_max_decompressed_size_bytes == null ? true : (var.n8n_compression_max_decompressed_size_bytes == floor(var.n8n_compression_max_decompressed_size_bytes) && var.n8n_compression_max_decompressed_size_bytes > 0)
+    error_message = "n8n_compression_max_decompressed_size_bytes must be a whole number of bytes greater than 0 when set. There is no fractional byte."
   }
 }
 
@@ -1879,8 +2812,8 @@ variable "n8n_compression_max_zip_entries" {
   default     = null
 
   validation {
-    condition     = var.n8n_compression_max_zip_entries == null ? true : var.n8n_compression_max_zip_entries > 0
-    error_message = "n8n_compression_max_zip_entries must be greater than 0 entries when set."
+    condition     = var.n8n_compression_max_zip_entries == null ? true : (var.n8n_compression_max_zip_entries == floor(var.n8n_compression_max_zip_entries) && var.n8n_compression_max_zip_entries > 0)
+    error_message = "n8n_compression_max_zip_entries must be a whole number of entries greater than 0 when set. It counts files in an archive."
   }
 }
 
@@ -1971,7 +2904,7 @@ variable "n8n_otel_traces_production_only" {
 }
 
 variable "n8n_extra_env" {
-  description = "Additional environment variables to inject into all n8n pods (main, worker, and webhook-processor) via the Helm chart's config.extraEnv list. Each entry is an object with name and value string attributes. config.extraEnv is appended last in every container's env list, so by Kubernetes' last-wins rule any name here overrides the chart's value for that name. To prevent silently breaking the deployment, an entry is rejected at plan time when its name collides with a connection, identity, storage, topology, or routing variable the module manages: any name starting with DB_, QUEUE_, N8N_RUNNERS_, or N8N_ENDPOINT_, plus names like N8N_ENCRYPTION_KEY, N8N_HOST, WEBHOOK_URL, and EXECUTIONS_MODE. N8N_ENDPOINT_ is reserved because the module hardcodes the path segments n8n serves and then publishes them in n8n_webhook_path_prefixes and n8n_oauth_callback_url, which callers route on their own Ingress; repointing one leaves that routing and those outputs advertising a path n8n no longer answers on. Use the dedicated module inputs for those. Object-storage names (N8N_EXTERNAL_STORAGE_S3_*, AWS_*) are deliberately allowed: the module provisions no bucket and sets none of them, so pointing n8n at your own is a supported configuration rather than a collision. Do not put secret values here, because they render into the Helm release and are stored in plaintext in Terraform state; instead pass a *_FILE companion (e.g. a name ending in _FILE) pointing at a mounted Kubernetes secret, or use n8n credentials. Example: [{name = \"N8N_DEFAULT_LOCALE\", value = \"de\"}]."
+  description = "Additional environment variables to inject into all n8n pods (main, worker, and webhook-processor) via the Helm chart's config.extraEnv list. Each entry is an object with name and value string attributes. config.extraEnv is appended last in every container's env list, so by Kubernetes' last-wins rule any name here overrides the chart's value for that name. To prevent silently breaking the deployment, an entry is rejected at plan time when its name collides with a connection, identity, storage, topology, or routing variable the module manages: any name starting with DB_, QUEUE_, N8N_RUNNERS_, or N8N_ENDPOINT_, plus names like N8N_ENCRYPTION_KEY, N8N_HOST, N8N_WEBHOOK_URL, and EXECUTIONS_MODE. N8N_ENDPOINT_ is reserved because the module hardcodes the path segments n8n serves and then publishes them in n8n_webhook_path_prefixes and n8n_oauth_callback_url, which callers route on their own Ingress; repointing one leaves that routing and those outputs advertising a path n8n no longer answers on. Use the dedicated module inputs for those. Object-storage names (N8N_EXTERNAL_STORAGE_S3_*, AWS_*) are deliberately allowed: the module provisions no bucket and sets none of them, so pointing n8n at your own is a supported configuration rather than a collision. Do not put secret values here, because they render into the Helm release and are stored in plaintext in Terraform state; instead pass a *_FILE companion (e.g. a name ending in _FILE) pointing at a mounted Kubernetes secret, or use n8n credentials. Example: [{name = \"N8N_DEFAULT_LOCALE\", value = \"de\"}]."
   type = list(object({
     name  = string
     value = string
@@ -1991,12 +2924,14 @@ variable "n8n_extra_env" {
 
   validation {
     condition = alltrue([
-      for e in var.n8n_extra_env : !(
-        contains(local.n8n_managed_env_names, e.name) ||
-        anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
+      for e in var.n8n_extra_env : (
+        contains(local.n8n_env_carveouts, e.name) || !(
+          contains(local.n8n_managed_env_names, e.name) ||
+          anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
+        )
       )
     ])
-    error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
+    error_message = "n8n_extra_env must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. Exception: the official n8n names in the carve-out list (external Postgres TLS material such as DB_POSTGRESDB_SSL_KEY and its _FILE companion, the DB tuning and ping/recovery families, DB logging, the Redis client TLS/keep-alive names; see n8n_env_carveouts in locals.tf), which neither the module nor the chart writes and which therefore pass. config.extraEnv is appended last and would otherwise silently override the managed names (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
   }
 }
 
@@ -2057,12 +2992,14 @@ variable "n8n_extra_env_from_secret" {
 
   validation {
     condition = alltrue([
-      for e in var.n8n_extra_env_from_secret : !(
-        contains(local.n8n_managed_env_names, e.name) ||
-        anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
+      for e in var.n8n_extra_env_from_secret : (
+        contains(local.n8n_env_carveouts, e.name) || !(
+          contains(local.n8n_managed_env_names, e.name) ||
+          anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
+        )
       )
     ])
-    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
+    error_message = "n8n_extra_env_from_secret must not set module-managed variables. Reserved: any name starting with one of ${join(", ", local.n8n_managed_env_prefixes)} (connection, queue, runner and endpoint-path families), plus the exact names ${join(", ", local.n8n_managed_env_names)}. Exception: the official n8n names in the carve-out list (external Postgres TLS material, DB tuning and ping/recovery, DB logging, Redis client TLS/keep-alive; see n8n_env_carveouts in locals.tf), which neither the module nor the chart writes and which therefore pass. config.extraEnv is appended last and would otherwise silently override these (Kubernetes last-wins). Use the dedicated module inputs instead: n8n_binary_data_mode and n8n_binary_data_path for N8N_DEFAULT_BINARY_DATA_MODE and N8N_STORAGE_PATH, and the matching typed input elsewhere (n8n_log_level, n8n_metrics_enabled, and so on)."
   }
 }
 
@@ -2152,5 +3089,96 @@ variable "n8n_worker_keda_jobs_per_replica" {
   validation {
     condition     = var.n8n_worker_keda_jobs_per_replica == floor(var.n8n_worker_keda_jobs_per_replica) && var.n8n_worker_keda_jobs_per_replica >= 1
     error_message = "n8n_worker_keda_jobs_per_replica must be a whole number of jobs, 1 or greater. KEDA divides the queue depth by this value, so 0 is not a threshold it can act on."
+  }
+}
+
+# ── Pod DNS ───────────────────────────────────────────────────────────────────
+
+variable "n8n_dns_config" {
+  description = <<-EOT
+    Pod-level DNS settings applied to the main, worker and webhook-processor
+    pods (the chart's top-level dnsConfig, rendered into all three pod specs).
+    Defaults to null, which omits the block entirely and leaves Kubernetes'
+    defaults in place, so this is a no-op unless set.
+
+    Kubernetes injects `options ndots:5` plus the cluster's search domains into
+    every pod. A name with FEWER than 5 dots is tried against every search
+    domain BEFORE being tried as written, so any in-cluster or external
+    endpoint with 4 dots or fewer costs up to five DNS queries per lookup
+    instead of one. Setting `options = [{ name = "ndots", value = "1" }]` makes
+    any name containing at least one dot resolve directly, cutting DNS volume
+    roughly 5x; this module addresses every in-cluster dependency by FQDN
+    already, so that trade is safe here. A bare single-label name (0 dots)
+    still uses the search path unchanged.
+
+    Example:
+
+      n8n_dns_config = {
+        options = [{ name = "ndots", value = "1" }]
+      }
+
+    nameservers and searches are rarely needed on top of ndots, and are
+    offered because the chart's dnsConfig accepts them: they replace rather
+    than extend the cluster's own values.
+  EOT
+
+  type = object({
+    nameservers = optional(list(string))
+    searches    = optional(list(string))
+    options = optional(list(object({
+      name  = string
+      value = optional(string)
+    })))
+  })
+  default = null
+
+  validation {
+    condition = var.n8n_dns_config == null ? true : (
+      length(coalesce(var.n8n_dns_config.nameservers, [])) <= 3
+    )
+    error_message = "n8n_dns_config.nameservers accepts at most 3 entries: the Kubernetes pod spec rejects more, and the kubelet reports it as a pod-level validation failure rather than a Helm error, which is slow to diagnose."
+  }
+
+  validation {
+    condition = var.n8n_dns_config == null ? true : alltrue([
+      for ns in coalesce(var.n8n_dns_config.nameservers, []) :
+      can(cidrhost("${ns}/32", 0)) || can(cidrhost("${ns}/128", 0))
+    ])
+    error_message = "n8n_dns_config.nameservers entries must each be a plain IPv4 or IPv6 address, without a port, prefix length or hostname. The Kubernetes API server validates each entry as an IP at admission, so a malformed one otherwise surfaces as a rejected pod spec rather than a Helm error."
+  }
+
+  validation {
+    condition = var.n8n_dns_config == null ? true : (
+      length(coalesce(var.n8n_dns_config.searches, [])) <= 32 &&
+      length(join(" ", coalesce(var.n8n_dns_config.searches, []))) <= 2048
+    )
+    error_message = "n8n_dns_config.searches accepts at most 32 entries totalling 2048 characters (the API server measures the list joined by single spaces, as counted here). Clusters older than 1.26, where the ExpandedDNSConfig feature gate was still off by default, cap this far lower at 6 entries and 256 characters, so stay under those if you target one."
+  }
+
+  validation {
+    condition = var.n8n_dns_config == null ? true : alltrue([
+      for s in coalesce(var.n8n_dns_config.searches, []) :
+      s == "." || (
+        length(trimsuffix(s, ".")) <= 253 &&
+        can(regex("^_?[a-z0-9]([-_a-z0-9]*[a-z0-9])?(\\._?[a-z0-9]([-_a-z0-9]*[a-z0-9])?)*\\.?$", s))
+      )
+    ])
+    error_message = "n8n_dns_config.searches entries must each be a lowercase RFC 1123 subdomain of at most 253 characters, with underscores permitted and a bare \".\" or a single trailing dot accepted. This matches Kubernetes' relaxed search-path validation (RelaxedDNSSearchValidation, on by default since 1.33); clusters on 1.32 or older validate strictly at admission and additionally reject \".\" and any underscore, so avoid both if you target one."
+  }
+
+  validation {
+    # Nested ternaries, the repo's guard shape (see AGENTS.md), rather than
+    # chaining && across a null option.value: ndots is the one option glibc
+    # treats specially, and a malformed value does not fail resolution, it
+    # falls back silently to glibc's own default of 1.
+    condition = var.n8n_dns_config == null ? true : alltrue([
+      for o in coalesce(var.n8n_dns_config.options, []) :
+      o.name != "ndots" ? true : (
+        o.value == null ? false : (
+          can(regex("^[0-9]+$", o.value)) ? tonumber(o.value) <= 15 : false
+        )
+      )
+    ])
+    error_message = "n8n_dns_config: the ndots option must carry a whole number between 0 and 15, written as a string (\"1\", not \"1.5\"). glibc parses ndots with strtol and silently ignores a fractional, non-numeric or out-of-range value, falling back to its default of 1, which looks like the setting worked while leaving resolution behaviour unchanged."
   }
 }

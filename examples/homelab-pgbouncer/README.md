@@ -69,7 +69,7 @@ CloudNativePG provisions the `cnpg_pooler_pgbouncer` auth role into the cluster 
 | `db_postgresdb_pool_size` | `5` | Now connections to PgBouncer, not Postgres, so a lower value costs nothing. |
 | `db_postgresdb_ssl_enabled` | `false` | **Required.** The module rejects the combination otherwise. |
 
-That last one is not a preference. The CNPG `Pooler` serves clients in plaintext and encrypts its own leg to Postgres, so leaving TLS on has n8n negotiate against a listener that does not speak it, and the error names a connection failure rather than the pooler.
+That last one is not a preference. The CNPG `Pooler` serves clients in plaintext and encrypts its own leg to Postgres, so leaving TLS on has n8n negotiate against a listener that does not speak it, and the error names a connection failure rather than the pooler. With TLS off, `db_postgresdb_ssl_reject_unauthorized` and `db_postgresdb_ssl_ca_pem` are inert too: there is no TLS connection on the n8n-to-PgBouncer leg for either to apply to. See [`docs/postgresql-tls.md`](../../docs/postgresql-tls.md).
 
 ## Transaction mode, and what it costs
 
@@ -158,6 +158,10 @@ terraform apply
 
 Prerequisites are [`homelab`](../homelab/)'s, unchanged. The CloudNativePG operator already had to be installed for the base example; the `Pooler` needs nothing beyond it.
 
+## Shared storage across the pods
+
+Identical to [`../homelab`](../homelab#shared-storage-across-the-pods), including the inputs and the two settings that make it take effect. Set `shared_storage_class` to an RWX-capable class and this example creates a claim and mounts it into the main, worker and webhook-processor pods; leave it null and binary data stays in Postgres. Read that section rather than a copy of it here, so the two cannot drift.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -166,15 +170,15 @@ Prerequisites are [`homelab`](../homelab/)'s, unchanged. The CloudNativePG opera
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | ~> 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
 
 ## Modules
 
@@ -198,9 +202,10 @@ Prerequisites are [`homelab`](../homelab/)'s, unchanged. The CloudNativePG opera
 | <a name="input_kubeconfig_path"></a> [kubeconfig\_path](#input\_kubeconfig\_path) | Path to kubeconfig used by the kubernetes, helm and kubectl providers (the kubectl one applies the CNPG Cluster CR). | `string` | `"~/.kube/config"` | no |
 | <a name="input_metrics_lan_ip"></a> [metrics\_lan\_ip](#input\_metrics\_lan\_ip) | Address to publish the n8n main pod's /metrics endpoint on, for a Prometheus that runs outside the cluster and so cannot use in-cluster service discovery. Same allocator requirement as postgres\_lan\_ip. Leave null (the default) and no LoadBalancer Service is created; an in-cluster Prometheus or Alloy does not need this. | `string` | `null` | no |
 | <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace to deploy into. Created by this example on every path rather than by the module, so that turning shared storage on later cannot move it between two resource addresses. An existing deployment upgrading to this needs one terraform state mv first, or the next apply plans to destroy the namespace; both commands are in storage.tf. | `string` | `"n8n"` | no |
+| <a name="input_otel_endpoint"></a> [otel\_endpoint](#input\_otel\_endpoint) | Base URL of an OTLP HTTP collector to export traces to, e.g. http://otel-collector.observability.svc.cluster.local:4318 for a Grafana Alloy in the cluster. Point at the base URL, not the traces path: n8n appends /v1/traces itself. Defaults to this lab's own collector, matching what this example has always exported to; set it to a different collector or to null (tracing off entirely) to change that. The collector is yours to run; this example installs none and nothing verifies one is listening, so a wrong address means traces are exported into the void with no error anywhere. Metrics are unaffected either way: /metrics is scraped rather than pushed, so it needs no collector. | `string` | `"http://alloy-otlp.monitoring.svc.cluster.local:4318"` | no |
 | <a name="input_postgres_lan_ip"></a> [postgres\_lan\_ip](#input\_postgres\_lan\_ip) | Address to publish the CNPG rw endpoint on, for LAN clients that are not in the cluster - a Grafana instance querying n8n's execution tables, a DB client. Rendered as an io.cilium/lb-ipam-ips annotation, so it pins the address on Cilium LB-IPAM only; other allocators (MetalLB, kube-vip) ignore that key and will allocate an arbitrary address instead. To pin on those, call the module directly and use cnpg\_lan\_expose.annotations / metrics\_lan\_expose.annotations with the key your allocator honours. Leave null (the default) and no LoadBalancer Service is created. Postgres is exposed without a proxy in front of it, so only set this on a network you trust. | `string` | `null` | no |
 | <a name="input_shared_mount_path"></a> [shared\_mount\_path](#input\_shared\_mount\_path) | Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. Note the task-runner sidecar does not get this mount; n8n\_extra\_volume\_mounts reaches the n8n container only. | `string` | `"/opt/n8n-shared"` | no |
-| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
+| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for a volume shared across the main, worker and webhook-processor pods (Longhorn RWX, NFS, SMB, CephFS, or whatever the cluster offers). Longhorn does serve ReadWriteMany, through a share-manager pod that exports the volume over NFSv4, so every node that may run an n8n pod needs an NFSv4 client installed first: on Talos that is a system extension, not something present by default, and without it the volume never mounts. The module does not wait for the claim, so the symptom is pods stuck pending a mount rather than anything naming storage. Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
 | <a name="input_shared_storage_size"></a> [shared\_storage\_size](#input\_shared\_storage\_size) | Size of the shared RWX claim. Only used when shared\_storage\_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow. | `string` | `"20Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the CNPG and Valkey PVCs. Empty uses whatever the cluster's default StorageClass is. | `string` | `""` | no |
 | <a name="input_ui_host"></a> [ui\_host](#input\_ui\_host) | Hostname served by ingress. A DNS record for it has to reach the cluster's ingress controller, and creating that record is yours to do - this example manages no DNS, because how a name reaches a self-hosted cluster depends entirely on the setup (a tunnel, a public LoadBalancer, split-horizon DNS on the LAN, a reverse proxy). See examples/homelab-cloudflare for one worked version. | `string` | `"n8n.example.com"` | no |

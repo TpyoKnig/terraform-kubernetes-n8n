@@ -6,11 +6,17 @@
 # merges in, and the Helm values tree the n8n release renders from.
 
 locals {
-  n8n_domain = var.n8n_domain
-
-  # A plain alias, not normalized here: the hostname list the Ingresses use is
-  # assembled and lowercased at k8s_ingress_hosts further down. This value is
-  # what n8n advertises as N8N_HOST, verbatim.
+  # Lowercased once here. n8n_domain's own FQDN validation accepts uppercase
+  # (DNS is case-insensitive), but Kubernetes Secret and Ingress host names
+  # are not, and this value feeds N8N_HOST, every webhook/editor URL this
+  # module builds, and the TLS Secret name derived from
+  # k8s_ingress_host_effective below. Normalizing the one value every one of
+  # those reads from means a mixed-case n8n_domain cannot make N8N_HOST,
+  # the advertised URLs and the routed Ingress host disagree with each
+  # other, which is what happened before: only k8s_ingress_hosts lowercased
+  # its own copy, so N8N_HOST, the editor/webhook URL fallbacks and the TLS
+  # Secret name all kept whatever case the caller typed.
+  n8n_domain = lower(var.n8n_domain)
 
   # Service coordinates the Helm chart creates. Named here so the outputs a
   # bring-your-own Ingress consumes cannot drift from what the chart renders.
@@ -20,7 +26,18 @@ locals {
 
   # Path prefixes that must reach the webhook processors rather than the main
   # pods. The main pods run with production webhooks disabled, so every one of
-  # these 404s if it reaches them.
+  # these 404s if it reaches them. All five are routed by the chart's own
+  # webhook Ingress (templates/ingress-webhook.yaml) as of chart 1.16.0, which
+  # added /mcp/ to the four it already covered; see k8s_webhook_ingress_block
+  # below for the history. There used to be a derived
+  # "unrouted" subtraction and a supplementary kubernetes_ingress_v1.n8n_mcp
+  # resource in n8n.tf to cover /mcp while the chart did not; both were
+  # removed when /mcp landed, rather than left dormant, because an
+  # unconditionally empty dynamic "path" block fails the Kubernetes provider's
+  # schema validation (Ingress requires at least one path per rule) even at
+  # count = 0. If the chart ever drops a prefix again, re-add the subtraction
+  # and the Ingress rather than resurrecting the dead code from source
+  # control.
   n8n_webhook_path_prefixes = [
     "/webhook",
     "/webhook-waiting",
@@ -28,23 +45,6 @@ locals {
     "/form-waiting",
     "/mcp",
   ]
-
-  # Of those, the ones the chart's own webhook Ingress renders. The remainder
-  # is what this module has to route itself when create_ingress = true. Derived
-  # by subtraction rather than written out, so adding a prefix above needs no
-  # second edit here, and a chart that starts rendering /mcp needs only this
-  # list extended for the extra Ingress to disappear on its own.
-  n8n_chart_routed_webhook_prefixes = [
-    "/webhook",
-    "/webhook-waiting",
-    "/form",
-    "/form-waiting",
-  ]
-
-  n8n_unrouted_webhook_prefixes = setsubtract(
-    local.n8n_webhook_path_prefixes,
-    local.n8n_chart_routed_webhook_prefixes,
-  )
 
   # -- Redis connection coordinates --------------------------------------------
   # What n8n and KEDA connect to. The in-cluster Valkey path resolves through
@@ -126,45 +126,116 @@ locals {
   # default_mode arrives as an octal string and is converted with parseint,
   # because Kubernetes wants the integer. A Terraform number literal cannot do
   # this job: 0644 parses as decimal 644, which is octal 1204.
-  n8n_extra_volumes = [
-    for volume in var.n8n_extra_volumes : merge(
-      { name = volume.name },
-      volume.config_map == null ? {} : {
-        configMap = merge(
-          { name = volume.config_map.name },
-          volume.config_map.default_mode == null ? {} : {
-            defaultMode = parseint(volume.config_map.default_mode, 8)
-          },
-        )
-      },
-      volume.secret == null ? {} : {
-        secret = merge(
-          { secretName = volume.secret.secret_name },
-          volume.secret.default_mode == null ? {} : {
-            defaultMode = parseint(volume.secret.default_mode, 8)
-          },
-        )
-      },
-      volume.persistent_volume_claim == null ? {} : {
-        persistentVolumeClaim = merge(
-          { claimName = volume.persistent_volume_claim.claim_name },
-          volume.persistent_volume_claim.read_only == null ? {} : {
-            readOnly = volume.persistent_volume_claim.read_only
-          },
-        )
-      },
-    )
-  ]
-
-  n8n_extra_volume_mounts = [
-    for mount in var.n8n_extra_volume_mounts : merge(
+  n8n_extra_volumes = concat(
+    [
+      for volume in var.n8n_extra_volumes : merge(
+        { name = volume.name },
+        volume.config_map == null ? {} : {
+          configMap = merge(
+            { name = volume.config_map.name },
+            volume.config_map.default_mode == null ? {} : {
+              defaultMode = parseint(volume.config_map.default_mode, 8)
+            },
+          )
+        },
+        volume.secret == null ? {} : {
+          secret = merge(
+            { secretName = volume.secret.secret_name },
+            volume.secret.default_mode == null ? {} : {
+              defaultMode = parseint(volume.secret.default_mode, 8)
+            },
+          )
+        },
+        volume.persistent_volume_claim == null ? {} : {
+          persistentVolumeClaim = merge(
+            { claimName = volume.persistent_volume_claim.claim_name },
+            volume.persistent_volume_claim.read_only == null ? {} : {
+              readOnly = volume.persistent_volume_claim.read_only
+            },
+          )
+        },
+      )
+    ],
+    # n8n_extra_ca_pem's own volume, appended here rather than left for the
+    # caller to declare: see the "Extra CA bundle" locals below.
+    local.n8n_extra_ca_enabled ? [local.n8n_ca_bundle_volume] : [],
+    # var.n8n_credentials_overwrite_secret_ref's own volume, kept out of the
+    # typed n8n_extra_volumes input so its name and mount path can be reserved
+    # (see that variable's validations) rather than left to collide silently.
+    var.n8n_credentials_overwrite_secret_ref == null ? [] : [
       {
-        name      = mount.name
-        mountPath = mount.mount_path
-        readOnly  = mount.read_only
+        name = "credentials-overwrite"
+        secret = {
+          secretName = var.n8n_credentials_overwrite_secret_ref.name
+          items = [
+            {
+              key  = var.n8n_credentials_overwrite_secret_ref.key
+              path = var.n8n_credentials_overwrite_secret_ref.key
+            },
+          ]
+        }
       },
-      mount.sub_path == null ? {} : { subPath = mount.sub_path },
-    )
+    ],
+  )
+
+  n8n_extra_volume_mounts = concat(
+    [
+      for mount in var.n8n_extra_volume_mounts : merge(
+        {
+          name      = mount.name
+          mountPath = mount.mount_path
+          readOnly  = mount.read_only
+        },
+        mount.sub_path == null ? {} : { subPath = mount.sub_path },
+      )
+    ],
+    local.n8n_extra_ca_enabled ? [local.n8n_ca_bundle_mount] : [],
+    var.n8n_credentials_overwrite_secret_ref == null ? [] : [
+      {
+        name      = "credentials-overwrite"
+        mountPath = "/etc/n8n/credentials-overwrite"
+        readOnly  = true
+      },
+    ],
+  )
+
+  # ── Extra CA bundle (n8n_extra_ca_pem) ──────────────────────────────────────
+  # Node reads one NODE_EXTRA_CA_CERTS file. The PEM lives in a module-managed
+  # Secret (public certificates only; the variable rejects private keys),
+  # created in n8n.tf and mounted read-only at one fixed path on main, worker
+  # and webhook-processor pods via the volume/mount appended above. The task
+  # runner sidecar is a separate container that neither of those two lists
+  # reaches, so it does not inherit the trust.
+  n8n_extra_ca_enabled = var.n8n_extra_ca_pem != null
+  n8n_ca_bundle_pem    = local.n8n_extra_ca_enabled ? "${trimspace(var.n8n_extra_ca_pem)}\n" : null
+
+  n8n_ca_bundle_volume = local.n8n_extra_ca_enabled ? {
+    name = "ca-bundle"
+    secret = {
+      secretName = "n8n-ca-bundle-secret"
+      items      = [{ key = "ca.crt", path = "ca.crt" }]
+    }
+  } : null
+
+  n8n_ca_bundle_mount = local.n8n_extra_ca_enabled ? {
+    name      = "ca-bundle"
+    mountPath = "/etc/n8n-certs/ca-bundle.crt"
+    subPath   = "ca.crt"
+    readOnly  = true
+  } : null
+
+  n8n_ca_bundle_env = local.n8n_extra_ca_enabled ? [
+    { name = "NODE_EXTRA_CA_CERTS", value = "/etc/n8n-certs/ca-bundle.crt" },
+  ] : []
+
+  # The config.extraEnv entry for CREDENTIALS_OVERWRITE_DATA_FILE, extracted
+  # like the volume/mount pair above so tests/defaults.tftest.hcl can assert
+  # the rendered entry directly.
+  n8n_credentials_overwrite_env = var.n8n_credentials_overwrite_secret_ref == null ? [] : [
+    {
+      name  = "CREDENTIALS_OVERWRITE_DATA_FILE"
+      value = "/etc/n8n/credentials-overwrite/${var.n8n_credentials_overwrite_secret_ref.key}"
+    },
   ]
 
   # ── n8n_extra_env collision guard ──────────────────────────────────────────
@@ -180,12 +251,11 @@ locals {
   # chart-rendered identity/topology/storage vars not covered by a prefix below.
   # Keep in sync with the extraEnv block in n8n.tf and the chart values the
   # module sets (database/redis/s3/secretRefs).
-  n8n_managed_env_names = [
+  n8n_managed_env_names = concat([
     # Set by the module in config.extraEnv or the n8n secret.
     "N8N_ENCRYPTION_KEY",
     "N8N_LOG_LEVEL",
     "N8N_LOG_OUTPUT",
-    "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS",
     # All three are set together by n8n_metrics_enabled, so all three are
     # reserved. Listing only N8N_METRICS left the other two appendable: a
     # caller could put N8N_METRICS_INCLUDE_QUEUE_METRICS in n8n_extra_env and
@@ -217,12 +287,21 @@ locals {
     "N8N_UNVERIFIED_PACKAGES_ENABLED",
     "N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES",
     "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES",
-    "WEBHOOK_URL",
+    # Chart-rendered env var name moved from WEBHOOK_URL to N8N_WEBHOOK_URL at
+    # chart 1.16.0 (n8n deprecated WEBHOOK_URL as of n8n 2.35.0, an alias of
+    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.44.5) is
+    # past that deprecation either way. Reserved under the new name, since
+    # that is what both the chart's single-host path and this module's own
+    # split-ingress injection below now render.
+    "N8N_WEBHOOK_URL",
     # Owned by n8n_proxy_hops, which renders it on every path. Unreserved, the
     # module wrote it whenever create_ingress was true while n8n_extra_env
     # would still accept a second entry of the same name, and two entries in
     # one env list is the duplicate that wedges the next helm upgrade.
     "N8N_PROXY_HOPS",
+    # Owned by n8n_payload_size_max, which renders it on every path when set
+    # and derives the Ingress proxy-body-size annotation from the same value.
+    "N8N_PAYLOAD_SIZE_MAX",
     "N8N_TEMPLATES_ENABLED",
     "N8N_PERSONALIZATION_ENABLED",
     "N8N_OTEL_ENABLED",
@@ -242,6 +321,26 @@ locals {
     # DB_*, QUEUE_* and N8N_RUNNERS_* are covered by n8n_managed_env_prefixes.
     "EXECUTIONS_MODE",
     "OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS",
+    # Owned by the four n8n_executions_data_save_* inputs, which the chart
+    # renders unconditionally from executions.data.*. No EXECUTIONS_DATA_SAVE_
+    # prefix exists in n8n_managed_env_prefixes (unlike DB_/QUEUE_/
+    # N8N_RUNNERS_), so these four exact names are reserved individually
+    # instead; an extraEnv override would duplicate whichever of them the
+    # module already renders, and Kubernetes keeps only the last entry of a
+    # duplicated env name.
+    "EXECUTIONS_DATA_SAVE_ON_SUCCESS",
+    "EXECUTIONS_DATA_SAVE_ON_ERROR",
+    "EXECUTIONS_DATA_SAVE_ON_PROGRESS",
+    "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS",
+    # Owned by the three n8n_pruning_*_interval/_buffer inputs, which the
+    # chart renders only while the corresponding values key is set (see
+    # k8s_values_executions.pruning below). Reserved unconditionally, same
+    # reasoning as the four EXECUTIONS_DATA_SAVE_* names above: an extraEnv
+    # override would duplicate whichever of them the module renders, and
+    # Kubernetes keeps only the last entry of a duplicated env name.
+    "EXECUTIONS_DATA_HARD_DELETE_BUFFER",
+    "EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL",
+    "EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL",
     # Reserved because the module sets them from n8n_binary_data_mode and
     # n8n_binary_data_path, not because the chart renders them: chart 1.10.0
     # emits them only from the "n8n.s3Env" helper (_environment-helpers.tpl:7),
@@ -268,9 +367,38 @@ locals {
     "N8N_DISABLE_PRODUCTION_MAIN_PROCESS",
     "N8N_NATIVE_PYTHON_RUNNER",
     "TZ",
+    # Owned by n8n_timezone alongside TZ: the chart renders TZ from
+    # config.timezone, and the module emits this one in extraEnv because
+    # Schedule Triggers read it and no chart template renders it. One input,
+    # two names, both reserved so they cannot disagree.
+    "GENERIC_TIMEZONE",
     "N8N_DISABLED_MODULES",
-    "N8N_EXTERNAL_SECRETS_UPDATE_INTERVAL",
-  ]
+    # Owned by n8n_smtp, which renders the family when set. The exact names
+    # rather than an N8N_SMTP_ prefix, so the OAuth pair the input does not
+    # model (N8N_SMTP_OAUTH_*) stays reachable through n8n_extra_env.
+    "N8N_EMAIL_MODE",
+    "N8N_SMTP_HOST",
+    "N8N_SMTP_PORT",
+    "N8N_SMTP_SSL",
+    "N8N_SMTP_STARTTLS",
+    "N8N_SMTP_SENDER",
+    "N8N_SMTP_USER",
+    "N8N_SMTP_PASS",
+    # Owned by n8n_diagnostics_enabled, emitted only when set. Reserved
+    # anyway: an extraEnv override would flip telemetry without the input
+    # saying so.
+    "N8N_DIAGNOSTICS_ENABLED",
+    ],
+    # NODE_OPTIONS is reserved ONLY while n8n_node_max_old_space_size_mb is
+    # set, unlike every entry above. It is a whole flag STRING rather than a
+    # single setting: when the module emits it, a caller entry would replace
+    # the module's --max-old-space-size wholesale rather than merge with it,
+    # which is the collision this guard exists to prevent while that override
+    # is in force. With the input null the module emits nothing, there is no
+    # value to clobber, and a caller passing NODE_OPTIONS for unrelated flags
+    # is doing something legitimate this module has no business rejecting.
+    var.n8n_node_max_old_space_size_mb != null ? ["NODE_OPTIONS"] : [],
+  )
 
   # Whole env-var families the module/chart owns, matched by prefix so the guard
   # stays correct when the chart adds new members. This intentionally fails
@@ -301,6 +429,77 @@ locals {
     "QUEUE_",
     "N8N_RUNNERS_",
     "N8N_ENDPOINT_",
+  ]
+
+  # Official n8n names the prefixes above catch by accident, carved back out:
+  # checked before the prefix rule, so these exact names pass both extra-env
+  # inputs while everything else under DB_ and QUEUE_ stays blocked. Every
+  # name below was read directly out of n8n 2.44.5's own config source
+  # (@n8n/config database.config.ts and scaling-mode.config.ts) rather than
+  # assumed, and cross-checked against this module's own typed inputs so the
+  # carve-out opens a door only where none already exists.
+  #
+  # The client certificate/key are the reason the list exists. A corporate
+  # Postgres that requires mutual TLS needs them handed to n8n, and n8n's
+  # PostgresSSLConfig reads DB_POSTGRESDB_SSL_CERT / _SSL_KEY directly with no
+  # typed input in this module for either; the DB_ prefix made them
+  # unreachable. DB_POSTGRESDB_SSL_CA is deliberately NOT carved out here: it
+  # already has a proper typed door, db_postgresdb_ssl_ca_pem, rendered
+  # through the chart's own database.ssl.ca value, and carving the raw env
+  # name out too would let a caller set the same destination two ways.
+  # n8n has no separate "_FILE" variant of any of the three; the single env
+  # var accepts either a path or inline content, so those names are not real
+  # and are not carved out.
+  #
+  # Names NOT carved out stay blocked for a reason. Connection coordinates
+  # (DB_POSTGRESDB_HOST, QUEUE_BULL_REDIS_HOST and family) are module-written.
+  # DB_POSTGRESDB_CONNECTION_TIMEOUT, DB_PING_TIMEOUT_MS and
+  # DB_PING_INTERVAL_SECONDS already have typed inputs
+  # (db_postgresdb_connection_timeout_ms, db_ping_timeout_ms,
+  # db_ping_interval_seconds), so carving them out too would open the same
+  # second door. QUEUE_BULL_REDIS_CLUSTER_NODES, _DB and _DUALSTACK have
+  # chart values (redis.clusterNodes, redis.database, redis.dualstack)
+  # reachable through n8n_extra_helm_values, and the env route would fight
+  # the chart-rendered host/port pair. QUEUE_WORKER_LOCK_* and friends
+  # likewise live under the chart's redis.worker block and this module's own
+  # n8n_queue_worker_lock_duration / _lock_renew_time / _stalled_interval
+  # inputs. One door per setting, and the checked one.
+  n8n_env_carveouts = [
+    # External Postgres mutual TLS. n8n's PostgresSSLConfig reads these
+    # directly; the module has no typed input for either.
+    "DB_POSTGRESDB_SSL_CERT",
+    "DB_POSTGRESDB_SSL_KEY",
+    # Postgres client tuning. Matters alongside the PgBouncer pooler, whose
+    # connection recycling interacts with lifetime and idle timeouts.
+    "DB_POSTGRESDB_IDLE_CONNECTION_TIMEOUT",
+    "DB_POSTGRESDB_STATEMENT_TIMEOUT",
+    "DB_POSTGRESDB_MAX_CONNECTION_LIFETIME_MS",
+    "DB_POSTGRESDB_KEEP_ALIVE",
+    "DB_POSTGRESDB_KEEP_ALIVE_INITIAL_DELAY_MS",
+    "DB_POSTGRESDB_DESTROY_TIMEOUT_MS",
+    "DB_CONNECTION_ACQUISITION_TIMEOUT_MS",
+    # Connection health-check recovery tuning. DB_PING_INTERVAL_SECONDS and
+    # DB_PING_TIMEOUT_MS are deliberately absent here: both already have
+    # typed inputs.
+    "DB_PING_MAX_FAILURES_BEFORE_RECOVERY",
+    "DB_RECOVERY_BACKOFF_MIN_MS",
+    "DB_RECOVERY_BACKOFF_MAX_MS",
+    "DB_STARTUP_CONNECT_MAX_RETRIES",
+    # Query logging and the table prefix for a shared database.
+    "DB_LOGGING_ENABLED",
+    "DB_LOGGING_OPTIONS",
+    "DB_LOGGING_MAX_EXECUTION_TIME",
+    "DB_TABLE_PREFIX",
+    # Redis client TLS and keep-alive names the chart has no values for.
+    "QUEUE_BULL_REDIS_TLS_SERVERNAME",
+    "QUEUE_BULL_REDIS_TLS_VALIDATE_CERTIFICATE",
+    "QUEUE_BULL_REDIS_DNS_LOOKUP_STRATEGY",
+    "QUEUE_BULL_REDIS_KEEP_ALIVE",
+    "QUEUE_BULL_REDIS_KEEP_ALIVE_DELAY",
+    "QUEUE_BULL_REDIS_KEEP_ALIVE_INTERVAL",
+    "QUEUE_BULL_REDIS_RECONNECT_ON_FAILOVER",
+    "QUEUE_BULL_REDIS_SLOT_REFRESH_INTERVAL",
+    "QUEUE_BULL_REDIS_SLOT_REFRESH_TIMEOUT",
   ]
 
   # Modules explicitly disabled via N8N_DISABLED_MODULES. A list rather than a
@@ -368,10 +567,12 @@ locals {
 
 
   # repository and tag are both omitted when unset so the chart's own values
-  # apply (docker.n8n.io/n8nio/n8n at the floating `stable` tag). Setting
-  # repository is the supported path for an image with community nodes baked
-  # in; the check block in n8n.tf refuses it without an explicit tag, because a
-  # custom repository almost never publishes a tag called `stable`.
+  # apply: docker.n8n.io/n8nio/n8n at the chart's own appVersion (before
+  # chart 1.12.0, the floating `stable` tag instead). Setting repository is
+  # the supported path for an image with community nodes baked in; the check
+  # block in n8n.tf refuses it without an explicit tag, because a custom
+  # repository almost never publishes a tag matching the pinned chart's
+  # appVersion.
   k8s_values_image = {
     image = merge(
       { pullPolicy = "IfNotPresent" },
@@ -418,6 +619,62 @@ locals {
     }
   }
 
+  # ── PostgreSQL SSL: CA delivery and the chart-version collision it dodges ──
+  # Major and minor only; n8n_chart_version's validation guarantees both are
+  # numeric.
+  n8n_chart_version_parts = split(".", split("+", var.n8n_chart_version)[0])
+
+  # True only when the pinned chart is known to render DB_POSTGRESDB_SSL_ENABLED
+  # from database.ssl.enabled: upstream fixed this at chart 1.15.0
+  # (n8n-io/n8n-hosting#175; earlier charts rendered DB_POSTGRESDB_SSL, which
+  # n8n does not read, see the comment on k8s_values_database below). Decided
+  # by the chart version alone, not by the repository host: a mirror has to
+  # serve the exact chart version named by n8n_chart_version (see that
+  # input's description), so a mirrored 1.15 or later renders the entry just
+  # as the upstream one does, and gating on the host would leave a duplicate
+  # entry, the failure that breaks every later helm upgrade, on every mirror.
+  # A prerelease (a SemVer "-" segment) may predate the fix, so it cannot be
+  # verified and keeps the extraEnv entry: the safe failure is a duplicate
+  # "true" entry rather than a missing one.
+  n8n_chart_renders_postgres_ssl_enabled = strcontains(split("+", var.n8n_chart_version)[0], "-") ? false : (
+    tonumber(local.n8n_chart_version_parts[0]) > 1 ? true : (
+      tonumber(local.n8n_chart_version_parts[0]) < 1 ? false : tonumber(local.n8n_chart_version_parts[1]) >= 15
+    )
+  )
+
+  # Whether the chart's database.ssl.ca value carries the CA. Gated on
+  # db_postgresdb_ssl_enabled, not also on db_postgresdb_ssl_reject_unauthorized:
+  # a CA with verification off is encrypted but unverified either way, which
+  # check.db_postgresdb_ssl_ca_pem_requires_verification (n8n.tf) flags as
+  # likely a mistake, not something this local silently drops.
+  postgres_ssl_ca_active = var.db_postgresdb_ssl_enabled && var.db_postgresdb_ssl_ca_pem != null
+
+  # The CA reaches n8n through the chart's own database.ssl.ca value, the one
+  # case where this module does use that key (see k8s_values_database below
+  # for why it otherwise stays unset). Keeping the CA inside the Helm release
+  # means a failed upgrade's atomic rollback restores the previous CA with the
+  # pods, removing the CA is a Helm-only change with no separate object to
+  # delete first, and the chart's checksum/config annotation rolls the pods
+  # when only the CA changes.
+  #
+  # rejectUnauthorized is always true here, whatever
+  # db_postgresdb_ssl_reject_unauthorized says: the chart renders
+  # DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED only when this is false
+  # (_configmap-env.tpl), and the extraEnv block in this file owns that name
+  # unconditionally. Pinning it true here keeps the chart from ever rendering
+  # a second entry under it, whatever the caller's own setting is.
+  #
+  # trimspace keeps the rendered value stable when the caller's PEM file ends
+  # in a newline, so a whitespace-only edit does not roll the pods. The size
+  # validation on db_postgresdb_ssl_ca_pem measures the same trimmed value.
+  postgres_ssl_ca_values = local.postgres_ssl_ca_active ? {
+    ssl = {
+      enabled            = true
+      rejectUnauthorized = true
+      ca                 = trimspace(var.db_postgresdb_ssl_ca_pem)
+    }
+  } : {}
+
   # Same split as k8s_values_redis below. On the cnpg path the operator owns the
   # endpoint: its rw Service listens on 5432 and initdb creates the database and
   # owner from the cnpg_* inputs. On the external path all three belong to the
@@ -425,45 +682,58 @@ locals {
   # postgres_backend = cnpg", meant an external Postgres had to be n8n/n8n on
   # 5432 or it could not be reached at all.
   k8s_values_database = {
-    database = {
-      type        = "postgresdb"
-      useExternal = true
-      host        = local.k8s_pg_host
-      port        = local.cnpg_enabled ? 5432 : var.db_port
-      database    = local.cnpg_enabled ? var.cnpg_database_name : var.db_name
-      schema      = "public"
-      user        = local.cnpg_enabled ? var.cnpg_database_owner : var.db_user
-      passwordSecret = {
-        name = local.k8s_pg_secret_name
-        key  = local.k8s_pg_secret_password_key
-      }
-
-      # No `ssl` key, deliberately. Postgres TLS is set through
-      # config.extraEnv in this file (DB_POSTGRESDB_SSL_ENABLED and
-      # DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED, from db_postgresdb_ssl_enabled)
-      # and the chart's key must not also be set, for two independent reasons.
+    database = merge(
+      {
+        type        = "postgresdb"
+        useExternal = true
+        host        = local.k8s_pg_host
+        port        = local.cnpg_enabled ? 5432 : var.db_port
+        database    = local.cnpg_enabled ? var.cnpg_database_name : var.db_name
+        schema      = "public"
+        user        = local.cnpg_enabled ? var.cnpg_database_owner : var.db_user
+        passwordSecret = {
+          name = local.k8s_pg_secret_name
+          key  = local.k8s_pg_secret_password_key
+        }
+      },
+      # The ssl key is otherwise left unset, deliberately. DB_POSTGRESDB_SSL_ENABLED
+      # and DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED are set through config.extraEnv
+      # in this file (from db_postgresdb_ssl_enabled and
+      # db_postgresdb_ssl_reject_unauthorized), and the chart's own ssl.enabled
+      # must not ALSO render them, for two independent reasons.
       #
-      # It does not do what its name suggests. `database.ssl.enabled` renders
-      # DB_POSTGRESDB_SSL (chart 1.10.0, templates/configmap.yaml:26, and still
-      # on n8n-hosting main), and that variable does not exist in n8n. The
-      # product declares its database TLS inputs in
+      # It used to not do what its name suggests. Through chart 1.10.0,
+      # `database.ssl.enabled` rendered DB_POSTGRESDB_SSL
+      # (templates/configmap.yaml:26), and that variable did not exist in
+      # n8n: the product declares its database TLS inputs in
       # packages/@n8n/config/src/configs/database.config.ts as
-      # DB_POSTGRESDB_SSL_ENABLED, _CA, _CERT, _KEY and _REJECT_UNAUTHORIZED, # verified against n8n 2.35.0, and reads nothing named DB_POSTGRESDB_SSL.
-      # Setting the chart key would look like enabling TLS and change nothing
-      # the product reads. Worth reporting upstream; until it is fixed, this
-      # module cannot use that key at all.
+      # DB_POSTGRESDB_SSL_ENABLED, _CA, _CERT, _KEY and _REJECT_UNAUTHORIZED,
+      # verified against n8n 2.35.0, and read nothing named DB_POSTGRESDB_SSL.
+      # Setting the chart key looked like enabling TLS and changed nothing the
+      # product read. Chart 1.16.0 fixed the name (it now renders
+      # DB_POSTGRESDB_SSL_ENABLED), which is why local.postgres_ssl_ca_values
+      # below can lean on it at all, but ssl.enabled stays off here on every
+      # path that is not delivering a CA, for the second, independent reason.
       #
       # And its second effect does collide. With `rejectUnauthorized = false`
       # the chart renders DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED itself, which
       # this module already emits, a duplicate name in the container's env,
       # which Kubernetes rejects on every later patch. That is the failure that
       # once broke every helm upgrade, and its rollback with it.
+      # local.postgres_ssl_ca_values pins rejectUnauthorized = true whenever it
+      # sets ssl.enabled, which keeps the chart's own `if not rejectUnauthorized`
+      # guard (_configmap-env.tpl) from ever firing: config.extraEnv stays the
+      # only source of that name, regardless of what
+      # db_postgresdb_ssl_reject_unauthorized actually says.
       #
-      # The block that used to sit here set enabled = false and
-      # rejectUnauthorized = true: a verbatim restatement of the chart's own
-      # defaults, so removing it changes nothing rendered, and leaves one place
-      # describing TLS instead of two that disagreed.
-    }
+      # local.postgres_ssl_ca_values is {} whenever db_postgresdb_ssl_ca_pem is
+      # null or db_postgresdb_ssl_enabled is false, so a deployment that never
+      # sets a CA renders this key byte-identical to before: merge() with an
+      # empty map changes nothing. See the comment there, and
+      # docs/postgresql-tls.md, for why the CNPG path's own operator-issued CA
+      # is not read or wired in automatically.
+      local.postgres_ssl_ca_values,
+    )
   }
 
   # On the valkey path the in-cluster Service always listens on 6379 and the
@@ -486,9 +756,27 @@ locals {
         # key rather than appended to config.extraEnv: the chart already emits
         # that name from its ConfigMap, and a second entry with the same name
         # makes every later helm upgrade fail. See the note on webhook.url.
-        worker = {
-          timeout = var.n8n_termination_grace_period
-        }
+        #
+        # lockDuration, lockRenewTime and stalledInterval are merged in
+        # conditionally, same reasoning: the chart renders
+        # QUEUE_WORKER_LOCK_DURATION / _LOCK_RENEW_TIME / _STALLED_INTERVAL
+        # from this same redis.worker block (unlike timeout, only when their
+        # own key is set), and the QUEUE_ prefix in n8n_managed_env_prefixes
+        # blocks all three from n8n_extra_env regardless. Omitted on the null
+        # path, which is every deployment before this input existed, so the
+        # chart's own defaults (60000 / 10000 / 30000 ms) keep applying.
+        worker = merge(
+          { timeout = var.n8n_termination_grace_period },
+          var.n8n_queue_worker_lock_duration == null ? {} : {
+            lockDuration = var.n8n_queue_worker_lock_duration
+          },
+          var.n8n_queue_worker_lock_renew_time == null ? {} : {
+            lockRenewTime = var.n8n_queue_worker_lock_renew_time
+          },
+          var.n8n_queue_worker_stalled_interval == null ? {} : {
+            stalledInterval = var.n8n_queue_worker_stalled_interval
+          },
+        )
       },
       # Only when there is a credential to point at. The valkey path always
       # has one (the module generates it); the external path has one only when
@@ -525,7 +813,9 @@ locals {
   # n8n_binary_data_mode - Postgres by default, or filesystem on a shared
   # volume the caller mounts - and execution data stays in Postgres.
   # See docs/operations.md for wiring an external bucket by hand.
-  # WEBHOOK_URL is the address n8n hands out for callers to POST to. Left
+  # N8N_WEBHOOK_URL (the chart renamed it from WEBHOOK_URL at chart 1.16.0,
+  # matching n8n's own deprecation of WEBHOOK_URL as of n8n 2.35.0) is the
+  # address n8n hands out for callers to POST to. Left
   # unset, n8n builds it from N8N_PROTOCOL + N8N_HOST, and N8N_PROTOCOL is
   # "http" here because TLS terminates at the ingress rather than in the pod --
   # so every advertised webhook URL would be http:// against an https://
@@ -533,7 +823,7 @@ locals {
   # where webhooks are advertised on a different hostname from the editor.
   #
   # Set through the chart's webhook.url rather than appended to
-  # config.extraEnv. The chart renders WEBHOOK_URL into its own ConfigMap and
+  # config.extraEnv. The chart renders N8N_WEBHOOK_URL into its own ConfigMap and
   # references it from all three pod types (main, worker and webhook processor
   # each pull the same key), so the coverage is identical -- but a second entry
   # of the same name in the container's env list makes Kubernetes' strategic
@@ -556,7 +846,8 @@ locals {
   k8s_webhook_url        = coalesce(var.n8n_webhook_url, "https://${local.k8s_ingress_host_effective}")
   k8s_split_ingress_urls = !var.create_ingress && local.k8s_webhook_url != local.k8s_editor_base_url
 
-  # chart 1.10.0 configmap.yaml derives N8N_EDITOR_BASE_URL from the first
+  # chart 1.16.0's configmap.yaml derives N8N_EDITOR_BASE_URL from editor.url
+  # first (this module never sets it), then the first
   # ingress host, and failing that from webhook.url, on the stated assumption
   # that "webhook.url is the domain". That holds for a single host and breaks
   # for a split one: with create_ingress = false the chart has no ingress host
@@ -565,7 +856,7 @@ locals {
   # Nothing warns. The editor still loads, because it is reached through the
   # caller's own Ingress on the right host. What breaks is every absolute URL
   # n8n builds from UrlService.getInstanceBaseUrl(), which prefers
-  # N8N_EDITOR_BASE_URL over WEBHOOK_URL -- above all the OAuth2 redirect URI,
+  # N8N_EDITOR_BASE_URL over N8N_WEBHOOK_URL -- above all the OAuth2 redirect URI,
   # <editor base>/rest/oauth2-credential/callback. Sent to the webhook host
   # that path 404s twice over: a split ingress routes only the webhook prefixes
   # there, and the webhook processor serves no /rest routes even when reached.
@@ -767,24 +1058,24 @@ locals {
   }
 
   # ── Disruption budget for the single main pod ──────────────────────────────
-  # The chart defaults pdb.enabled to true with minAvailable = 1, and renders
-  # the object over the main Deployment only (templates/pdb.yaml selects
-  # component: main). Against this module's replicaCount = 1 that is
-  # allowedDisruptions = 0 forever: no voluntary eviction of the main pod ever
-  # succeeds, so draining the node it landed on blocks indefinitely and a Talos
-  # node upgrade stalls behind it.
+  # Before chart 1.16.0, the chart defaulted pdb.enabled to true with
+  # minAvailable = 1 and rendered the object over the main Deployment only
+  # (templates/pdb.yaml selects component: main). Against this module's
+  # replicaCount = 1 that was allowedDisruptions = 0 forever: no voluntary
+  # eviction of the main pod ever succeeded, so draining the node it landed on
+  # blocked indefinitely and a Talos node upgrade stalled behind it.
   #
-  # A PDB is how you say "keep N of these up while I take a node away". With
-  # one replica there is no N to keep, so the object cannot protect anything
-  # and can only refuse. Off by default, and the check block in n8n.tf says so
-  # at plan time for anyone who turns it back on.
-  # Whether the escape hatch turns the PDB back on behind the typed input's
-  # back. n8n_extra_helm_values is a YAML string merged after
-  # local.k8s_values_final, and Helm gives the later values file precedence,
-  # so this is the second way to end up with the object the check warns about.
-  # try() covers the empty default, a value that is not a mapping, and a
-  # mapping with no pdb key, all of which mean "not enabled here".
-  n8n_pdb_enabled_via_extra_values = try(yamldecode(var.n8n_extra_helm_values).pdb.enabled, false) == true
+  # Chart 1.16.0 (n8n-io/n8n-hosting#228) now gates templates/pdb.yaml on main
+  # running more than one replica, which this module never does, so the
+  # object no longer renders regardless of this value; see the note in
+  # n8n.tf where the check that used to warn about this lived. The input
+  # stays false by default anyway, both to document the intent plainly and in
+  # case this module ever supports more than one main. There is no longer a
+  # production reader of whether n8n_extra_helm_values also sets pdb.enabled
+  # (the check that read it was removed above), so that detection is no
+  # longer a named local; tests/defaults.tftest.hcl inlines the same
+  # try(yamldecode(...)) expression directly where it still wants to assert
+  # the overlay is visible.
 
   # The strategy the Deployment actually ends up with. Same two-routes problem
   # as the PDB below: n8n_extra_helm_values is merged after the module's own
@@ -898,10 +1189,20 @@ locals {
   # unconditionally, so both ports are always in the list.
   #
   # The two ports are recomputed from their own inputs rather than read back
-  # out of k8s_values_final, which carries the database and Redis passwords and
-  # is sensitive as a whole: an error_message built from it would be suppressed
-  # in full, printing nothing where the port belongs. These expressions are the
-  # same ones k8s_values_database and k8s_values_redis use.
+  # out of k8s_values_final, which can be sensitive as a whole: an
+  # error_message built from it would be suppressed in full, printing nothing
+  # where the port belongs. These expressions are the same ones
+  # k8s_values_database and k8s_values_redis use.
+  #
+  # Not because it carries the database and Redis passwords, which an earlier
+  # version of this comment claimed and which is not true of either fragment:
+  # k8s_values_database and k8s_values_redis pass passwordSecret = {name, key}
+  # and no value, which is the whole point of the Secret wiring in n8n.tf. The
+  # route that does make it sensitive is n8n_otel_exporter_otlp_headers, a
+  # sensitive input that lands in the tree directly. So the conclusion holds on
+  # the OTLP path and the ports are recomputed unconditionally, because a local
+  # that is sensitive only sometimes is worse to reason about than one that is
+  # never read here at all.
   #
   # n8n_extra_helm_values can move either port the same way it can move
   # networkPolicy.enabled, and the chart writes the policy from whatever
@@ -980,11 +1281,12 @@ locals {
     contains(local.n8n_network_policy_allowed_ports, local.n8n_otel_endpoint_port)
   )
 
-  # Whether a PodDisruptionBudget ends up in the release at all, by either
-  # route. Named because the check block asks exactly this question, and a
-  # check reading `!a && !b` makes the reader reconstruct what the two halves
-  # add up to.
-  n8n_main_pdb_rendered = var.n8n_main_pdb_enabled || local.n8n_pdb_enabled_via_extra_values
+  # Whether the values tree asks the chart to enable the PDB, by either route:
+  # the typed input, or the n8n_extra_helm_values overlay. The chart itself no
+  # longer acts on this for a single main pool (see the comment above), but
+  # tests/defaults.tftest.hcl still asserts both routes reach
+  # local.k8s_values_final honestly (the_extra_values_overlay_can_also_ask_for_the_pdb
+  # and an_unrelated_extra_values_overlay_leaves_the_pdb_detection_quiet).
 
   k8s_values_pdb = {
     pdb = {
@@ -998,6 +1300,68 @@ locals {
   k8s_values_volumes = {
     extraVolumes      = local.n8n_extra_volumes
     extraVolumeMounts = local.n8n_extra_volume_mounts
+  }
+
+  # podAnnotations reaches the pod template on all three Deployments
+  # (deployment-main.yaml, deployment-worker.yaml,
+  # deployment-webhook-processor.yaml all merge it in ahead of
+  # commonAnnotations). Two checksums can land here: the one that rolls every
+  # n8n pod when n8n_extra_ca_pem changes, since Node reads NODE_EXTRA_CA_CERTS
+  # once at start and a Secret update alone does not restart anything reading
+  # it, and the one that rolls every n8n pod when the generated Valkey
+  # password rotates. The password reaches these pods through a secretKeyRef
+  # resolved once at start, so a rotation otherwise updates the Secret and
+  # restarts nothing: every pod keeps the old password until something else
+  # restarts it, and then meets whichever ACL generation Valkey happens to be
+  # running. helm_release.valkey carries the same checksum (redis_valkey.tf),
+  # so one apply rolls the server onto the new ACL and the clients onto the
+  # new password together. The hash, never the password: annotations are
+  # readable by anyone who can get a pod.
+  #
+  # The Valkey checksum is opt-in (valkey_password_rotation_roll_enabled,
+  # default false), not just gated on the backend. Introducing a brand-new key
+  # into podAnnotations is itself a pod-template change, so the apply that
+  # first adds this key rolls every n8n pod and, via deploymentStrategy =
+  # Recreate, takes Valkey fully down and back up once (the standalone PVC is
+  # ReadWriteOnce, so a rolling update of it would deadlock rather than
+  # overlap). A default caller taking this module version has rotated nothing
+  # and asked for nothing; forcing that one-time disruption on every such
+  # caller on adoption, rather than only on the caller who deliberately turns
+  # the feature on, is the wrong trade. Gated on the valkey backend too, so
+  # the external-redis path renders byte-identical regardless.
+  k8s_values_pod_annotations = (local.n8n_extra_ca_enabled || (local.valkey_enabled && var.valkey_password_rotation_roll_enabled)) ? {
+    podAnnotations = merge(
+      local.n8n_extra_ca_enabled ? { "checksum/extra-ca" = sha256(local.n8n_ca_bundle_pem) } : {},
+      (local.valkey_enabled && var.valkey_password_rotation_roll_enabled) ? { "checksum/valkey-password" = sha256(random_password.valkey_default[0].result) } : {},
+    )
+  } : {}
+
+  # var.n8n_dns_config with unset keys removed. Necessary because the
+  # variable's optional() attributes materialise as null rather than being
+  # absent, and the chart renders dnsConfig with a bare key present even when
+  # every entry under it is null, which is not the same as omitting the key.
+  n8n_dns_config_options = var.n8n_dns_config == null ? [] : [
+    for o in coalesce(var.n8n_dns_config.options, []) :
+    o.value == null ? { name = o.name } : { name = o.name, value = o.value }
+  ]
+
+  n8n_dns_config_stripped = var.n8n_dns_config == null ? {} : {
+    for k, v in {
+      nameservers = var.n8n_dns_config.nameservers
+      searches    = var.n8n_dns_config.searches
+      options     = length(local.n8n_dns_config_options) == 0 ? null : local.n8n_dns_config_options
+    } : k => v if v != null
+  }
+
+  # Collapsed to null when nothing survives the stripping, so a caller passing
+  # `n8n_dns_config = {}` (or all-null attributes) omits the dnsConfig key from
+  # the Helm values entirely rather than rendering `dnsConfig: {}`, keeping the
+  # variable's "null omits the block entirely" promise true for every
+  # equivalent-to-unset shape.
+  n8n_dns_config = length(local.n8n_dns_config_stripped) == 0 ? null : local.n8n_dns_config_stripped
+
+  k8s_values_dns = local.n8n_dns_config == null ? {} : {
+    dnsConfig = local.n8n_dns_config
   }
 
   # Sidecars, translated from the snake_case inputs the same way the volumes
@@ -1116,10 +1480,12 @@ locals {
         requests = { cpu = var.n8n_worker_cpu_request, memory = var.n8n_worker_memory_request }
         limits   = { cpu = var.n8n_worker_cpu_limit, memory = var.n8n_worker_memory_limit }
       }
-      taskRunner = {
-        requests = { cpu = var.n8n_task_runner_cpu_request, memory = var.n8n_task_runner_memory_request }
-        limits   = { cpu = var.n8n_task_runner_cpu_limit, memory = var.n8n_task_runner_memory_limit }
-      }
+      # No taskRunner key here. Chart 1.16.0's top-level resources block
+      # covers main, worker and webhookProcessor only; the sidecar's
+      # quantities live under taskRunners.resources, in
+      # k8s_values_task_runners below (_helpers.tpl's
+      # n8n.taskRunnerContainer helper is the only template that reads a
+      # resources key for the task-runner container, and it reads that one).
       webhookProcessor = {
         requests = { cpu = var.n8n_webhook_cpu_request, memory = var.n8n_webhook_memory_request }
         limits   = { cpu = var.n8n_webhook_cpu_limit, memory = var.n8n_webhook_memory_limit }
@@ -1150,6 +1516,30 @@ locals {
           { name = "N8N_PROXY_HOPS", value = tostring(var.n8n_proxy_hops) },
         ],
 
+        # Only emitted when set, so the two independent defaults (n8n's own
+        # 16 MiB and the Ingress annotation's literal 32m) stay exactly as
+        # they are today until a caller opts in. Setting this also moves the
+        # Ingress proxy-body-size annotation (see k8s_ingress_annotations),
+        # which is what keeps the proxy's limit and n8n's limit from
+        # disagreeing once either one is tuned.
+        var.n8n_payload_size_max != null ? [
+          { name = "N8N_PAYLOAD_SIZE_MAX", value = tostring(var.n8n_payload_size_max) },
+        ] : [],
+        # The scheduler's timezone, emitted only when n8n_timezone is set
+        # away from this module's own literal default ("UTC"), so a caller
+        # who left it alone sees no render change. TZ (above, from
+        # config.timezone) and GENERIC_TIMEZONE are not the same setting:
+        # TZ is the process clock (log timestamps, new Date()),
+        # GENERIC_TIMEZONE is what Schedule Triggers fire in, and n8n's own
+        # default for it is America/New_York, not UTC and not TZ. No chart
+        # template renders this name, so a caller who customizes
+        # n8n_timezone away from "UTC" without this entry keeps getting
+        # schedules on US Eastern no matter what they set, while the log
+        # timestamps made the configuration look honored.
+        var.n8n_timezone != "UTC" ? [
+          { name = "GENERIC_TIMEZONE", value = var.n8n_timezone },
+        ] : [],
+
         # Binary data. Emitted only in filesystem mode: "database" is what n8n
         # already does in queue mode, so rendering it would add a variable that
         # changes nothing and reserve a name a caller may be setting themselves.
@@ -1165,25 +1555,62 @@ locals {
         # Split ingress only. See k8s_split_ingress_urls above for why the
         # chart cannot render these two itself and why overriding it in place
         # would break the next helm upgrade. Both are set here or neither is:
-        # emptying webhook.url drops the chart's WEBHOOK_URL as well, so this
-        # block has to carry it back.
+        # emptying webhook.url drops the chart's N8N_WEBHOOK_URL as well, so
+        # this block has to carry it back.
         local.k8s_split_ingress_urls ? [
-          { name = "WEBHOOK_URL", value = local.k8s_webhook_url },
+          { name = "N8N_WEBHOOK_URL", value = local.k8s_webhook_url },
           { name = "N8N_EDITOR_BASE_URL", value = local.k8s_editor_base_url },
         ] : [],
 
         # Postgres TLS. Kept as an explicit "false" rather than omitted, so the
         # rendered value states the choice instead of leaning on n8n's default:
         # this is the switch that matters when the endpoint is an in-cluster
-        # pooler terminating SSL on its own upstream leg. REJECT_UNAUTHORIZED is
-        # false alongside it because an in-cluster CNPG cluster serves a
-        # cert Node.js has no reason to trust, and the traffic never leaves the
-        # cluster network.
-        var.db_postgresdb_ssl_enabled ? [
-          { name = "DB_POSTGRESDB_SSL_ENABLED", value = "true" },
-          { name = "DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED", value = "false" },
-          ] : [
+        # pooler terminating SSL on its own upstream leg.
+        # db_postgresdb_ssl_reject_unauthorized defaults to false, preserving
+        # this module's original behavior: an in-cluster CNPG cluster serves a
+        # cert signed by its own per-cluster CA, which Node.js has no reason
+        # to trust by default, and the traffic never leaves the cluster
+        # network.
+        #
+        # DB_POSTGRESDB_SSL_ENABLED is omitted here, not emitted "true", on the
+        # one path where the chart already carries it: local.postgres_ssl_ca_active
+        # (a CA is being delivered through database.ssl, see k8s_values_database)
+        # on a chart known to render DB_POSTGRESDB_SSL_ENABLED from
+        # database.ssl.enabled itself (local.n8n_chart_renders_postgres_ssl_enabled).
+        # Carrying both would put two entries of that name in the container's
+        # env list, the duplicate that fails every later helm upgrade. Every
+        # other combination, including SSL on with no CA, keeps the entry here:
+        # it is the only source of that name on every path but the one above.
+        var.db_postgresdb_ssl_enabled ? concat(
+          local.postgres_ssl_ca_active && local.n8n_chart_renders_postgres_ssl_enabled ? [] : [
+            { name = "DB_POSTGRESDB_SSL_ENABLED", value = "true" },
+          ],
+          [
+            { name = "DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED", value = tostring(var.db_postgresdb_ssl_reject_unauthorized) },
+          ],
+          ) : [
           { name = "DB_POSTGRESDB_SSL_ENABLED", value = "false" },
+        ],
+
+        # Database connection acquisition and health-check ping settings. The
+        # chart has no values path for these and DB_ is a module-managed
+        # prefix, so n8n_extra_env cannot reach them; each is omitted on the
+        # null path, leaving n8n's own defaults.
+        #
+        # DB_POSTGRESDB_CONNECTION_TIMEOUT becomes pg-pool's
+        # connectionTimeoutMillis, which bounds both connection establishment
+        # and waiting for the shared pool to free a slot. The database monitor
+        # also calls pool.connect(), so its acquisition is subject to this
+        # timeout and to the separate DB_PING_TIMEOUT_MS race: the effective
+        # health-check acquisition deadline is whichever fires first.
+        var.db_postgresdb_connection_timeout_ms == null ? [] : [
+          { name = "DB_POSTGRESDB_CONNECTION_TIMEOUT", value = tostring(var.db_postgresdb_connection_timeout_ms) },
+        ],
+        var.db_ping_timeout_ms == null ? [] : [
+          { name = "DB_PING_TIMEOUT_MS", value = tostring(var.db_ping_timeout_ms) },
+        ],
+        var.db_ping_interval_seconds == null ? [] : [
+          { name = "DB_PING_INTERVAL_SECONDS", value = tostring(var.db_ping_interval_seconds) },
         ],
 
         # Editor and package-installation policy. All plain booleans n8n reads
@@ -1230,6 +1657,21 @@ locals {
         var.n8n_reinstall_missing_packages ? [
           { name = "N8N_REINSTALL_MISSING_PACKAGES", value = "true" },
         ] : [],
+
+        # V8 heap ceiling. A whole flag STRING rather than a single setting,
+        # so the reservation in n8n_extra_env's validation only fires while
+        # this is set: with it null, the module emits nothing and a caller's
+        # own NODE_OPTIONS (--enable-source-maps, --inspect, their own heap
+        # flag) has nothing of the module's to clobber.
+        var.n8n_node_max_old_space_size_mb == null ? [] : [
+          { name = "NODE_OPTIONS", value = "--max-old-space-size=${var.n8n_node_max_old_space_size_mb}" },
+        ],
+
+        # Credential overwrites. local.n8n_credentials_overwrite_env is an
+        # empty list only when n8n_credentials_overwrite_secret_ref is null;
+        # the volume and mount that back this file live in
+        # local.n8n_extra_volumes / local.n8n_extra_volume_mounts above.
+        local.n8n_credentials_overwrite_env,
 
         # OpenTelemetry. The master switch emits nothing when false so the SDK
         # is never loaded, and every other knob is gated behind it: setting a
@@ -1282,10 +1724,10 @@ locals {
         # Guardrails on what a workflow can decompress. Left to n8n's own
         # defaults when null, rather than pinned to a value this module invented.
         var.n8n_compression_max_decompressed_size_bytes == null ? [] : [
-          { name = "N8N_COMPRESSION_MAX_DECOMPRESSED_SIZE", value = tostring(var.n8n_compression_max_decompressed_size_bytes) },
+          { name = "N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES", value = tostring(var.n8n_compression_max_decompressed_size_bytes) },
         ],
         var.n8n_compression_max_zip_entries == null ? [] : [
-          { name = "N8N_COMPRESSION_MAX_ZIP_ENTRIES", value = tostring(var.n8n_compression_max_zip_entries) },
+          { name = "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES", value = tostring(var.n8n_compression_max_zip_entries) },
         ],
 
         # Only emitted when it differs from n8n's own default. The input accepts
@@ -1336,6 +1778,54 @@ locals {
           { name = "N8N_METRICS_INCLUDE_QUEUE_METRICS", value = "true" },
           { name = "N8N_METRICS_INCLUDE_CACHE_METRICS", value = "true" },
         ] : [],
+
+        # SMTP for user-management email, only when the caller configured a
+        # server. N8N_EMAIL_MODE is emitted even though "smtp" is n8n's own
+        # default, so the choice survives a future n8n default change. The
+        # password never appears as a value: it is a secretKeyRef into a
+        # Secret the caller owns, which keeps it out of Terraform state and
+        # out of the Helm release values.
+        # Two concat arguments rather than one nested ternary, because the
+        # plain {name, value} entries and the {name, valueFrom} password entry
+        # cannot share a ternary branch: Terraform unifies the branches to one
+        # object type and there is none.
+        var.n8n_smtp == null ? [] : concat(
+          [
+            { name = "N8N_EMAIL_MODE", value = "smtp" },
+            { name = "N8N_SMTP_HOST", value = var.n8n_smtp.host },
+            { name = "N8N_SMTP_PORT", value = tostring(var.n8n_smtp.port) },
+            { name = "N8N_SMTP_SSL", value = tostring(var.n8n_smtp.ssl) },
+            { name = "N8N_SMTP_STARTTLS", value = tostring(var.n8n_smtp.starttls) },
+            { name = "N8N_SMTP_SENDER", value = var.n8n_smtp.sender },
+          ],
+          var.n8n_smtp.user == null ? [] : [
+            { name = "N8N_SMTP_USER", value = var.n8n_smtp.user },
+          ],
+        ),
+        var.n8n_smtp == null ? [] : var.n8n_smtp.password_secret_ref == null ? [] : [
+          {
+            name = "N8N_SMTP_PASS"
+            valueFrom = {
+              secretKeyRef = {
+                name = var.n8n_smtp.password_secret_ref.name
+                key  = coalesce(var.n8n_smtp.password_secret_ref.key, "password")
+              }
+            }
+          },
+        ],
+
+        # Telemetry, only when the caller took a position. Omitted at null so
+        # n8n's own default (currently true) applies untouched.
+        var.n8n_diagnostics_enabled == null ? [] : [
+          { name = "N8N_DIAGNOSTICS_ENABLED", value = tostring(var.n8n_diagnostics_enabled) },
+        ],
+
+        # Outbound CA trust (n8n_extra_ca_pem): points Node at the bundle
+        # mounted from kubernetes_secret.n8n_ca_bundle. Reaches the n8n
+        # containers only; the task runner sidecar is a separate container
+        # this value does not touch (see docs/tls-proxy.md).
+        local.n8n_ca_bundle_env,
+
         # The two caller-supplied env inputs, both landing in this one list.
         # n8n_extra_env is typed list(object({name, value})), so it carries no
         # valueFrom path; n8n_extra_env_from_secret is the secretKeyRef form,
@@ -1366,24 +1856,67 @@ locals {
     }
   }
 
-  # Execution limits and history pruning. The chart reads these from the
-  # top-level `executions` block (templates/_environment-helpers.tpl,
-  # "n8n.executionsEnv"); an earlier version rendered them under
+  # Execution limits, data retention and history pruning. The chart reads
+  # these from the top-level `executions` block (templates/_environment-helpers.tpl,
+  # "n8n.executionsEnv"); an earlier version rendered the limits under
   # config.executions as well, a key the chart never reads, so timeout,
   # timeoutMax, the concurrency limit and pruning maxCount were silently
   # dropped and only pruning enabled/maxAge ever reached the pods. The chart's
   # own gates still apply: a timeout or productionLimit of -1 emits no env var,
-  # which is n8n's "disabled" spelling for both.
+  # which is n8n's "disabled" spelling for both. productionLimit's default is
+  # -1 for exactly that reason: n8n's worker.ts reads
+  # N8N_CONCURRENCY_PRODUCTION_LIMIT before the worker's own --concurrency
+  # flag (var.n8n_worker_concurrency, rendered into queueMode.workerConcurrency
+  # below) and only falls back to the flag when the env var is -1. A
+  # non-default value here overrides that same worker's own --concurrency
+  # flag with that number, independently on every worker rather than as a
+  # shared cap: before this variable's default changed, that meant each
+  # worker ran at its own ceiling of 100 with no coordination between them,
+  # which let whichever worker was already running absorb a burst before
+  # queue depth ever crossed the threshold that would make KEDA add useful
+  # capacity (live finding, see CHANGELOG).
+  #
+  # executions.data (saveOnError / saveOnSuccess / saveOnProgress /
+  # saveManualExecutions) is rendered unconditionally by the chart whether or
+  # not this block is present, so these four keys replace what would
+  # otherwise be the chart's own baked-in defaults with the module's typed
+  # inputs; every one of the four defaults to the same value n8n itself
+  # defaults to, so a deployment that sets none of them renders unchanged.
+  # The four EXECUTIONS_DATA_SAVE_* names are reserved in
+  # local.n8n_managed_env_names for the same duplicate-key reason
+  # the redis.worker merge above documents for QUEUE_WORKER_*.
   k8s_values_executions = {
     executions = {
       timeout     = var.n8n_execution_timeout
       timeoutMax  = var.n8n_execution_timeout_max
       concurrency = { productionLimit = var.n8n_execution_concurrency_limit }
-      pruning = {
-        enabled  = true
-        maxAge   = var.n8n_pruning_max_age
-        maxCount = var.n8n_pruning_max_count
+      data = {
+        saveOnError          = var.n8n_executions_data_save_on_error
+        saveOnSuccess        = var.n8n_executions_data_save_on_success
+        saveOnProgress       = var.n8n_executions_data_save_on_progress
+        saveManualExecutions = var.n8n_executions_data_save_manual_executions
       }
+      # enabled now reads var.n8n_pruning_enabled (true by default, matching
+      # the hardcoded value this replaces byte-for-byte). The three cadence
+      # keys default to null and are merged in only when set: the chart
+      # deep-merges its own values.yaml defaults (hardDeleteBuffer 1,
+      # hardDeleteInterval 15, softDeleteInterval 60) under any key this
+      # module omits, so leaving them out at the default renders exactly what
+      # omitting them always rendered. Reserved under
+      # local.n8n_managed_env_names (EXECUTIONS_DATA_HARD_DELETE_BUFFER,
+      # EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL,
+      # EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL) so n8n_extra_env cannot
+      # duplicate whichever of them is set here.
+      pruning = merge(
+        {
+          enabled  = var.n8n_pruning_enabled
+          maxAge   = var.n8n_pruning_max_age
+          maxCount = var.n8n_pruning_max_count
+        },
+        var.n8n_pruning_hard_delete_buffer != null ? { hardDeleteBuffer = var.n8n_pruning_hard_delete_buffer } : {},
+        var.n8n_pruning_hard_delete_interval != null ? { hardDeleteInterval = var.n8n_pruning_hard_delete_interval } : {},
+        var.n8n_pruning_soft_delete_interval != null ? { softDeleteInterval = var.n8n_pruning_soft_delete_interval } : {},
+      )
     }
   }
 
@@ -1398,6 +1931,16 @@ locals {
         enabled            = var.n8n_task_runners_enabled
         mode               = "external"
         nativePythonRunner = var.n8n_task_runner_python_enabled
+
+        # The only key the chart reads for the sidecar container:
+        # _helpers.tpl's n8n.taskRunnerContainer helper renders
+        # `toYaml .Values.taskRunners.resources` into it. Nothing in the
+        # chart reads a taskRunner key under the top-level resources block
+        # (see k8s_values_resources above).
+        resources = {
+          requests = { cpu = var.n8n_task_runner_cpu_request, memory = var.n8n_task_runner_memory_request }
+          limits   = { cpu = var.n8n_task_runner_cpu_limit, memory = var.n8n_task_runner_memory_limit }
+        }
       },
       var.n8n_task_runners_enabled ? {
         customConfig = {
@@ -1450,9 +1993,19 @@ locals {
   # name, silently dropped all three. nginx then applies its own 1m body limit
   # and 60s timeouts, which fails binary-data uploads with 413 and cuts
   # long-running executions off mid-request, neither of which points at TLS.
+  #
+  # n8n_payload_size_max null (its default) leaves this at the literal 32m it
+  # has always been, matching n8n's own 16 MiB default unset; setting the
+  # input derives both this annotation and N8N_PAYLOAD_SIZE_MAX (above) from
+  # the same value, plus 2 MiB of multipart-framing headroom, so the proxy's
+  # limit and n8n's limit cannot disagree. Also exported as the
+  # ingress_proxy_body_size output for create_ingress = false callers to put
+  # on their own Ingress instead of a literal that can drift.
+  ingress_proxy_body_size = var.n8n_payload_size_max == null ? "32m" : "${var.n8n_payload_size_max + 2}m"
+
   k8s_ingress_annotations = merge(
     {
-      "nginx.ingress.kubernetes.io/proxy-body-size"    = "32m"
+      "nginx.ingress.kubernetes.io/proxy-body-size"    = local.ingress_proxy_body_size
       "nginx.ingress.kubernetes.io/proxy-read-timeout" = "3600"
       "nginx.ingress.kubernetes.io/proxy-send-timeout" = "3600"
     },
@@ -1462,24 +2015,32 @@ locals {
     var.k8s_ingress_extra_annotations,
   )
 
-  k8s_ingress_host_effective = length(var.k8s_ingress_host) > 0 ? var.k8s_ingress_host : var.n8n_domain
+  # Lowercased on both branches. k8s_ingress_host and n8n_domain's own
+  # validations both accept uppercase, but this value derives the TLS Secret
+  # name below (a Kubernetes object name, lowercase-only) and feeds the
+  # editor/webhook URL fallbacks above, so every consumer now inherits one
+  # normalized value instead of each needing its own lower() call.
+  k8s_ingress_host_effective = length(var.k8s_ingress_host) > 0 ? lower(var.k8s_ingress_host) : local.n8n_domain
   k8s_ingress_tls_secret     = length(var.k8s_ingress_tls_secret_name) > 0 ? var.k8s_ingress_tls_secret_name : replace("${local.k8s_ingress_host_effective}-tls", ".", "-")
 
   # Every hostname the Ingresses answer on, canonical first. Normalized once
   # here so the editor Ingress, the chart's webhook Ingress and the TLS secret
   # cannot disagree about the host list.
   #
-  # Lowercased because Kubernetes rejects an uppercase Ingress host outright,
-  # and cert-manager names the Certificate's SANs from these. distinct() covers
-  # the one duplicate the variable's own validation cannot catch: an entry in
-  # n8n_additional_domains that differs from k8s_ingress_host only in case, or
-  # matches k8s_ingress_host rather than n8n_domain.
+  # Lowercased, because Kubernetes rejects an uppercase Ingress host outright
+  # and cert-manager names the Certificate's SANs from these.
+  # k8s_ingress_host_effective is already normalized at its own definition
+  # above, so only n8n_additional_domains needs its own lower() call here.
+  # distinct() covers the one duplicate neither variable's validation can
+  # catch: an entry in n8n_additional_domains that differs from
+  # k8s_ingress_host only in case, or matches k8s_ingress_host rather than
+  # n8n_domain.
   #
   # n8n_domain (or k8s_ingress_host when set) stays first and canonical: it is
   # what n8n advertises as N8N_HOST and in webhook URLs. The additional names
   # route to the same Services; nothing about them changes what n8n hands out.
   k8s_ingress_hosts = distinct(concat(
-    [lower(local.k8s_ingress_host_effective)],
+    [local.k8s_ingress_host_effective],
     [for d in var.n8n_additional_domains : lower(d)],
   ))
 
@@ -1491,12 +2052,15 @@ locals {
   # the chart ignores both, which is why only /webhook was ever routed despite
   # the block naming it.
   #
-  # It hardcodes FOUR of the five, omitting /mcp. Confirmed against chart
-  # 1.10.0 on a live deployment: /webhook/x returns n8n's JSON 404 while
-  # /mcp/x returns 200 text/html, the editor SPA answering because the main
-  # pods have no handler registered for it. That is the silent failure in
-  # docs/troubleshooting.md, and MCP Server Trigger nodes hit it on the
-  # module's default path. kubernetes_ingress_v1.n8n_mcp closes it.
+  # It hardcoded four of the five through chart 1.10.0, omitting /mcp.
+  # Confirmed against chart 1.10.0 on a live deployment: /webhook/x returns
+  # n8n's JSON 404 while /mcp/x returns 200 text/html, the editor SPA
+  # answering because the main pods have no handler registered for it. That
+  # was the silent failure docs/troubleshooting.md used to document, and MCP
+  # Server Trigger nodes hit it on the module's default path. Chart 1.16.0
+  # added /mcp/ to this same template, so all five prefixes are chart-routed
+  # now; see n8n_webhook_path_prefixes and the now-removed supplementary
+  # Ingress this module used to render to cover the gap.
   #
   # Gated on create_ingress alongside the main Ingress: ungated, a caller
   # bringing their own routing still got a chart-owned webhook Ingress with an
@@ -1593,6 +2157,19 @@ locals {
   # QUEUE_BULL_REDIS_PASSWORD on the worker pod that the chart already sets. The
   # token never enters the ScaledObject manifest and there is no second Secret to
   # keep in sync.
+  #
+  # cooldownPeriod below only governs scale-to-zero, the delay KEDA waits
+  # after the last trigger goes idle before it would remove the final
+  # replica. This module never reaches that path: n8n_worker_keda_min_replicas
+  # is validated >= 1, so the worker Deployment and its ScaledObject always
+  # keep at least one replica, and cooldownPeriod never fires. The effective
+  # scale-down delay a caller actually observes is Kubernetes' own default HPA
+  # scaleDown stabilization window, 300s, which KEDA's ScaledObject inherits
+  # for every scale-down step above the floor; measured live at ~298s. Chart
+  # 1.17.0 exposes no values path to the ScaledObject's spec.advanced, so that
+  # window cannot be shortened from this module (confirmed: keda.worker.advanced
+  # renders no spec.advanced key through `helm template`), so it is left at the
+  # default.
   k8s_values_keda = var.k8s_keda_installed ? {
     keda = {
       enabled = true
@@ -1642,7 +2219,12 @@ locals {
                 username = local.redis_username_value
               },
             )
-            authenticationRef = { name = "" }
+            # No authenticationRef: passwordFromEnv above resolves the
+            # token from the worker container directly, so there is no
+            # TriggerAuthentication object to name. A name = "" key was
+            # rendered here before; KEDA tolerates it today, but an object
+            # naming a TriggerAuthentication that cannot exist is the kind
+            # of thing a future KEDA version could start validating against.
           }
         ]
       }
@@ -1667,11 +2249,13 @@ locals {
     local.k8s_values_keda,
     local.k8s_values_resources,
     local.k8s_values_volumes,
+    local.k8s_values_pod_annotations,
     local.k8s_values_containers,
     local.k8s_values_config,
     local.k8s_values_executions,
     local.k8s_values_task_runners,
     local.k8s_values_ingress,
     local.k8s_values_service_account,
+    local.k8s_values_dns,
   )
 }

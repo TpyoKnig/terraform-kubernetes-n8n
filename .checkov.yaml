@@ -28,7 +28,7 @@
 # nothing in one for checkov to assess.
 #
 # Be honest about what this buys today: nothing measurable. Re-verified against
-# checkov 3.3.9 on 2026-08-18, this tree scans 14 passed / 0 failed / 0 skipped
+# checkov 3.3.30 on 2026-10-21, this tree scans 14 passed / 0 failed / 0 skipped
 # with the skip-path and 14 / 0 / 0 without it, and neither run emits a parser
 # error. It is kept as a cheap guard so a future checkov that does try to parse
 # a .tftest.hcl cannot put an unexplained error line into a gate that is

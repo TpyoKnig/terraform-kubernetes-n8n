@@ -28,7 +28,7 @@ None of it is cosmetic, and none of it announces itself when it is wrong.
 | Shared filesystem | none | optional `ReadWriteMany` claim across all three pod types |
 | Namespace | module-created | example-created, so the claim can exist first |
 
-## One filesystem across three pod types
+## Shared storage across the pods
 
 Queue mode runs main, worker and webhook-processor pods, and they do not share a filesystem. The chart mounts its own `data` volume on main only, and this module leaves persistence at the chart default, so that volume is an `emptyDir`.
 
@@ -92,6 +92,7 @@ If the control publishes and yours does not, the name is filtered. Pick another.
 
 Same as [`../homelab`](../homelab): a running cluster, the CloudNativePG operator, ingress-nginx, cert-manager with the `ClusterIssuer` named in `cluster_issuer`, and a kubeconfig. Additionally:
 
+- **A DNS-01 `ClusterIssuer`, not an HTTP-01 one.** This is the prerequisite most easily got wrong here. The repository's [`../../modules/tls-letsencrypt`](../../modules/tls-letsencrypt/) solves HTTP-01, which needs Let's Encrypt to reach each hostname from the public internet on port 80, and a tunnel-only cluster has no such path. It fails quietly: cert-manager retries, ingress-nginx serves its own self-signed certificate, and the symptom is a browser warning with nothing in the apply to explain it. With the zone already at Cloudflare, use a `ClusterIssuer` with the `cloudflare` DNS-01 solver and a token carrying both `Zone:DNS:Edit` and `Zone:Zone:Read`.
 - A Cloudflare Tunnel already terminating at your ingress controller, and its UUID (`cloudflared tunnel list`).
 - An API token with `Zone:DNS:Edit`, if you want the records created here.
 - ingress-nginx configured to derive the client address from `X-Forwarded-For`, otherwise the editor allowlist below compares against cloudflared's own address and admits everyone or no one:
@@ -157,19 +158,19 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11 |
-| <a name="requirement_cloudflare"></a> [cloudflare](#requirement\_cloudflare) | >= 4.0, < 4.52.7 |
+| <a name="requirement_cloudflare"></a> [cloudflare](#requirement\_cloudflare) | ~> 5.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | ~> 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 2.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.12 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_cloudflare"></a> [cloudflare](#provider\_cloudflare) | >= 4.0, < 4.52.7 |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_cloudflare"></a> [cloudflare](#provider\_cloudflare) | ~> 5.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
 
 ## Modules
 
@@ -181,7 +182,7 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 
 | Name | Type |
 | ---- | ---- |
-| [cloudflare_record.n8n](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/record) | resource |
+| [cloudflare_dns_record.n8n](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/dns_record) | resource |
 | [kubernetes_ingress_v1.editor](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
 | [kubernetes_ingress_v1.webhook](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
 | [kubernetes_namespace.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace) | resource |
@@ -191,7 +192,7 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_cloudflare_api_token"></a> [cloudflare\_api\_token](#input\_cloudflare\_api\_token) | Cloudflare API token with Zone:DNS:Edit on cloudflare\_zone\_id. Only read when cloudflare\_zone\_id is set. Prefer the CLOUDFLARE\_API\_TOKEN environment variable over putting it in terraform.tfvars. | `string` | `null` | no |
+| <a name="input_cloudflare_api_token"></a> [cloudflare\_api\_token](#input\_cloudflare\_api\_token) | Cloudflare API token with Zone:DNS:Edit on cloudflare\_zone\_id. Read whenever set, even with cloudflare\_zone\_id null, so a plan can clean up a record from an earlier apply before the zone ID was cleared. Prefer the CLOUDFLARE\_API\_TOKEN environment variable, except for that cleanup: the environment variable is invisible to this Terraform variable, so pass the token through terraform.tfvars for that one apply instead. | `string` | `null` | no |
 | <a name="input_cloudflare_tunnel_id"></a> [cloudflare\_tunnel\_id](#input\_cloudflare\_tunnel\_id) | UUID of the Cloudflare Tunnel that fronts the cluster's ingress controller. Each DNS record created when cloudflare\_zone\_id is set is a proxied CNAME to <this>.cfargotunnel.com. The tunnel itself is not managed by this example: it is long-lived cluster infrastructure serving every other hostname too, so a terraform destroy here must not be able to take it down. | `string` | `null` | no |
 | <a name="input_cloudflare_zone_id"></a> [cloudflare\_zone\_id](#input\_cloudflare\_zone\_id) | Cloudflare zone ID for the zone both hostnames sit under. Leave null (the default) to manage DNS yourself, in which case the example creates no records. Set it and the example creates one proxied CNAME per hostname pointing at the Cloudflare Tunnel named by cloudflare\_tunnel\_id. The API token needs Zone:DNS:Edit on this zone. | `string` | `null` | no |
 | <a name="input_cluster_issuer"></a> [cluster\_issuer](#input\_cluster\_issuer) | cert-manager ClusterIssuer that signs both Ingress certificates. Must already exist in the cluster - this example does not install cert-manager. Each hostname gets its own Certificate, so an issuer scoped to a single DNS zone needs both names inside it. | `string` | `"letsencrypt-prod"` | no |
@@ -204,7 +205,7 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 | <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace to deploy into. Created by this example on every path rather than by the module, so that turning shared storage on later cannot move it between two resource addresses. An existing deployment upgrading to this needs one terraform state mv first, or the next apply plans to destroy the namespace; both commands are in storage.tf. | `string` | `"n8n"` | no |
 | <a name="input_proxy_hops"></a> [proxy\_hops](#input\_proxy\_hops) | How many proxies append to X-Forwarded-For between the client and an n8n pod (N8N\_PROXY\_HOPS). Defaults to 2 here, where ../homelab-split-ingress defaults to 1: that topology has ingress-nginx alone, this one puts the Cloudflare edge in front of it. Raise it again for anything further out, a WAF or a second reverse proxy. A wrong count is as bad as none: too low and n8n reads a proxy address as the client, too high and it reads a value the client could have forged. Every rate limit and IP-based restriction keyed on the client address depends on it, and nothing errors when it is wrong: n8n logs no per-request source IP that would reveal a bad count. | `number` | `2` | no |
 | <a name="input_shared_mount_path"></a> [shared\_mount\_path](#input\_shared\_mount\_path) | Where the shared volume is mounted in the n8n container on all three pod types. Binary data goes to `shared_mount_path`/storage. Kept out of /home/node/.n8n deliberately: the chart already mounts its own data volume there on main, and nesting one mount inside another is a way to lose track of which pod sees what. | `string` | `"/opt/n8n-shared"` | no |
-| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for the volume shared across the main, worker and webhook-processor pods (NFS, SMB, CephFS, or whatever the cluster offers). Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode and is fine until payloads get large. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
+| <a name="input_shared_storage_class"></a> [shared\_storage\_class](#input\_shared\_storage\_class) | An RWX-capable StorageClass for the volume shared across the main, worker and webhook-processor pods (Longhorn RWX, NFS, SMB, CephFS, or whatever the cluster offers). Longhorn does serve ReadWriteMany, through a share-manager pod that exports the volume over NFSv4, so every node that may run an n8n pod needs an NFSv4 client installed first: on Talos that is a system extension, not something present by default, and without it the volume never mounts. The module does not wait for the claim, so the symptom is pods stuck pending a mount rather than anything naming storage. Leave null and no claim is created, in which case binary data stays in Postgres, which is n8n's default in queue mode and is fine until payloads get large. Set it and binary data moves to the shared volume instead. Check the class can actually reclaim before trusting it: with the NFS CSI driver against an NFSv3-only appliance the PV is deleted while every byte stays on the server, which reads as automatic cleanup and is not. | `string` | `null` | no |
 | <a name="input_shared_storage_size"></a> [shared\_storage\_size](#input\_shared\_storage\_size) | Size of the shared RWX claim. Only used when shared\_storage\_class is set. Binary data from every execution lands here, so size it against retention rather than against one workflow. | `string` | `"20Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the CNPG and Valkey PVCs. Empty uses whatever the cluster's default StorageClass is. | `string` | `""` | no |
 | <a name="input_timezone"></a> [timezone](#input\_timezone) | Timezone n8n schedules Cron triggers in (GENERIC\_TIMEZONE). | `string` | `"UTC"` | no |

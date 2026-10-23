@@ -1,7 +1,7 @@
 # Copyright (c) 2026 TpyoKnig
 # SPDX-License-Identifier: MIT
 
-# Plan-time tests for the homelab example using mocked providers.
+# Plan-time tests for the homelab-cloudflare example using mocked providers.
 #
 # Exercises the example end-to-end with the in-cluster backing services
 # selected: postgres_backend = "cnpg" + redis_backend = "valkey".
@@ -17,7 +17,7 @@
 # reaching into resources whose attributes the mock provider defers.
 #
 # Run: terraform test
-#   (from examples/homelab/, mocks require terraform >= 1.11)
+#   (from examples/homelab-cloudflare/, mocks require terraform >= 1.11)
 
 mock_provider "kubernetes" {}
 mock_provider "helm" {}
@@ -25,11 +25,13 @@ mock_provider "kubectl" {}
 mock_provider "random" {}
 mock_provider "time" {}
 
-# Required even though this example plans no Cloudflare resource by default.
-# The provider block in providers.tf is configured unconditionally, and the
-# real plugin rejects an empty configuration with "must provide exactly one of
-# api_key, api_token or api_user_service_key" before it ever reaches the
-# question of whether a resource uses it.
+# Mocked even though this example plans no Cloudflare resource by default: the
+# provider block in providers.tf is configured unconditionally, because a
+# provider block cannot be made conditional. The real plugin used to fail here
+# with "must provide exactly one of api_key, api_token or api_user_service_key"
+# and providers.tf now hands it a placeholder on the no-DNS path, so this mock
+# is no longer what makes the run possible. It stays because a test suite
+# should not be able to reach the Cloudflare API at all.
 mock_provider "cloudflare" {}
 
 run "backing_services_output_populated_on_k8s_backend" {
@@ -108,6 +110,51 @@ run "binary_storage_is_filesystem_with_a_shared_volume" {
   }
 }
 
+run "proxy_hops_defaults_to_two_behind_the_tunnel" {
+  command = plan
+
+  # One hop is ingress-nginx. The Cloudflare edge and the tunnel are the
+  # second. ../homelab defaults to 1 because it has the controller alone.
+  assert {
+    condition     = var.proxy_hops == 2
+    error_message = "proxy_hops should default to 2 in the tunnel topology; got ${var.proxy_hops}."
+  }
+}
+
+run "proxy_hops_rejects_a_fractional_count" {
+  command = plan
+
+  variables {
+    proxy_hops = 2.5
+  }
+
+  expect_failures = [var.proxy_hops]
+}
+
+run "proxy_hops_rejects_zero" {
+  command = plan
+
+  variables {
+    proxy_hops = 0
+  }
+
+  # 0 means "trust the socket address as the client". This example always
+  # creates an Ingress, so the controller is always in the chain.
+  expect_failures = [var.proxy_hops]
+}
+
+run "proxy_hops_rejects_eleven" {
+  command = plan
+
+  variables {
+    proxy_hops = 11
+  }
+
+  # The module's own validation caps proxy_hops at 10; nothing in this
+  # example raises that ceiling.
+  expect_failures = [var.proxy_hops]
+}
+
 run "no_dns_records_without_a_zone" {
   command = plan
 
@@ -115,8 +162,8 @@ run "no_dns_records_without_a_zone" {
   # against a cluster whose DNS lives somewhere else, so the record is opt-in
   # rather than required.
   assert {
-    condition     = length(cloudflare_record.n8n) == 0
-    error_message = "No DNS record should be planned when cloudflare_zone_id is null; got ${length(cloudflare_record.n8n)}."
+    condition     = length(cloudflare_dns_record.n8n) == 0
+    error_message = "No DNS record should be planned when cloudflare_zone_id is null; got ${length(cloudflare_dns_record.n8n)}."
   }
 }
 
@@ -130,12 +177,12 @@ run "a_zone_produces_a_proxied_tunnel_record" {
   }
 
   assert {
-    condition     = length(cloudflare_record.n8n) == 1
-    error_message = "Expected exactly one record for ui_host; got ${length(cloudflare_record.n8n)}."
+    condition     = length(cloudflare_dns_record.n8n) == 1
+    error_message = "Expected exactly one record for ui_host; got ${length(cloudflare_dns_record.n8n)}."
   }
 
   assert {
-    condition     = cloudflare_record.n8n[0].proxied == true && cloudflare_record.n8n[0].type == "CNAME" && cloudflare_record.n8n[0].content == "${var.cloudflare_tunnel_id}.cfargotunnel.com"
+    condition     = cloudflare_dns_record.n8n[0].proxied == true && cloudflare_dns_record.n8n[0].type == "CNAME" && cloudflare_dns_record.n8n[0].content == "${var.cloudflare_tunnel_id}.cfargotunnel.com"
     error_message = "The record must be a proxied CNAME at exactly <tunnel-id>.cfargotunnel.com: unproxied, cfargotunnel.com does not resolve, and an A record at a homelab ingress is usually a private address."
   }
 }

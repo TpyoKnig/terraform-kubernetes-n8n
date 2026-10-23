@@ -250,42 +250,54 @@ condition = var.create_database ? (var.db_host == null && var.db_password == nul
 condition = !var.create_database || (var.db_host == null && var.db_password == null)
 ```
 
-Both forms behave identically on the versions this module now supports, so
-this is a consistency rule rather than a correctness one, and the existing
-`check` blocks all use the first form. Keep matching them: nest rather than
-chaining `||` inside the body.
+This is a correctness rule on this module's declared floor, not a style
+preference. Terraform's `&&` and `||` only short-circuit from version 1.12
+onward (confirmed in terraform-aws-n8n#183 and terraform-azurerm-n8n#56, and
+by this module's own `terraform test` failure on the `>= 1.11` floor), one
+minor above the floor this module declares. Below 1.12, `!guard || body`
+evaluates both operands regardless of `guard`: a `check` condition whose
+right side reads an unknown resource attribute becomes unknown itself and
+fails `terraform test` with "Check block assertion known after apply", and a
+`variable` `validation` of the form `var.x == null || length(var.x) > 0`
+fails with "argument must not be null" because the right operand still runs
+when `var.x` is null. The seven examples' `shared_storage_class` validation
+carried exactly that shape; it is now written `var.x == null ? true : (...)`,
+matching every existing `check` block. Write the ternary form in both: nest
+rather than chaining `||` inside the body.
 
-It used to be a correctness rule, and the history is worth knowing before
-anyone "simplifies" one of these back. `required_version` was `>= 1.9` and CI
-pinned 1.9.8. Short-circuit evaluation of `&&` and `||` arrived in Terraform
-1.10, so on 1.9 both operands were always evaluated, making
-`known_true || unknown` *unknown*, and a `check` whose condition is unknown at
-plan fails `terraform test` with "Check block assertion known after apply".
-The `!guard || body` shape therefore broke whenever the right side read an
-input a caller wired from a resource attribute. Worse, any local Terraform
-newer than 1.9 short-circuited and passed, so the whole class of bug was
-invisible locally and only ever failed in CI.
-
-The floor is now `>= 1.11` (every `versions.tf`, and CI's `TF_VERSION`), which
-is above the 1.10 that fixed it, so the hazard is retired. It is written down
-because "this reads more naturally as `!guard || body`" is a reasonable
-instinct that was, for a long stretch of this repo's history, wrong.
+CI's `test` job pins a Terraform newer than 1.12 (see "The floor is
+`>= 1.11`" below), so it short-circuits and would pass either form. The
+`test-floor` job exists for exactly this reason: it runs the same suites on
+`TF_FLOOR_VERSION`, this module's declared floor, which does not
+short-circuit, so it is the only CI job that would have caught the
+`shared_storage_class` bug. Run the suite against the floor binary before
+claiming a guard-style change is safe; `test` alone will not catch a
+regression here.
 
 #### The floor is `>= 1.11`
 
-Declared as `required_version = ">= 1.11"` everywhere: root, both submodules and
-all four examples, each in its own `versions.tf`. Matched by CI's single
-`TF_VERSION` pin either way. It moved up from
-`>= 1.9` because `override_resource`'s `override_during` attribute, which
-Some runs need to assert a plan-time value
-on a resource the same configuration creates, arrived in 1.11
+Declared as `required_version = ">= 1.11"` everywhere: root, both submodules
+and all seven examples, each in its own `versions.tf`. Matched by CI's
+`TF_VERSION` pin for the `test` job and `TF_FLOOR_VERSION` for the
+`test-floor` job, which runs every suite a second time on the floor itself
+(`tests/scripts/check-terraform-floor.sh` fails the job if the two drift
+apart). The floor moved up from `>= 1.9` because `override_resource`'s
+`override_during` attribute, which some runs need to assert a plan-time
+value on a resource the same configuration creates, arrived in 1.11
 (hashicorp/terraform#36227) and is silently ignored before it. A silently
 ignored override does not error; it turns the documented `terraform test`
 command into a confusing assertion failure, which is the worst way to learn
-about a version constraint.
+about a version constraint. Terraform's short-circuit evaluation of `&&` and
+`||` is unrelated and arrived later, in 1.12, one minor above this floor: see
+"Write guard-style `check` conditions" above for why that still matters at
+`>= 1.11`.
 
-Keep all seven declarations and the CI pin in step when bumping. A floor the
-CI does not exercise is a claim nobody is checking.
+Keep all ten declarations (root, both submodules, all seven examples) and
+both CI version pins (`TF_VERSION`, `TF_FLOOR_VERSION`) in step when bumping.
+A floor CI does not exercise on a real Terraform binary is a claim nobody is
+checking, which is also why `test-floor` runs the full `terraform test`
+suite rather than only `validate`: that is where the short-circuit gap
+actually surfaces.
 
 **Recommended pattern** when end-to-end wiring cannot be tested under mocks:
 
@@ -335,11 +347,14 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   fail; bump both together when upgrading.
 
 - Each example has its own `README.md` documenting the runnable example.
-- `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`
-  `docs/upgrading-n8n.md`, `docs/module-contract.md` and
-  `docs/helm-chart-coverage.md` cover operator-facing concerns that don't belong
-  inline in `README.md`. That is the whole set, if you reference a `docs/`
-  file, it exists here or the link is dead.
+- `docs/ai-assistant.md`, `docs/build-time-decisions.md`,
+  `docs/helm-chart-coverage.md`, `docs/module-contract.md`,
+  `docs/operations.md`, `docs/post-deployment.md`, `docs/postgresql-tls.md`,
+  `docs/shared-responsibility.md`, `docs/tls-proxy.md`,
+  `docs/troubleshooting.md`, `docs/upgrading-n8n.md` and `docs/versioning.md`
+  cover operator-facing concerns that don't belong inline in `README.md`.
+  That is the whole set, if you reference a `docs/` file, it exists here or
+  the link is dead.
 - Inline comments in `.tf` files use the `# ── Section ──` banner style. Every
   `variable`/`output` block lives under one of these banners.
   `scripts/check-variable-banners.sh` (`task banners`, local-only for now:
@@ -351,12 +366,12 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   | Banner | Covers |
   |---|---|
   | `Common` | Naming threaded through every resource (`namespace`) |
-  | `Core inputs` | Hostname, additional domains, webhook URL, encryption key |
+  | `Core inputs` | Hostname, additional domains, webhook URL, encryption key, credential overwrite reference |
   | `Cluster` | Namespace creation |
   | `Ingress` | Ingress class, host, issuer, TLS secret, annotations, and the raw-values escape hatch |
   | `Chart repositories` | The `*_chart_repository` overrides, one per chart the module installs |
   | `Chart versions` | The `*_chart_version` pins, plus n8n image tag/repository/pull secrets, Helm timeout, timezone and logging |
-  | `n8n resource requests and limits` | CPU/memory requests and limits, one set per pod role |
+  | `n8n resource requests and limits` | CPU/memory requests and limits, one set per pod role, plus the V8 heap ceiling |
   | `Execution settings` | Worker concurrency, execution timeouts, pruning, execution-data storage mode |
   | `Graceful shutdown` | Termination grace period, prestop sleep |
   | `Task runners` | Task runner sizing, lifecycle and the import allowlists |
@@ -369,6 +384,7 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   | `Sidecars` | `extraContainers` and `extraInitContainers` on the n8n pods |
   | `External Secrets` | External Secrets Operator integration |
   | `KEDA: worker pods` | Queue-depth autoscaling |
+  | `Pod DNS` | Pod-level `dnsConfig` (nameservers, search domains, ndots) |
 
   `scripts/check-variable-banners.sh` hardcodes this same list, in this same
   order, and fails if `variables.tf` disagrees with it. Update the table and
@@ -425,14 +441,13 @@ root and every example in one command. The raw commands work identically
 without `task` installed:
 
 ```bash
-# The veksh/godaddy-dns provider requires credentials even in plan-time tests.
-# Export stubs once per shell session before running terraform test.
-export GODADDY_API_KEY=stub GODADDY_API_SECRET=stub
-
 terraform fmt -recursive                       # before committing
 terraform init -backend=false                  # at module root
 terraform validate
 terraform test -verbose                        # plan-time, no cluster needed
+if [ -d tests/opentofu-gaps ]; then
+  terraform test -test-directory=tests/opentofu-gaps -verbose
+fi
 tflint --init && tflint --format compact
 terraform-docs --output-check .                # README drift check
 
@@ -442,23 +457,51 @@ terraform-docs --output-check .                # README drift check
 # be green too. Keep all three in sync when adding a root: one that no local
 # wrapper visits is one nobody validates before pushing.
 for dir in examples/homelab \
+           examples/homelab-pgbouncer \
            examples/homelab-cloudflare \
            examples/homelab-godaddy \
            examples/homelab-split-ingress \
+           examples/homelab-cloudflare-split-ingress \
+           examples/homelab-ai-assistant \
            modules/cluster-capacity \
            modules/tls-letsencrypt; do
   ( cd "$dir" \
       && terraform init -backend=false \
       && terraform validate \
       && terraform test -verbose \
+      && { [ ! -d tests/opentofu-gaps ] || terraform test -test-directory=tests/opentofu-gaps -verbose; } \
       && tflint --init && tflint --format compact \
       && terraform-docs --output-check . ) || echo "FAILED: $dir"
 done
 ```
 
-`examples/homelab-godaddy` needs `GODADDY_API_KEY` / `GODADDY_API_SECRET` set
-to anything non-empty, the provider demands credentials even for a plan-time
-test. `Taskfile.yml` exports stubs for exactly this reason.
+`tests/opentofu-gaps` (and the matching directory under
+`modules/cluster-capacity`) holds runs that a known OpenTofu
+testing-framework limitation cannot execute, isolated out of the default
+`tests` directory so they cannot taint it; real Terraform has no such gap,
+so the loop above still runs them as real coverage. Skipping that `if`
+block would silently stop proving those runs locally even though
+`terraform test`'s default directory no longer reaches them.
+
+The loop above uses whichever `terraform` is on `PATH`. CI's `test-floor` job
+(see "The floor is `>= 1.11`") also runs `terraform test` against
+`TF_FLOOR_VERSION`, the lowest Terraform this module claims to support, which
+does not short-circuit `&&`/`||` (that arrived in 1.12). A change to a guard
+condition is not verified locally by the loop above alone: install the floor
+binary (e.g. via `tfenv install 1.11.4` or an unpacked release zip) and
+re-run at least `terraform test` at each root with it on `PATH`, or point
+`PATH` at it for one invocation. `task terraform-floor` /
+`tests/scripts/check-terraform-floor.sh` checks the declared floor and
+`TF_FLOOR_VERSION` haven't drifted apart; it does not itself run
+`terraform test`.
+
+This module is also published to the OpenTofu registry, so CI's
+`test-opentofu` job runs the same root/example/submodule matrix through
+`tofu init -backend=false` / `tofu test` on the pinned `TOFU_VERSION`,
+with two targets deliberately non-blocking for known OpenTofu
+testing-framework gaps (see the comments beside that job). Run the same
+thing locally with `task opentofu` if you have the `tofu` CLI installed;
+it is standalone, not part of `task ci`.
 
 A real deployment uses `terraform apply` from `examples/homelab/` with a
 populated `terraform.tfvars`, but **never apply from CI** in this repo.

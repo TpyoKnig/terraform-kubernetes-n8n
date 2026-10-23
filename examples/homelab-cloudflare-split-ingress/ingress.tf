@@ -27,9 +27,14 @@ locals {
       "cert-manager.io/cluster-issuer" = var.cluster_issuer
 
       # n8n accepts large binary payloads and holds long-running requests; the
-      # nginx defaults (1m body, 60s read) truncate and time them out. Same
-      # values the module sets on the Ingress it owns.
-      "nginx.ingress.kubernetes.io/proxy-body-size"    = "32m"
+      # nginx defaults (1m body, 60s read) truncate and time them out. The
+      # body limit comes from the module output, never a literal: it is
+      # derived from n8n_payload_size_max, so this Ingress and n8n cannot
+      # disagree about the ceiling. A hand-written number here would drift
+      # the same way the module's own annotation once did, admitting a
+      # payload n8n then rejects with a 413 that points at the application
+      # instead of the front door.
+      "nginx.ingress.kubernetes.io/proxy-body-size"    = module.n8n.ingress_proxy_body_size
       "nginx.ingress.kubernetes.io/proxy-read-timeout" = "3600"
       "nginx.ingress.kubernetes.io/proxy-send-timeout" = "3600"
     },

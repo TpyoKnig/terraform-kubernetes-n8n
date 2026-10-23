@@ -18,6 +18,7 @@ timezone           = "UTC"
 keda_installed = false
 
 # 2 = ingress-nginx + the Cloudflare edge. Raise for a WAF or another proxy.
+# Must be a whole number from 1 to 10.
 proxy_hops = 2
 
 # ── DNS (optional) ────────────────────────────────────────────────────────────

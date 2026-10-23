@@ -20,6 +20,124 @@
 # actually sets, so the operator's writes are left alone without an allowlist to
 # maintain against every CNPG release.
 
+# Resource requests/limits for the Cluster pod and, when enabled, the Pooler's
+# pgbouncer container. Every quantity defaults to null, which renders no key
+# at all: today's BestEffort scheduling, unchanged for a caller who sets
+# nothing. Built as locals rather than inline so a single null check decides
+# whether "resources" is rendered at all, never an empty {} that would still
+# zero out the Cluster's inherited defaults.
+locals {
+  cnpg_resources_requests = merge(
+    var.cnpg_cpu_request != null ? { cpu = var.cnpg_cpu_request } : {},
+    var.cnpg_memory_request != null ? { memory = var.cnpg_memory_request } : {},
+  )
+  cnpg_resources_limits = merge(
+    var.cnpg_cpu_limit != null ? { cpu = var.cnpg_cpu_limit } : {},
+    var.cnpg_memory_limit != null ? { memory = var.cnpg_memory_limit } : {},
+  )
+  cnpg_resources = (length(local.cnpg_resources_requests) > 0 || length(local.cnpg_resources_limits) > 0) ? merge(
+    length(local.cnpg_resources_requests) > 0 ? { requests = local.cnpg_resources_requests } : {},
+    length(local.cnpg_resources_limits) > 0 ? { limits = local.cnpg_resources_limits } : {},
+  ) : null
+
+  cnpg_pooler_resources_requests = merge(
+    var.cnpg_pooler_cpu_request != null ? { cpu = var.cnpg_pooler_cpu_request } : {},
+    var.cnpg_pooler_memory_request != null ? { memory = var.cnpg_pooler_memory_request } : {},
+  )
+  cnpg_pooler_resources_limits = merge(
+    var.cnpg_pooler_cpu_limit != null ? { cpu = var.cnpg_pooler_cpu_limit } : {},
+    var.cnpg_pooler_memory_limit != null ? { memory = var.cnpg_pooler_memory_limit } : {},
+  )
+  cnpg_pooler_resources = (length(local.cnpg_pooler_resources_requests) > 0 || length(local.cnpg_pooler_resources_limits) > 0) ? merge(
+    length(local.cnpg_pooler_resources_requests) > 0 ? { requests = local.cnpg_pooler_resources_requests } : {},
+    length(local.cnpg_pooler_resources_limits) > 0 ? { limits = local.cnpg_pooler_resources_limits } : {},
+  ) : null
+
+  # Normalized to a common unit so a request can be compared against its
+  # limit below: millicores for CPU, bytes for memory, using the same
+  # suffix-multiplier maps redis_valkey.tf defines (locals are
+  # module-scoped, not file-scoped). Both variables' own regex validation
+  # has already rejected anything but the shapes handled here.
+  cnpg_cpu_request_millicores = var.cnpg_cpu_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_cpu_request)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_cpu_request), 1000)
+  )
+  cnpg_cpu_limit_millicores = var.cnpg_cpu_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_cpu_limit)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_cpu_limit), 1000)
+  )
+  cnpg_memory_request_bytes = var.cnpg_memory_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_memory_request)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_memory_request), 1)
+  )
+  cnpg_memory_limit_bytes = var.cnpg_memory_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_memory_limit)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_memory_limit), 1)
+  )
+
+  cnpg_pooler_cpu_request_millicores = var.cnpg_pooler_cpu_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_cpu_request)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_pooler_cpu_request), 1000)
+  )
+  cnpg_pooler_cpu_limit_millicores = var.cnpg_pooler_cpu_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_cpu_limit)) *
+    lookup({ m = 1 }, regex("[A-Za-z]*$", var.cnpg_pooler_cpu_limit), 1000)
+  )
+  cnpg_pooler_memory_request_bytes = var.cnpg_pooler_memory_request == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_memory_request)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_pooler_memory_request), 1)
+  )
+  cnpg_pooler_memory_limit_bytes = var.cnpg_pooler_memory_limit == null ? null : (
+    tonumber(regex("^[0-9]+(?:\\.[0-9]+)?", var.cnpg_pooler_memory_limit)) *
+    lookup(local.memory_quantity_suffix_bytes, regex("[A-Za-z]*$", var.cnpg_pooler_memory_limit), 1)
+  )
+
+  # Whether cnpg_plugins declares at least one plugin with isWALArchiver =
+  # true, the CNPG-I signal that a plugin claims the WAL archive command
+  # (and is therefore a backup route, not just any entry on the list).
+  # Shared between the collision check below and the no-backup-configured
+  # check further down, which previously only tested cnpg_plugins != null.
+  cnpg_has_wal_archiving_plugin = var.cnpg_plugins == null ? false : try(anytrue([for p in var.cnpg_plugins : try(p.isWALArchiver == true, false)]), false)
+}
+
+check "cnpg_resource_request_not_above_limit" {
+  assert {
+    # Outer guard ? body : true (local.cnpg_enabled for the Cluster rows,
+    # local.cnpg_pooler_enabled for the Pooler rows), per AGENTS.md, wraps an
+    # inner null guard ? true : body: on the external backend the Cluster
+    # inputs reach nothing, and with the Pooler off the Pooler inputs reach
+    # nothing either (variables.tf documents each as "only used when
+    # postgres_backend = cnpg" / "cnpg_pooler_enabled is true"), so a
+    # mismatched pair there is inert, not a real Kubernetes API rejection,
+    # and must not fail the plan. Matches the gating every other CNPG check
+    # in this file already uses (cnpg_pdb_blocks_the_postgres_node_drain,
+    # cnpg_backup_needs_the_cnpg_backend, and the rest below).
+    condition = alltrue([
+      local.cnpg_enabled ? (
+        (local.cnpg_cpu_request_millicores == null || local.cnpg_cpu_limit_millicores == null) ? true : (
+          local.cnpg_cpu_request_millicores <= local.cnpg_cpu_limit_millicores
+        )
+      ) : true,
+      local.cnpg_enabled ? (
+        (local.cnpg_memory_request_bytes == null || local.cnpg_memory_limit_bytes == null) ? true : (
+          local.cnpg_memory_request_bytes <= local.cnpg_memory_limit_bytes
+        )
+      ) : true,
+      local.cnpg_pooler_enabled ? (
+        (local.cnpg_pooler_cpu_request_millicores == null || local.cnpg_pooler_cpu_limit_millicores == null) ? true : (
+          local.cnpg_pooler_cpu_request_millicores <= local.cnpg_pooler_cpu_limit_millicores
+        )
+      ) : true,
+      local.cnpg_pooler_enabled ? (
+        (local.cnpg_pooler_memory_request_bytes == null || local.cnpg_pooler_memory_limit_bytes == null) ? true : (
+          local.cnpg_pooler_memory_request_bytes <= local.cnpg_pooler_memory_limit_bytes
+        )
+      ) : true,
+    ])
+    error_message = "One of cnpg_cpu_request/cnpg_cpu_limit, cnpg_memory_request/cnpg_memory_limit, cnpg_pooler_cpu_request/cnpg_pooler_cpu_limit or cnpg_pooler_memory_request/cnpg_pooler_memory_limit sets a request above its own limit. The Kubernetes API rejects that pod spec outright (\"must be less than or equal to cpu limit\" / the memory equivalent), so the Cluster or Pooler fails to reconcile at apply time rather than anything this module's own plan surfaces. Lower the request, raise the limit, or leave the limit null so the pod floats above the request instead."
+  }
+}
+
 resource "kubectl_manifest" "cnpg_cluster" {
   count = local.cnpg_enabled ? 1 : 0
 
@@ -70,6 +188,13 @@ resource "kubectl_manifest" "cnpg_cluster" {
           }
         }
       },
+
+      # Always rendered, never optional, once any of the four sizing inputs is
+      # set: without a request the database runs BestEffort, the first QoS
+      # class the kubelet evicts under node pressure, while every n8n pod it
+      # serves can carry one. Null at every input (the default) renders no
+      # resources key at all, identical to today.
+      local.cnpg_resources != null ? { resources = local.cnpg_resources } : {},
 
       # Continuous WAL archiving and the object store behind it, passed through
       # verbatim. Omitted entirely when null, which is the default and is what
@@ -145,6 +270,143 @@ resource "kubectl_manifest" "cnpg_cluster" {
   depends_on = [kubernetes_namespace.n8n]
 }
 
+# ── Postgres readiness barrier ────────────────────────────────────────────────
+# kubectl_manifest applies the Cluster and returns. It does not wait, and it
+# cannot: gavinbunney/kubectl 1.19 offers `wait` (deletion only) and
+# `wait_for_rollout`, which speaks Deployment, StatefulSet and DaemonSet, and a
+# CNPG Cluster is none of those. So `depends_on = [kubectl_manifest.cnpg_cluster]`
+# on the n8n release is an edge that orders the two API calls and proves
+# nothing about the database behind them.
+#
+# On a first apply that leaves n8n racing initdb. n8n pods start against a
+# host with no endpoints, CrashLoopBackOff, and recover on their own once
+# Postgres finishes, which is why this mostly goes unnoticed. When it does not
+# finish in time (cold storage, a busy cluster, a slow image pull for the
+# operand) the release's own wait expires instead, and because the release is
+# atomic the whole install rolls back and reports a Helm timeout. The cause, a
+# database that was still starting, appears nowhere in that error.
+#
+# This Job is the barrier the graph was missing. It polls the Cluster's rw
+# Service with pg_isready until Postgres answers, so the n8n release cannot
+# begin until the database is genuinely accepting connections. It also fails
+# with a sentence naming Postgres rather than leaving the release to time out
+# and blame Helm.
+#
+# The operand image is reused deliberately: pg_isready is in it, the cluster
+# has already pulled it onto the node, and it introduces no image this
+# deployment was not going to run anyway.
+#
+# Not a time_sleep. A sleep long enough to be safe on the slowest cluster is
+# waste on every other one, and it would still be a guess rather than a
+# condition: unlike the Pooler-Service-creation window n8n.tf's own comment
+# on kubectl_manifest.cnpg_pooler argues a sleep is the wrong fix for, this
+# barrier polls a real condition (pg_isready) rather than guessing a
+# duration, so the objection there does not apply here. The ceiling on how
+# long it polls before giving up is cnpg_ready_timeout, independent of
+# n8n_helm_timeout: this Job completes, one way or the other, before
+# helm_release.n8n's own wait even starts, so raising n8n_helm_timeout alone
+# cannot buy a slow bootstrap more time here.
+#
+# Additive on every CNPG-backed deployment's first apply after adopting this:
+# one new Job object, no change to any existing resource. Near-instant
+# wherever CNPG is already up, since pg_isready then succeeds on the first
+# attempt; it costs real wait time only on a genuinely cold cluster, which is
+# exactly the race this closes.
+resource "kubernetes_job_v1" "cnpg_ready" {
+  count = local.cnpg_enabled ? 1 : 0
+
+  metadata {
+    name      = "${local.cnpg_cluster_name}-ready"
+    namespace = local.namespace_name
+  }
+
+  spec {
+    # One attempt. The container carries its own retry loop and its own
+    # deadline, so a Job-level retry would only multiply a wait that has
+    # already concluded the database is not coming.
+    backoff_limit = 0
+
+    # No ttl_seconds_after_finished, deliberately. The TTL controller deletes
+    # the Job OBJECT, not just its completed pod, and a Job Terraform manages
+    # but Kubernetes deletes is a permanent diff: some time after every apply
+    # the refresh finds nothing and the next plan wants to create the Job
+    # again, forever. The completed Job and its pod persist until a spec
+    # change replaces them, which is one line of kubectl-get clutter in
+    # exchange for a plan that stays at No changes.
+    template {
+      metadata {}
+
+      spec {
+        restart_policy = "Never"
+
+        container {
+          name  = "wait-for-postgres"
+          image = "ghcr.io/cloudnative-pg/postgresql:${var.cnpg_postgres_image_tag}"
+
+          command = [
+            "/bin/sh",
+            "-c",
+            # replace() strips carriage returns, and it is load-bearing rather
+            # than tidy. A heredoc carries this file's own line endings into
+            # the string verbatim, and a CRLF checkout (e.g. git's default
+            # core.autocrlf=true on Windows) would otherwise feed the
+            # container's dash a `then\r` it does not recognise as the
+            # keyword, dying on the script's own first `if`.
+            replace(<<-EOT
+              attempt=0
+              until pg_isready -q -h '${local.cnpg_service_host}' -p 5432; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge ${floor(var.cnpg_ready_timeout / 2)} ]; then
+                  echo "Postgres at ${local.cnpg_service_host} did not accept connections within ${var.cnpg_ready_timeout}s (cnpg_ready_timeout). The CloudNativePG Cluster ${local.cnpg_cluster_name} is still not serving: check 'kubectl get cluster -n ${local.namespace_name}' and the operator's logs. Raise cnpg_ready_timeout if this is a healthy cluster that bootstraps slowly rather than a wedged one." >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+            EOT
+            , "\r", "")
+          ]
+
+          # Sized for a shell loop around pg_isready, and declared rather than
+          # omitted so the Job still schedules in a namespace whose
+          # ResourceQuota requires every container to state requests.
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "128Mi"
+            }
+          }
+
+          # Runs unprivileged so the Job still schedules if the caller puts a
+          # restricted Pod Security Standard on the namespace. 26 is the
+          # postgres user in the operand image.
+          security_context {
+            allow_privilege_escalation = false
+            run_as_non_root            = true
+            run_as_user                = 26
+            capabilities { drop = ["ALL"] }
+            seccomp_profile { type = "RuntimeDefault" }
+          }
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  # Matches the script's own deadline (cnpg_ready_timeout) plus a 5-minute
+  # buffer for Job scheduling and the image pull, the same margin the
+  # original fixed 15m carried over the script's original fixed 10m.
+  timeouts {
+    create = "${var.cnpg_ready_timeout + 300}s"
+  }
+
+  depends_on = [kubectl_manifest.cnpg_cluster]
+}
+
 # ── PgBouncer connection pooler ───────────────────────────────────────────────
 # Only created when cnpg_pooler_enabled and the CNPG backend is selected. The
 # Pooler is a CloudNativePG resource attached to the Cluster above: the caller
@@ -177,22 +439,43 @@ resource "kubectl_manifest" "cnpg_pooler" {
       name      = local.cnpg_pooler_name
       namespace = local.namespace_name
     }
-    spec = {
-      cluster   = { name = local.cnpg_cluster_name }
-      instances = var.cnpg_pooler_instances
-      type      = "rw"
+    spec = merge(
+      {
+        cluster   = { name = local.cnpg_cluster_name }
+        instances = var.cnpg_pooler_instances
+        type      = "rw"
 
-      pgbouncer = {
-        poolMode = var.cnpg_pooler_mode
+        pgbouncer = {
+          poolMode = var.cnpg_pooler_mode
 
-        # PgBouncer wants strings, and yamlencode would otherwise render these
-        # as YAML integers against a field CNPG types as map[string]string.
-        parameters = {
-          max_client_conn   = tostring(var.cnpg_pooler_max_client_conn)
-          default_pool_size = tostring(var.cnpg_pooler_pool_size)
+          # PgBouncer wants strings, and yamlencode would otherwise render these
+          # as YAML integers against a field CNPG types as map[string]string.
+          parameters = {
+            max_client_conn   = tostring(var.cnpg_pooler_max_client_conn)
+            default_pool_size = tostring(var.cnpg_pooler_pool_size)
+          }
         }
-      }
-    }
+      },
+
+      # CNPG merges this template over the pod it generates, so naming the
+      # pgbouncer container with only resources set sizes it without touching
+      # anything else. Null at every pooler sizing input (the default)
+      # renders no template key at all, identical to today's BestEffort
+      # pooler. Once the pooler is on, every database connection runs through
+      # these pods, which is why it is worth sizing deliberately.
+      local.cnpg_pooler_resources != null ? {
+        template = {
+          spec = {
+            containers = [
+              {
+                name      = "pgbouncer"
+                resources = local.cnpg_pooler_resources
+              },
+            ]
+          }
+        }
+      } : {},
+    )
   })
 
   server_side_apply = true
@@ -270,7 +553,102 @@ check "cnpg_backup_needs_barman_in_the_image" {
 # combination either; it just resolves somehow.
 check "cnpg_backup_and_a_wal_archiving_plugin_conflict" {
   assert {
-    condition     = !(local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) && (var.cnpg_plugins == null ? false : try(anytrue([for p in var.cnpg_plugins : try(p.isWALArchiver == true, false)]), false)))
+    condition     = !(local.cnpg_enabled && try(var.cnpg_backup.barmanObjectStore != null, false) && local.cnpg_has_wal_archiving_plugin)
     error_message = "cnpg_backup carries barmanObjectStore and cnpg_plugins declares a plugin with isWALArchiver = true; both claim the WAL archive command, and which one wins is not yours to choose. Keep exactly one: clear barmanObjectStore from cnpg_backup to archive through the plugin, or drop the plugin's isWALArchiver to stay on the in-tree path."
+  }
+}
+
+# ── Diagnostic: Postgres connection budget vs. known max_connections ─────────
+# Opt-in (postgres_connection_budget_check_enabled, default false): the
+# module's own default autoscaler ceilings already exceed the stock
+# PostgreSQL default of 100, so this stays off until a caller has settled on
+# both a database size and replica ceilings and wants this advisory guard
+# against a later regression.
+#
+# Unlike the GCP and Azure siblings, this module never has to guess
+# max_connections from an instance-type or SKU table: on the cnpg path the
+# Cluster this file renders always sets spec.postgresql.parameters.
+# max_connections to cnpg_max_connections (see kubectl_manifest.cnpg_cluster
+# above), so that input IS the known value, exactly. On the external path the
+# module manages nothing on the server, so the model falls back to
+# PostgreSQL's own stock default of 100 rather than staying silent, which is
+# the one place this check departs from its siblings: it still gives an
+# answer instead of declining to guess.
+#
+# db_postgresdb_pool_size's own description already asks callers to budget
+# this arithmetic by hand: pool size times the modeled replica ceiling,
+# against max_connections. This check does that arithmetic at plan time.
+#
+# Reused directly from scaling.tf's own demand model rather than duplicated:
+# main never scales past 1 (no multiMain, no hpa.main in this module's
+# always-single-main topology), worker's ceiling is
+# n8n_worker_keda_max_replicas regardless of whether KEDA or the chart's CPU
+# HPA is driving it, and webhook processor's is n8n_webhook_hpa_max_replicas
+# regardless of n8n_webhook_hpa_enabled, matching
+# local.n8n_peak_cpu_request_millis's own unconditional use of both.
+#
+# Gaps that make a silent check not proof the ceilings fit:
+#   - The CNPG Cluster is managed without ignore_changes on postgresql.parameters,
+#     so a max_connections set outside Terraform is overwritten on the next
+#     apply rather than invisible, but a value changed and not yet re-applied
+#     disagrees with this model until the next plan.
+#   - PostgreSQL carves superuser_reserved_connections out of max_connections
+#     (3 by default), and CNPG's own instance manager, replication and
+#     metrics connections take more; none of that is subtracted here.
+#   - The model counts configured steady-state ceilings, not a rolling
+#     update's transient extra pod.
+#   - With n8n_webhook_hpa_enabled = false the chart's own autoscaling is
+#     replaced by nothing this module tracks; a caller-owned autoscaler can
+#     scale past n8n_webhook_hpa_max_replicas, and the model still uses it as
+#     the ceiling.
+#   - The model assumes every pod connects directly to the Cluster. Behind
+#     cnpg_pooler_enabled, the Pooler sets the number of real server
+#     connections (cnpg_pooler_pool_size x cnpg_pooler_instances, itself
+#     validated against cnpg_max_connections above), so this model does not
+#     apply and the check should stay off.
+locals {
+  postgres_known_max_connections = local.cnpg_enabled ? var.cnpg_max_connections : 100
+
+  n8n_postgres_peak_connections = var.db_postgresdb_pool_size * (
+    1 +
+    var.n8n_worker_keda_max_replicas +
+    var.n8n_webhook_hpa_max_replicas
+  )
+}
+
+check "postgres_pool_size_fits_known_max_connections" {
+  assert {
+    condition = (var.postgres_connection_budget_check_enabled && !local.cnpg_pooler_enabled) ? (
+      local.n8n_postgres_peak_connections <= local.postgres_known_max_connections
+    ) : true
+    error_message = join("", [
+      "db_postgresdb_pool_size (${var.db_postgresdb_pool_size}) times the modeled replica ceiling ",
+      "(1 main + ${var.n8n_worker_keda_max_replicas} worker + ${var.n8n_webhook_hpa_max_replicas} webhook processor) ",
+      "demands up to ${local.n8n_postgres_peak_connections} connections at full scale-out, more than ",
+      local.cnpg_enabled ? "cnpg_max_connections (${local.postgres_known_max_connections})." : "PostgreSQL's own stock default max_connections (100) on the external path, which this module does not manage and cannot raise for you.",
+      " Lower db_postgresdb_pool_size, lower the replica ceilings (n8n_worker_keda_max_replicas, n8n_webhook_hpa_max_replicas), ",
+      local.cnpg_enabled ? "or raise cnpg_max_connections (or turn on cnpg_pooler_enabled, which removes pod count from the arithmetic entirely)." : "or raise max_connections on the external server and keep it in sync with this check by hand.",
+      " This diagnostic is advisory and does not fail the plan.",
+    ])
+  }
+}
+
+# Advisory, never failing a plan: docs/operations.md has said "no backups by
+# default" since the Backups section existed, and a warning in the docs is
+# read once while a warning in the plan is read every time. Silenced by
+# fixing the thing (either backup input) or by cnpg_backup_acknowledged,
+# which records that the trade was deliberate.
+#
+# cnpg_plugins is checked for a declared WAL archiver specifically, not just
+# non-null: the CNPG-I plugin interface covers more than backups, so a
+# plugin list with none of its entries carrying isWALArchiver = true leaves
+# a cluster exactly as unbacked as an empty one, and silently passing it
+# here would be the worse failure mode cubic flagged.
+check "cnpg_has_no_backup_configured" {
+  assert {
+    condition = local.cnpg_enabled && var.cnpg_backup_acknowledged == null ? !(
+      var.cnpg_backup == null && !local.cnpg_has_wal_archiving_plugin
+    ) : true
+    error_message = "postgres_backend = \"cnpg\" with neither cnpg_backup nor a WAL-archiving entry in cnpg_plugins (isWALArchiver = true) set, so this deployment has no backups. The database's only copy is its PVC, and between you and every workflow, credential and execution it holds are a `terraform destroy` and a StorageClass whose reclaim policy is probably Delete. Losing the node or the volume loses the instance. Set cnpg_backup for the in-tree barmanObjectStore path, or cnpg_plugins for the Barman Cloud Plugin, which is where CloudNativePG's backup surface is moving; docs/operations.md has a worked example of both, including the Backup or ScheduledBackup resource that takes the base backup and stays yours to create. If the volumes are snapshotted by something outside this module, or this is a scratch deployment where losing the database costs nothing, set cnpg_backup_acknowledged to true or false to silence this without configuring either backup input."
   }
 }

@@ -1,0 +1,34 @@
+# Shell scripts must be LF whatever the checkout platform. Committed or
+# checked out with CRLF they do not run on Linux at all: bash reads the
+# carriage return as part of the shebang argument and of every command, so
+# the first thing that happens is
+#
+#   smoke-test.sh: line 32: $'\r': command not found
+#   smoke-test.sh: line 33: set: pipefail: invalid option name
+#
+# The repository's index is already all-LF; these rules pin the working tree
+# to match on every platform instead of following each contributor's
+# core.autocrlf.
+*.sh text eol=lf
+
+# Same reasoning for anything else consumed by a Linux tool rather than by an
+# editor. Terraform itself is indifferent, but a mixed-ending file makes every
+# diff after a `terraform fmt` on the other platform unreadable.
+*.tf text eol=lf
+*.tftest.hcl text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+
+# Markdown too: the READMEs are generated in part by terraform-docs, which
+# writes LF, and `terraform-docs --output-check` compares its LF output
+# against the file on disk. Without this line git rewrites those files to
+# CRLF on a Windows checkout, so the docs check reports stale files whose
+# committed bytes are identical, and "fixing" it commits line-ending churn
+# with no visible change. eol=lf rather than plain `text` because it has to
+# win on every platform, not follow core.autocrlf.
+#
+# After adding a rule here, run `git add --renormalize .` once so the index
+# matches; existing checkouts otherwise keep the endings they were cloned
+# with.
+*.md text eol=lf

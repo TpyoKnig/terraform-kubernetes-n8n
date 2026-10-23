@@ -54,6 +54,13 @@ ui_host = "n8n.example.com"
 # postgres_lan_ip = "192.168.1.50"
 # metrics_lan_ip  = "192.168.1.51"
 
+# OTLP traces default to this lab's own collector (Grafana Alloy). Point
+# otel_endpoint at a different collector you run, or set it to null to turn
+# tracing off entirely; /metrics stays on regardless, since it is scraped
+# rather than pushed and needs no collector.
+# otel_endpoint = "http://alloy-otlp.monitoring.svc.cluster.local:4318"
+# otel_endpoint = null
+
 # ── Shared storage (optional) ─────────────────────────────────────────────────
 # Queue mode runs main, worker and webhook-processor pods and they share no
 # filesystem, so anything one writes to local disk is invisible to the others.

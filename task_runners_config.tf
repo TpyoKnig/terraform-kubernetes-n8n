@@ -2,20 +2,42 @@
 # SPDX-License-Identifier: MIT
 
 # ── Task runner allowlist ─────────────────────────────────────────────────────
-# Chart 1.11.0's default launcher config sets N8N_RUNNERS_STDLIB_ALLOW="" and
-# N8N_RUNNERS_EXTERNAL_ALLOW="", which blocks every Python import (including
-# stdlib like time / math). For a k8s-backend default the Python task runner
-# should be usable out of the box, so this ConfigMap replaces the chart's
-# default with one that permits stdlib and, optionally, external packages via
-# var.n8n_python_external_allow.
+# The n8nio/runners image ships a launcher config whose defaults are
+# N8N_RUNNERS_STDLIB_ALLOW="" and N8N_RUNNERS_EXTERNAL_ALLOW="", which blocks
+# every Python import, stdlib like time / math included. The chart does not set
+# those; it mounts whatever config it is pointed at, and with no
+# taskRunners.customConfig it leaves the image's own file in place.
+#
+# For a k8s-backend default the Python task runner should be usable out of the
+# box, so this ConfigMap supplies a config permitting stdlib and, optionally,
+# external packages via var.n8n_python_external_allow.
+#
+# Chart 1.17.0 is what n8n_chart_version pins and what this file is written
+# against: it declares taskRunners.customConfig (values.yaml:144-149) and mounts
+# the named ConfigMap at /etc/n8n-task-runners.json (deployment-main.yaml).
+#
+# Standing risk: this mounted config REPLACES the runners image's own
+# launcher config wholesale, including command, args and interpreter paths
+# (/usr/local/bin/node, /opt/runners/task-runner-python/.venv/bin/python)
+# that belong to that image, not to this module. A runners-image release
+# that moves any of those paths breaks both the JavaScript and Python
+# runners at once, silently, because the mounted config wins over whatever
+# the image ships. See docs/upgrading-n8n.md for the pre-bump step that
+# catches this before it reaches a cluster.
 
 locals {
-  # N8N_RUNNERS_MAX_CONCURRENCY, or nothing at all. The chart has no typed
-  # value for it in 1.10.0 or 1.11.0 and no hook for adding env to the sidecar,
-  # so env-overrides in this ConfigMap is the only place it can be set. That is
-  # also the correct place: the runner process reads it (BaseRunnerConfig for
+  # N8N_RUNNERS_MAX_CONCURRENCY, or nothing at all. The chart has no typed value
+  # for it, so it goes in the env-overrides block of this ConfigMap. That is the
+  # correct place regardless: the runner process reads it (BaseRunnerConfig for
   # JavaScript, TaskRunnerConfig for Python), not n8n, so config.extraEnv would
   # put it on containers that never look at it.
+  #
+  # Not the only possible place: the chart also has taskRunners.extraEnv,
+  # rendered into the sidecar by the taskRunnerSidecarEnv define in
+  # _configmap-env.tpl, which would reach the sidecar's environment too. This
+  # stays in the ConfigMap because the launcher's own config file is where the
+  # runner's settings belong and the module already renders one, not because
+  # the chart offers no alternative.
   #
   # Omitted entirely when null, rather than defaulted to a number here, because
   # the two runners disagree about the default: 10 for JavaScript, 5 for

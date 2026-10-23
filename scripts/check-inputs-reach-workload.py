@@ -3,7 +3,25 @@
 # tflint's terraform_unused_declarations cannot see these: a `check` block
 # reference counts as a use, so an input consulted only by an assertion looks
 # used while doing nothing.
-import io, re, os, glob
+#
+# Two passes, because the first one alone can report every input live while a
+# rendered name is still wrong:
+#
+#   1. Reference pass. Does `var.<name>` appear outside a check block?
+#   2. Name pass. For every description claiming "Maps to <SOME_ENV_VAR>", is a
+#      variable of that name actually emitted anywhere in the root?
+#
+# Pass 1 cannot see a misrendered name: an input can be read, converted and
+# rendered into config.extraEnv under the wrong key while n8n reads a
+# different one, and the input is live by every measure pass 1 has while
+# reaching nothing. Pass 2 is the mechanical diff that catches that: the
+# description is right and the rendering is wrong, and comparing them costs
+# nothing.
+#
+# What pass 2 still cannot see: a name that is emitted correctly but into a
+# values key the chart ignores on a given path. That needs the chart's own
+# templates, which is what tests/defaults.tftest.hcl and `helm template` cover.
+import io, re, os, glob, sys
 
 ROOT = [f for f in glob.glob("*.tf") if f != "variables.tf"]
 
@@ -25,7 +43,17 @@ def check_ranges(text):
 
 names = re.findall(r'^variable "([^"]+)"', io.open("variables.tf", encoding="utf-8").read(), re.M)
 
-live, dead, unref = [], [], []
+# Acknowledgement inputs exist only to be read by a check block: their whole
+# job is to record that a warned-about trade was deliberate, and rendering
+# them anywhere would be a bug, not a fix. Naming them here is the deliberate
+# opt-out; anything else that is check-only is still a finding. This set
+# covers inputs that only gate a check block, nothing more.
+ACK_ONLY = {
+    "cnpg_backup_acknowledged",
+    "postgres_connection_budget_check_enabled",
+}
+
+live, dead, unref, ack_rendered = [], [], [], []
 for v in names:
     total = 0
     outside = 0
@@ -38,12 +66,18 @@ for v in names:
                 outside += 1
     if total == 0:
         unref.append(v)
-    elif outside == 0:
+    elif v in ACK_ONLY and outside > 0:
+        # The whole point of ACK_ONLY is that the input is read nowhere but a
+        # check block; a reference outside one means either the comment's
+        # claim is wrong or the input started rendering something nobody
+        # noticed. Either way it is a finding, not a pass.
+        ack_rendered.append((v, outside))
+    elif outside == 0 and v not in ACK_ONLY:
         dead.append((v, total))
     else:
         live.append(v)
 
-print(f"inputs: {len(names)}  live: {len(live)}  check-only (DEAD): {len(dead)}  unreferenced: {len(unref)}")
+print(f"inputs: {len(names)}  live: {len(live)}  check-only (DEAD): {len(dead)}  unreferenced: {len(unref)}  ack-only-but-rendered: {len(ack_rendered)}")
 print()
 if dead:
     print("DECLARED AND VALIDATED BUT NEVER WIRED:")
@@ -53,3 +87,135 @@ if unref:
     print("\nNOT REFERENCED AT ALL IN THE ROOT:")
     for v in unref:
         print("  ", v)
+if ack_rendered:
+    print("\nACK_ONLY BUT REFERENCED OUTSIDE A CHECK BLOCK:")
+    for v, n in ack_rendered:
+        print(f"   {v}   ({n} references outside a check block)")
+    print("   ACK_ONLY means the input exists only to be read by a check; a")
+    print("   reference outside one means either it now renders something and")
+    print("   should come off this list, or something is reading it by mistake.")
+
+# Pass 2: every "Maps to <ENV_VAR>" claim must name a variable the root emits.
+#
+# Claims are read per variable block so a failure can name the input, not just
+# the environment variable. The threshold of four characters keeps prose words
+# out; every real n8n variable is far longer. Backtick-quoting the name right
+# after "Maps to" is accepted even though no current description does it, so
+# adding one later does not silently fall out of pass 2.
+#
+# Known blind spot, deliberately not chased: a description that names its
+# chart value first and the env var afterward, in parentheses, because the
+# chart value's own dotted path reads better leading the sentence (e.g.
+# n8n_queue_worker_lock_duration: "Maps to the chart's redis.worker.lockDuration
+# value (QUEUE_WORKER_LOCK_DURATION on the pods)"). Those inputs render into a
+# nested chart value key, not a literal config.extraEnv name=value entry; the
+# env var in the parenthetical is the chart's own template translating that
+# key, not something this module's code ever writes as `name = "..."`, so
+# EMITTED below has nothing to find for them even when the claim is read
+# correctly. Checking those needs the chart's own templates
+# (tests/scripts/check-n8n-chart.sh, `helm template`), not a grep over this
+# repo's root .tf files.
+CLAIM = re.compile(r"Maps to (?:the )?`?([A-Z][A-Z0-9_]{3,})`?")
+EMITTED = re.compile(r'name\s*=\s*"([A-Z][A-Z0-9_]{3,})"')
+
+variables_text = io.open("variables.tf", encoding="utf-8").read()
+blocks = re.split(r'^(?=variable ")', variables_text, flags=re.M)
+
+claims = []  # (input name, claimed env var)
+for block in blocks:
+    m = re.match(r'variable "([^"]+)"', block)
+    if not m:
+        continue
+    seen = set()
+    for env in CLAIM.findall(block):
+        if env not in seen:
+            seen.add(env)
+            claims.append((m.group(1), env))
+
+root_text = {f: io.open(f, encoding="utf-8").read() for f in ROOT}
+emitted = set()
+for t in root_text.values():
+    emitted |= set(EMITTED.findall(t))
+
+# Not just "is this env var emitted anywhere in the root": an input whose
+# claimed env var happens to be emitted by a wholly different input's own
+# rendering would otherwise pass despite rendering nothing (or the wrong
+# name) itself. Scoped to the same `{ name = ..., value = ... }` entry as one
+# of the claiming variable's own var.<name> references: entries in this repo
+# sit one per line or one per small multi-line block, so a neighbouring
+# entry's `name = "..."` must not satisfy a different input's claim.
+#
+# One shape still needs a step beyond the entry itself: a handful of entries
+# (e.g. N8N_REINSTALL_MISSING_PACKAGES) render a fixed literal value and are
+# gated entirely from outside, as `var.x ? [ { name = ..., value = "true" } ]
+# : []`; the var never appears inside the entry's own braces. For those the
+# tie to the claiming input is the one-line `var.<name> ? [` guard that opens
+# the list the entry lives in, checked on that single source line so it
+# cannot pick up an unrelated guard a line or more away.
+
+
+def container_spans(text):
+    """Every balanced `{...}` or `[...]` span in text, inner spans included."""
+    spans = []
+    stack = []
+    for i, ch in enumerate(text):
+        if ch in "{[":
+            stack.append(i)
+        elif ch in "}]" and stack:
+            start = stack.pop()
+            spans.append((start, i))
+    return spans
+
+
+root_spans = {f: container_spans(t) for f, t in root_text.items()}
+
+
+def enclosing_span(spans, start, end, min_size=0):
+    """Smallest span in spans, at least min_size long, containing [start, end)."""
+    best = None
+    for s, e in spans:
+        if s <= start and end <= e and (e - s) >= min_size and (best is None or (e - s) < (best[1] - best[0])):
+            best = (s, e)
+    return best
+
+
+def guards_with_its_own_variable(text, list_start, var_name):
+    line_start = text.rfind("\n", 0, list_start) + 1
+    line = text[line_start:list_start]
+    return re.search(r'\bvar\.' + re.escape(var_name) + r'\b\s*\?\s*$', line) is not None
+
+
+def rendered_by_its_own_variable(var_name, env_name):
+    pattern = re.compile(r'\bvar\.' + re.escape(var_name) + r'\b')
+    name_pattern = re.compile(r'name\s*=\s*"' + re.escape(env_name) + r'"')
+    for f, t in root_text.items():
+        spans = root_spans[f]
+        for nm in name_pattern.finditer(t):
+            entry = enclosing_span(spans, nm.start(), nm.end())
+            if not entry:
+                continue
+            if pattern.search(t[entry[0]:entry[1]]):
+                return True
+            parent = enclosing_span(spans, entry[0], entry[1], min_size=entry[1] - entry[0] + 1)
+            if parent and guards_with_its_own_variable(t, parent[0], var_name):
+                return True
+    return False
+
+
+unrendered = [
+    (v, env) for v, env in claims
+    if env not in emitted or not rendered_by_its_own_variable(v, env)
+]
+
+print(f"env-var claims: {len(claims)}  emitted names: {len(emitted)}  mismatched: {len(unrendered)}")
+if unrendered:
+    print("\nDESCRIPTION NAMES AN ENV VAR THE ROOT NEVER EMITS FROM THAT INPUT:")
+    for v, env in unrendered:
+        print(f"   {v}   claims {env}")
+    print("\n   Either the rendered name is misspelled, in which case n8n ignores")
+    print("   the setting and the input does nothing, or the description names")
+    print("   the wrong variable, or that variable renders only from a different")
+    print("   input's own code path. All three are worth failing over.")
+
+if dead or unref or unrendered or ack_rendered:
+    sys.exit(1)

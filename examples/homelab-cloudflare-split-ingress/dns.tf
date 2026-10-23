@@ -39,7 +39,17 @@ locals {
   } : {}
 }
 
-resource "cloudflare_record" "n8n" {
+# Renamed from cloudflare_record in the provider's v5 rewrite; this moved
+# block carries each for_each instance's existing state across by its
+# existing key ("editor"/"webhook") without a destroy/recreate. Safe to drop
+# once every caller has applied past this change (moved blocks are a
+# courtesy to existing state, not a permanent fixture).
+moved {
+  from = cloudflare_record.n8n
+  to   = cloudflare_dns_record.n8n
+}
+
+resource "cloudflare_dns_record" "n8n" {
   for_each = local.dns_hostnames
 
   zone_id = var.cloudflare_zone_id
@@ -47,6 +57,10 @@ resource "cloudflare_record" "n8n" {
   type    = "CNAME"
   content = "${var.cloudflare_tunnel_id}.cfargotunnel.com"
   proxied = true
+  # Required in v5 (was computed/optional in v4, which always sent 1 for a
+  # proxied record). 1 means "automatic": Cloudflare ignores TTL on a
+  # proxied record regardless, but the field still has to be sent.
+  ttl = 1
 
   comment = "n8n ${each.key}, managed by terraform-kubernetes-n8n examples/homelab-cloudflare-split-ingress"
 }

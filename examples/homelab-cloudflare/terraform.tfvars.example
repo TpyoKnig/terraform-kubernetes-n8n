@@ -23,6 +23,11 @@ cloudflare_tunnel_id = "00000000-0000-0000-0000-000000000000"
 # then scale on Redis queue depth instead of CPU.
 # keda_installed = false
 
+# How many proxies append to X-Forwarded-For before a request reaches n8n.
+# 2 = ingress-nginx + the Cloudflare edge. Raise for a WAF or another proxy.
+# Must be a whole number from 1 to 10.
+# proxy_hops = 2
+
 # Path to the kubeconfig the kubernetes and helm providers authenticate with.
 # Defaults to the standard kubeconfig location; override for other clusters.
 # kubeconfig_path = "~/.kube/config"
@@ -47,6 +52,13 @@ cloudflare_tunnel_id = "00000000-0000-0000-0000-000000000000"
 # default, and no Service is created then.
 # postgres_lan_ip = "192.168.1.50"
 # metrics_lan_ip  = "192.168.1.51"
+
+# OTLP traces default to this lab's own collector (Grafana Alloy). Point
+# otel_endpoint at a different collector you run, or set it to null to turn
+# tracing off entirely; /metrics stays on regardless, since it is scraped
+# rather than pushed and needs no collector.
+# otel_endpoint = "http://alloy-otlp.monitoring.svc.cluster.local:4318"
+# otel_endpoint = null
 
 # ── Shared storage (optional) ─────────────────────────────────────────────────
 # Queue mode runs main, worker and webhook-processor pods and they share no

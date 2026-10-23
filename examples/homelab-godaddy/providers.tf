@@ -24,6 +24,41 @@ provider "kubectl" {
 # and GODADDY_API_SECRET environment variables over putting either in
 # terraform.tfvars.
 provider "godaddy-dns" {
-  api_key    = var.godaddy_api_key
-  api_secret = var.godaddy_api_secret
+  # A provider block cannot be made conditional, and the plugin refuses to
+  # configure without both halves of the credential, before anything asks
+  # whether a resource uses them. That failed every plan on the documented
+  # no-DNS path, where the caller leaves godaddy_domain null because their
+  # records are managed elsewhere.
+  #
+  # An explicit godaddy_api_key/godaddy_api_secret always wins, even with
+  # godaddy_domain null: toggling the domain off while a record from an
+  # earlier apply is still in state schedules a destroy of that record
+  # (dns.tf's count drops to 0), and the provider needs real credentials to
+  # send that delete. Feeding it placeholders there, as an earlier version of
+  # this file did, makes GoDaddy reject the call and strands the record in
+  # state.
+  #
+  # Only when both typed credentials are unset AND the domain is null do the
+  # placeholders apply: gating each credential against the other typed
+  # variable as well as godaddy_domain, not just against godaddy_domain alone,
+  # keeps a partially-typed credential (one set explicitly, the other left for
+  # its environment variable) from being shadowed by a placeholder on the
+  # destroy path. dns.tf creates no record on the genuine both-unset path, so
+  # the placeholders are never sent to GoDaddy there. A caller who relies on
+  # both GODADDY_API_KEY and GODADDY_API_SECRET instead of either typed
+  # variable still hits the placeholders on a destroy with the domain already
+  # null, because the env vars are invisible here: pass the credentials
+  # through terraform.tfvars for that one apply, or `terraform state rm` the
+  # record.
+  #
+  # Null (rather than a placeholder default) on the explicit-value branch is
+  # what lets the plugin fall back to GODADDY_API_KEY / GODADDY_API_SECRET:
+  # explicit values take precedence over the environment variables, so
+  # defaulting the variables to placeholders would shadow them.
+  api_key = var.godaddy_api_key != null ? var.godaddy_api_key : (
+    var.godaddy_domain == null && var.godaddy_api_secret == null ? "placeholder_unused_no_dns_record_managed" : null
+  )
+  api_secret = var.godaddy_api_secret != null ? var.godaddy_api_secret : (
+    var.godaddy_domain == null && var.godaddy_api_key == null ? "placeholder_unused_no_dns_record_managed" : null
+  )
 }

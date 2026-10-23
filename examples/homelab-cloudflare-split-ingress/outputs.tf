@@ -124,5 +124,5 @@ output "webhook_path_prefixes" {
 
 output "dns_records" {
   description = "Hostnames this example created proxied CNAMEs for. Empty when cloudflare_zone_id is null, in which case both names are yours to publish."
-  value       = [for r in cloudflare_record.n8n : r.name]
+  value       = [for r in cloudflare_dns_record.n8n : r.name]
 }

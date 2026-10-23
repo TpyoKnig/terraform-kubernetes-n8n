@@ -19,6 +19,12 @@ mock_provider "time" {}
 
 variables {
   n8n_domain = "n8n.test.example.com"
+
+  # cnpg is the default backend and no backup is the default state, so
+  # check.cnpg_has_no_backup_configured fires on every run that has not
+  # configured one. Acknowledged once here; the runs that are about the check
+  # itself override it.
+  cnpg_backup_acknowledged = true
 }
 
 run "postgres_backend_defaults_to_cnpg" {
@@ -150,6 +156,14 @@ run "keda_attestation_swaps_cpu_hpa_for_queue_depth" {
     condition     = alltrue([for t in local.k8s_values_keda.keda.worker.triggers : t.metadata.passwordFromEnv == "QUEUE_BULL_REDIS_PASSWORD"])
     error_message = "KEDA must resolve the Redis password from the worker pod's environment, not carry it in the ScaledObject."
   }
+
+  # No TriggerAuthentication object exists to name: passwordFromEnv above
+  # resolves the token from the worker container directly. An
+  # authenticationRef = { name = "" } key used to be rendered regardless.
+  assert {
+    condition     = alltrue([for t in local.k8s_values_keda.keda.worker.triggers : !contains(keys(t), "authenticationRef")])
+    error_message = "A KEDA trigger must not carry an authenticationRef naming a TriggerAuthentication object that cannot exist."
+  }
 }
 
 run "webhook_autoscaling_is_owned_by_the_chart" {
@@ -192,11 +206,11 @@ run "kubernetes_ingress_serves_one_host_by_default" {
     condition     = length(local.k8s_values_ingress.ingress.tls) == 1
     error_message = "One TLS block covering every host, so cert-manager issues a single Certificate."
   }
-
-  assert {
-    condition     = length(module.cluster_capacity) == 1
-    error_message = "The kubernetes backend must instantiate modules/cluster-capacity: it is the only sizing diagnostic on this path."
-  }
+  # The third assertion this run used to carry here, that
+  # modules/cluster-capacity actually instantiates on this path, now lives in
+  # tests/opentofu-gaps/cluster-capacity-module-instantiation-gap.tftest.hcl:
+  # OpenTofu v1.13.2's test runner cannot resolve length(module.x) for a
+  # count-conditioned module with zero output blocks (see that file's header).
 }
 
 # The node read is an ordinary data source, so a plan somewhere the cluster is
@@ -278,11 +292,12 @@ run "kubernetes_ingress_serves_every_configured_domain" {
   }
 }
 
-# WEBHOOK_URL sits in kubernetes_secret.n8n, but the chart wires only four keys
-# from secretRefs.existingSecret, so on this backend it was never read. n8n then
-# built webhook URLs from N8N_PROTOCOL + N8N_HOST - and N8N_PROTOCOL is "http",
-# because TLS terminates at the ingress. Every advertised URL was http:// for an
-# https:// endpoint, and n8n_webhook_url did nothing at all.
+# N8N_WEBHOOK_URL sits in kubernetes_secret.n8n, but the chart wires only
+# four keys from secretRefs.existingSecret, so on this backend it was never
+# read. n8n then built webhook URLs from N8N_PROTOCOL + N8N_HOST - and
+# N8N_PROTOCOL is "http", because TLS terminates at the ingress. Every
+# advertised URL was http:// for an https:// endpoint, and n8n_webhook_url
+# did nothing at all.
 run "webhook_url_reaches_the_pods_on_the_kubernetes_backend" {
   command = plan
 
@@ -295,7 +310,7 @@ run "webhook_url_reaches_the_pods_on_the_kubernetes_backend" {
 
   assert {
     condition     = local.k8s_values_webhook.webhook.url == "https://n8n.test.example.com"
-    error_message = "With no override, WEBHOOK_URL must be https:// against the canonical ingress host."
+    error_message = "With no override, N8N_WEBHOOK_URL must be https:// against the canonical ingress host."
   }
 
   # On a single host the callback follows the same name as everything else.
@@ -307,12 +322,12 @@ run "webhook_url_reaches_the_pods_on_the_kubernetes_backend" {
   }
 
   # Through the chart's typed key, never as a second config.extraEnv entry: the
-  # chart already emits WEBHOOK_URL from its own ConfigMap, and two entries of
-  # one name in a container's env list fail the strategic merge patch on every
-  # later helm upgrade.
+  # chart already emits N8N_WEBHOOK_URL from its own ConfigMap, and two entries
+  # of one name in a container's env list fail the strategic merge patch on
+  # every later helm upgrade.
   assert {
-    condition     = !contains([for e in local.k8s_values_config.config.extraEnv : e.name], "WEBHOOK_URL")
-    error_message = "WEBHOOK_URL must not also be appended to config.extraEnv; the duplicate breaks helm upgrade."
+    condition     = !contains([for e in local.k8s_values_config.config.extraEnv : e.name], "N8N_WEBHOOK_URL")
+    error_message = "N8N_WEBHOOK_URL must not also be appended to config.extraEnv; the duplicate breaks helm upgrade."
   }
 }
 
@@ -389,12 +404,14 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
   }
 
   # webhook.url is deliberately emptied on this path, which is the opposite of
-  # what the single-host run above asserts. Chart 1.10.0 derives
-  # N8N_EDITOR_BASE_URL from webhook.url when it has no ingress host to read,
-  # so leaving it set labels the editor with the webhook hostname and every
-  # OAuth2 redirect URI 404s. Emptying it suppresses both chart keys and both
-  # configMapKeyRef entries, so the module can set them from extraEnv without
-  # the duplicate that breaks helm upgrade.
+  # what the single-host run above asserts. Chart 1.16.0's configmap.yaml
+  # falls back to webhook.url for N8N_EDITOR_BASE_URL when it has no editor.url
+  # (this module never sets it) and no ingress host to read, so leaving
+  # webhook.url set labels the editor with the webhook hostname and every
+  # OAuth2 redirect URI 404s. Emptying it suppresses both chart keys
+  # (N8N_WEBHOOK_URL and N8N_EDITOR_BASE_URL) and both configMapKeyRef
+  # entries, so the module can set them from extraEnv without the duplicate
+  # that breaks helm upgrade.
   assert {
     condition     = local.k8s_values_webhook.webhook.url == ""
     error_message = "On a split ingress the chart's webhook.url must be empty so it renders neither URL key."
@@ -403,9 +420,9 @@ run "webhook_url_can_name_a_different_host_than_the_editor" {
   assert {
     condition = contains(
       [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
-      "WEBHOOK_URL=https://hooks.test.example.com",
+      "N8N_WEBHOOK_URL=https://hooks.test.example.com",
     )
-    error_message = "Emptying webhook.url drops the chart's WEBHOOK_URL, so extraEnv must carry it back."
+    error_message = "Emptying webhook.url drops the chart's N8N_WEBHOOK_URL, so extraEnv must carry it back."
   }
 
   # The regression this whole path exists for.
@@ -536,6 +553,103 @@ run "kubernetes_ingress_normalizes_case_variant_duplicates" {
   }
 }
 
+# A mixed-case k8s_ingress_host passed every existing check (n8n_domain's
+# FQDN validation accepts A-Z) and produced a lowercased Ingress host list,
+# but the TLS Secret name, the editor base URL and the webhook URL fallback
+# all kept the caller's original case: a RFC 1123 Secret name is
+# lowercase-only, so the apply failed on a generated internal name with an
+# error that never mentioned casing, and the two URL locals disagreed with
+# the routed, lowercased Ingress host.
+run "a_mixed_case_ingress_host_normalizes_everywhere_it_is_used" {
+  command = plan
+
+  variables {
+    postgres_backend = "cnpg"
+    redis_backend    = "valkey"
+    create_ingress   = true
+    k8s_ingress_host = "Editor.Test.Example.Com"
+  }
+
+  assert {
+    condition     = local.k8s_ingress_host_effective == "editor.test.example.com"
+    error_message = "k8s_ingress_host_effective must lower-case the override branch."
+  }
+
+  assert {
+    condition     = local.k8s_ingress_tls_secret == "editor-test-example-com-tls"
+    error_message = "The TLS Secret name must derive from the lower-cased host; Kubernetes Secret names are lowercase-only RFC 1123 subdomains."
+  }
+
+  assert {
+    condition     = local.k8s_editor_base_url == "https://editor.test.example.com"
+    error_message = "The editor base URL must use the lower-cased host."
+  }
+
+  assert {
+    condition     = local.k8s_webhook_url == "https://editor.test.example.com"
+    error_message = "The webhook URL fallback must use the lower-cased host."
+  }
+}
+
+# F-046: k8s_ingress_host becomes an Ingress host and the webhook fallback
+# address, so a typo used to be served rather than caught at plan time.
+run "k8s_ingress_host_rejects_a_malformed_hostname" {
+  command = plan
+
+  variables {
+    k8s_ingress_host = "not a host"
+  }
+
+  expect_failures = [var.k8s_ingress_host]
+}
+
+run "k8s_ingress_host_empty_string_still_falls_back" {
+  command = plan
+
+  variables {
+    k8s_ingress_host = ""
+  }
+
+  assert {
+    condition     = var.k8s_ingress_host == ""
+    error_message = "The empty string must stay the documented fall-back-to-n8n_domain spelling, not a rejected hostname."
+  }
+}
+
+# n8n_domain itself normalizes the same way when no k8s_ingress_host override
+# is set, since it is what N8N_HOST, the editor/webhook URL fallbacks and the
+# TLS secret name all fall back to.
+run "a_mixed_case_n8n_domain_normalizes_everywhere_it_is_used" {
+  command = plan
+
+  variables {
+    postgres_backend = "cnpg"
+    redis_backend    = "valkey"
+    create_ingress   = true
+    n8n_domain       = "N8N.Test.Example.com"
+  }
+
+  assert {
+    condition     = local.n8n_domain == "n8n.test.example.com"
+    error_message = "n8n_domain must be lower-cased once at its single source."
+  }
+
+  assert {
+    condition     = nonsensitive(kubernetes_secret.n8n[0].data["N8N_HOST"]) == "n8n.test.example.com"
+    error_message = "N8N_HOST must be lower-cased: it is what n8n advertises as its own identity."
+  }
+
+  assert {
+    condition     = local.k8s_ingress_tls_secret == "n8n-test-example-com-tls"
+    error_message = "The TLS Secret name must derive from the lower-cased n8n_domain fallback."
+  }
+
+  assert {
+    condition     = output.n8n_url == "https://n8n.test.example.com"
+    error_message = "n8n_url must report the lower-cased n8n_domain."
+  }
+}
+
 run "webhook_ingress_is_absent_when_the_caller_owns_routing" {
   command = plan
 
@@ -620,6 +734,565 @@ run "execution_limits_and_pruning_reach_the_chart" {
     condition     = !contains(keys(local.k8s_values_final.config), "executions")
     error_message = "config.executions must not be rendered; the chart only reads the top-level executions block."
   }
+}
+
+# F-015: the numeric execution/pruning inputs above used to accept anything a
+# `number` admits; each now floors and bounds to the spellings n8n actually
+# defines. One rejection probe per input, plus the execution_timeout_max
+# cross-check against execution_timeout.
+run "execution_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_execution_timeout = 3600.5
+  }
+
+  expect_failures = [var.n8n_execution_timeout]
+}
+
+run "execution_timeout_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_execution_timeout = 0
+  }
+
+  expect_failures = [var.n8n_execution_timeout]
+}
+
+run "execution_timeout_accepts_the_disabled_spelling" {
+  command = plan
+
+  variables {
+    n8n_execution_timeout = -1
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.timeout == -1
+    error_message = "-1 must still disable the timeout."
+  }
+}
+
+run "execution_timeout_max_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_execution_timeout_max = 7200.5
+  }
+
+  expect_failures = [var.n8n_execution_timeout_max]
+}
+
+run "execution_timeout_max_rejects_a_ceiling_below_the_default" {
+  command = plan
+
+  variables {
+    n8n_execution_timeout     = 7200
+    n8n_execution_timeout_max = 3600
+  }
+
+  expect_failures = [var.n8n_execution_timeout_max]
+}
+
+run "execution_timeout_max_allows_an_unlimited_ceiling_over_a_finite_default" {
+  command = plan
+
+  variables {
+    n8n_execution_timeout     = 7200
+    n8n_execution_timeout_max = -1
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.timeoutMax == -1
+    error_message = "An unlimited ceiling (-1) must be allowed over any finite default."
+  }
+}
+
+run "pruning_max_age_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_pruning_max_age = 168.5
+  }
+
+  expect_failures = [var.n8n_pruning_max_age]
+}
+
+run "pruning_max_age_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_pruning_max_age = 0
+  }
+
+  expect_failures = [var.n8n_pruning_max_age]
+}
+
+run "pruning_max_count_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_pruning_max_count = 15000.5
+  }
+
+  expect_failures = [var.n8n_pruning_max_count]
+}
+
+run "pruning_max_count_accepts_zero_as_no_limit" {
+  command = plan
+
+  variables {
+    n8n_pruning_max_count = 0
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.pruning.maxCount == 0
+    error_message = "0 must still mean no count limit."
+  }
+}
+
+# n8n_pruning_enabled, n8n_pruning_hard_delete_buffer,
+# n8n_pruning_hard_delete_interval and n8n_pruning_soft_delete_interval: the
+# four pruning inputs the fork carried that this module lacked. enabled
+# defaults true (today's hardcoded value, unchanged); the three cadence
+# inputs default null and are merged into executions.pruning only when set,
+# so an unconfigured deployment renders exactly what it always has (chart's
+# own hardDeleteBuffer/hardDeleteInterval/softDeleteInterval defaults apply
+# via Helm's values merge, same as before these inputs existed).
+run "pruning_cadence_defaults_render_no_keys" {
+  command = plan
+
+  assert {
+    condition     = local.k8s_values_final.executions.pruning.enabled == true
+    error_message = "n8n_pruning_enabled must default to true, matching today's hardcoded value."
+  }
+
+  assert {
+    condition = !(
+      contains(keys(local.k8s_values_final.executions.pruning), "hardDeleteBuffer") ||
+      contains(keys(local.k8s_values_final.executions.pruning), "hardDeleteInterval") ||
+      contains(keys(local.k8s_values_final.executions.pruning), "softDeleteInterval")
+    )
+    error_message = "At the defaults, none of the three cadence keys may be rendered: the chart's own values.yaml defaults must be what applies, exactly as before these inputs existed."
+  }
+}
+
+run "pruning_disabled_reaches_the_chart" {
+  command = plan
+
+  variables {
+    n8n_pruning_enabled = false
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.pruning.enabled == false
+    error_message = "n8n_pruning_enabled must reach the chart's top-level executions.pruning.enabled."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.pruning.maxAge == 336 && local.k8s_values_final.executions.pruning.maxCount == 10000
+    error_message = "maxAge/maxCount must still render while pruning is disabled, so the policy resumes unchanged if it is switched back on."
+  }
+}
+
+run "pruning_cadence_inputs_reach_the_chart_when_set" {
+  command = plan
+
+  variables {
+    n8n_pruning_hard_delete_buffer   = 2
+    n8n_pruning_hard_delete_interval = 30
+    n8n_pruning_soft_delete_interval = 120
+  }
+
+  assert {
+    condition = (
+      local.k8s_values_final.executions.pruning.hardDeleteBuffer == 2 &&
+      local.k8s_values_final.executions.pruning.hardDeleteInterval == 30 &&
+      local.k8s_values_final.executions.pruning.softDeleteInterval == 120
+    )
+    error_message = "Each pruning cadence input must reach its chart key: the chart renders the EXECUTIONS_DATA_*DELETE* env vars from exactly these."
+  }
+}
+
+run "pruning_hard_delete_buffer_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_pruning_hard_delete_buffer = 1.5
+  }
+
+  expect_failures = [var.n8n_pruning_hard_delete_buffer]
+}
+
+run "pruning_hard_delete_buffer_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_pruning_hard_delete_buffer = 0
+  }
+
+  expect_failures = [var.n8n_pruning_hard_delete_buffer]
+}
+
+run "pruning_hard_delete_interval_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_pruning_hard_delete_interval = 15.5
+  }
+
+  expect_failures = [var.n8n_pruning_hard_delete_interval]
+}
+
+run "pruning_hard_delete_interval_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_pruning_hard_delete_interval = 0
+  }
+
+  expect_failures = [var.n8n_pruning_hard_delete_interval]
+}
+
+run "pruning_soft_delete_interval_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_pruning_soft_delete_interval = 60.5
+  }
+
+  expect_failures = [var.n8n_pruning_soft_delete_interval]
+}
+
+run "pruning_soft_delete_interval_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_pruning_soft_delete_interval = 0
+  }
+
+  expect_failures = [var.n8n_pruning_soft_delete_interval]
+}
+
+# The three cadence env names are reserved exact names (no EXECUTIONS_DATA_
+# prefix in n8n_managed_env_prefixes), same shape as the EXECUTIONS_DATA_SAVE_*
+# reservations above.
+run "pruning_hard_delete_buffer_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_HARD_DELETE_BUFFER", value = "2" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "pruning_hard_delete_interval_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL", value = "30" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "pruning_soft_delete_interval_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL", value = "120" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# n8n_timezone: shape only, since the IANA database is not readable from
+# Terraform. A three-segment zone (America/Argentina/Buenos_Aires) and an
+# Etc/GMT+5-style offset must both still pass.
+run "timezone_rejects_an_empty_string" {
+  command = plan
+
+  variables {
+    n8n_timezone = ""
+  }
+
+  expect_failures = [var.n8n_timezone]
+}
+
+run "timezone_rejects_a_space_separated_name" {
+  command = plan
+
+  variables {
+    n8n_timezone = "New York"
+  }
+
+  expect_failures = [var.n8n_timezone]
+}
+
+run "timezone_accepts_a_three_segment_zone" {
+  command = plan
+
+  variables {
+    n8n_timezone = "America/Argentina/Buenos_Aires"
+  }
+
+  assert {
+    condition     = local.k8s_values_config.config.timezone == "America/Argentina/Buenos_Aires"
+    error_message = "A three-segment IANA zone must still be accepted and rendered."
+  }
+}
+
+# n8n's environment variable reference documents
+# N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES and
+# N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES. An earlier version of this module
+# emitted both without the NODE_ infix, so n8n never saw them and silently
+# fell back to its own limits; the misspellings were also absent from
+# n8n_managed_env_names, which left the correct names free for n8n_extra_env
+# and would have produced a duplicate env entry once the names were aligned.
+run "the_compression_limits_render_the_names_n8n_reads" {
+  command = plan
+
+  variables {
+    n8n_compression_max_decompressed_size_bytes = 1073741824
+    n8n_compression_max_zip_entries             = 250
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES", value = "1073741824" },
+    )
+    error_message = "n8n_compression_max_decompressed_size_bytes must render as N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES; without the NODE_ infix n8n ignores it."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES", value = "250" },
+    )
+    error_message = "n8n_compression_max_zip_entries must render as N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES; without the NODE_ infix n8n ignores it."
+  }
+
+  # Every name the module renders into config.extraEnv must be reserved, or
+  # the escape hatch can set the same variable a second time and wedge every
+  # later helm upgrade.
+  assert {
+    condition = alltrue([
+      for e in local.k8s_values_config.config.extraEnv :
+      contains(local.n8n_managed_env_names, e.name) ||
+      anytrue([for p in local.n8n_managed_env_prefixes : startswith(e.name, p)])
+    ])
+    error_message = "Every name the module renders into config.extraEnv must be reserved in n8n_managed_env_names or covered by a managed prefix."
+  }
+}
+
+# _helpers.tpl's n8n.taskRunnerContainer helper renders
+# `toYaml .Values.taskRunners.resources` into the sidecar container. The
+# module used to write these four quantities under resources.taskRunner, a
+# key no template in the chart reads and which the top-level resources block
+# (main, worker, webhookProcessor) does not define, so every sidecar ran on
+# the chart's own 100m/256Mi defaults no matter what the caller set.
+run "the_task_runner_resources_reach_the_sidecar_not_a_dead_key" {
+  command = plan
+
+  variables {
+    n8n_task_runners_enabled       = true
+    n8n_task_runner_cpu_request    = "250m"
+    n8n_task_runner_cpu_limit      = "1500m"
+    n8n_task_runner_memory_request = "640Mi"
+    n8n_task_runner_memory_limit   = "2Gi"
+  }
+
+  assert {
+    condition = (
+      local.k8s_values_task_runners.taskRunners.resources.requests.cpu == "250m" &&
+      local.k8s_values_task_runners.taskRunners.resources.requests.memory == "640Mi" &&
+      local.k8s_values_task_runners.taskRunners.resources.limits.cpu == "1500m" &&
+      local.k8s_values_task_runners.taskRunners.resources.limits.memory == "2Gi"
+    )
+    error_message = "The n8n_task_runner_* quantities must render into taskRunners.resources, the only key the chart reads for the sidecar container."
+  }
+
+  # Guards the regression directly: back under resources.taskRunner the
+  # values are still in the values tree, still visible in `helm get values`,
+  # and still read by nothing.
+  assert {
+    condition     = !contains(keys(local.k8s_values_resources.resources), "taskRunner")
+    error_message = "The top-level resources block must not carry a taskRunner key; the chart defines main, worker and webhookProcessor there and reads nothing else."
+  }
+}
+
+# -1 lets n8n_worker_concurrency govern instead: this used to default to 100,
+# which every worker read independently with no coordination between them
+# (a live finding, see CHANGELOG and the locals.tf comment above
+# k8s_values_executions). Both sides of that interaction are asserted here:
+# productionLimit renders -1 at the default, and queueMode.workerConcurrency
+# still reaches the chart from n8n_worker_concurrency independently of it.
+run "execution_concurrency_limit_defaults_to_unset_so_worker_concurrency_governs" {
+  command = plan
+
+  assert {
+    condition     = var.n8n_execution_concurrency_limit == -1
+    error_message = "n8n_execution_concurrency_limit must default to -1, so the worker's own --concurrency flag (n8n_worker_concurrency) governs instead of a fixed instance-wide cap."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.executions.concurrency.productionLimit == -1
+    error_message = "The default -1 must reach the chart's top-level executions.concurrency.productionLimit unchanged."
+  }
+
+  assert {
+    condition     = local.k8s_values_final.queueMode.workerConcurrency == var.n8n_worker_concurrency
+    error_message = "n8n_worker_concurrency must reach queueMode.workerConcurrency regardless of n8n_execution_concurrency_limit; the two are independent inputs that only interact at the n8n process level (worker.ts), not in this module's values tree."
+  }
+}
+
+run "execution_concurrency_limit_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_execution_concurrency_limit = 0
+  }
+
+  expect_failures = [var.n8n_execution_concurrency_limit]
+}
+
+run "execution_concurrency_limit_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_execution_concurrency_limit = 2.5
+  }
+
+  expect_failures = [var.n8n_execution_concurrency_limit]
+}
+
+# executions.data (saveOnError/saveOnSuccess/saveOnProgress/saveManualExecutions)
+# is rendered unconditionally by the chart, so unlike the limits above there is
+# no "stays dead" half to prove: the defaults already match what the chart
+# would bake in on its own, and this proves both the default wiring and a
+# caller override reach the same top-level executions.data key.
+run "execution_data_save_settings_reach_the_chart" {
+  command = plan
+
+  assert {
+    condition = (
+      local.k8s_values_final.executions.data.saveOnError == "all" &&
+      local.k8s_values_final.executions.data.saveOnSuccess == "all" &&
+      local.k8s_values_final.executions.data.saveOnProgress == false &&
+      local.k8s_values_final.executions.data.saveManualExecutions == true
+    )
+    error_message = "The four n8n_executions_data_save_* defaults must reach executions.data unchanged, matching n8n's own defaults (all/all/false/true)."
+  }
+}
+
+run "execution_data_save_settings_can_be_overridden" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_success        = "none"
+    n8n_executions_data_save_on_error          = "none"
+    n8n_executions_data_save_on_progress       = true
+    n8n_executions_data_save_manual_executions = false
+  }
+
+  assert {
+    condition = (
+      local.k8s_values_final.executions.data.saveOnError == "none" &&
+      local.k8s_values_final.executions.data.saveOnSuccess == "none" &&
+      local.k8s_values_final.executions.data.saveOnProgress == true &&
+      local.k8s_values_final.executions.data.saveManualExecutions == false
+    )
+    error_message = "Each n8n_executions_data_save_* input must reach its own executions.data key independently."
+  }
+}
+
+run "execution_data_save_on_success_rejects_an_unknown_enum_value" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_success = "first"
+  }
+
+  expect_failures = [var.n8n_executions_data_save_on_success]
+}
+
+run "execution_data_save_on_error_rejects_an_unknown_enum_value" {
+  command = plan
+
+  variables {
+    n8n_executions_data_save_on_error = "sometimes"
+  }
+
+  expect_failures = [var.n8n_executions_data_save_on_error]
+}
+
+# The duplicate-key hazard this reserved list exists to prevent: all four
+# names are rendered by the chart from executions.data unconditionally, with
+# no EXECUTIONS_DATA_SAVE_ prefix in n8n_managed_env_prefixes to catch them
+# generically (unlike DB_/QUEUE_/N8N_RUNNERS_), so each is reserved by its
+# exact name instead.
+run "execution_data_save_names_are_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_SAVE_ON_SUCCESS", value = "none" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "execution_data_save_manual_executions_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS", value = "false" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# F-047/F-048: the two compression limits and n8n_task_runner_timeout gain the
+# same whole-number floor their siblings got in round 1.
+run "compression_max_decompressed_size_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_compression_max_decompressed_size_bytes = 1073741824.5
+  }
+
+  expect_failures = [var.n8n_compression_max_decompressed_size_bytes]
+}
+
+run "compression_max_zip_entries_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_compression_max_zip_entries = 250.5
+  }
+
+  expect_failures = [var.n8n_compression_max_zip_entries]
+}
+
+run "task_runner_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_task_runner_timeout = 300.5
+  }
+
+  expect_failures = [var.n8n_task_runner_timeout]
 }
 
 run "editor_and_package_policy_reach_the_pods" {
@@ -749,6 +1422,37 @@ run "the_runner_idle_shutdown_reaches_the_sidecar_not_the_n8n_containers" {
   }
 }
 
+# F-015: both timeouts gain a whole-number floor.
+run "task_runner_auto_shutdown_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_task_runner_auto_shutdown_timeout = 15.5
+  }
+
+  expect_failures = [var.n8n_task_runner_auto_shutdown_timeout]
+}
+
+run "task_runner_request_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_task_runner_request_timeout = 300.5
+  }
+
+  expect_failures = [var.n8n_task_runner_request_timeout]
+}
+
+run "task_runner_request_timeout_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_task_runner_request_timeout = 0
+  }
+
+  expect_failures = [var.n8n_task_runner_request_timeout]
+}
+
 # ── Runner concurrency ───────────────────────────────────────────────────────
 # The chart has no typed value for N8N_RUNNERS_MAX_CONCURRENCY, so it goes in
 # the launcher ConfigMap's env-overrides, which is where the runner process
@@ -807,6 +1511,32 @@ run "a_runner_concurrency_of_zero_is_rejected" {
   }
 
   expect_failures = [var.n8n_task_runner_max_concurrency]
+}
+
+# F-074: the Python runner's own parser (parse_allowlist) raises
+# ConfigurationError on "*" mixed with named modules and refuses to start;
+# the plan now says no instead of every main/worker pod crash-looping on it.
+run "python_stdlib_allow_rejects_the_wildcard_mixed_with_named_modules" {
+  command = plan
+
+  variables {
+    n8n_python_stdlib_allow = "*,json"
+  }
+
+  expect_failures = [var.n8n_python_stdlib_allow]
+}
+
+run "python_stdlib_allow_accepts_a_plain_module_list" {
+  command = plan
+
+  variables {
+    n8n_python_stdlib_allow = "json,time,math"
+  }
+
+  assert {
+    condition     = var.n8n_python_stdlib_allow == "json,time,math"
+    error_message = "A comma list with no wildcard must still be accepted."
+  }
 }
 
 # ── The external Redis path honours what the caller configured ────────────────
@@ -926,6 +1656,152 @@ run "an_unset_redis_key_prefix_leaves_every_default_in_place" {
     condition     = toset([for t in local.k8s_values_keda.keda.worker.triggers : t.metadata.listName]) == toset(["bull:jobs:wait", "bull:jobs:active"])
     error_message = "With no prefix set, the KEDA listName must stay on Bull's default prefix."
   }
+}
+
+# ── Bull queue worker tuning (redis.worker.*) ─────────────────────────────────
+# lockDuration/lockRenewTime/stalledInterval share the chart's redis.worker
+# block with timeout (n8n_termination_grace_period), which always renders;
+# these three must merge in beside it without disturbing it.
+run "queue_worker_lock_and_stall_settings_reach_the_chart" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration    = 20000
+    n8n_queue_worker_lock_renew_time  = 5000
+    n8n_queue_worker_stalled_interval = 15000
+  }
+
+  assert {
+    condition = (
+      local.k8s_values_redis.redis.worker.lockDuration == 20000 &&
+      local.k8s_values_redis.redis.worker.lockRenewTime == 5000 &&
+      local.k8s_values_redis.redis.worker.stalledInterval == 15000
+    )
+    error_message = "n8n_queue_worker_lock_duration/_lock_renew_time/_stalled_interval must reach redis.worker.lockDuration/lockRenewTime/stalledInterval."
+  }
+
+  assert {
+    condition     = local.k8s_values_redis.redis.worker.timeout == var.n8n_termination_grace_period
+    error_message = "redis.worker.timeout must still carry n8n_termination_grace_period; the three new keys must not displace it."
+  }
+}
+
+run "queue_worker_lock_and_stall_settings_stay_unset_by_default" {
+  command = plan
+
+  assert {
+    condition = (
+      !contains(keys(local.k8s_values_redis.redis.worker), "lockDuration") &&
+      !contains(keys(local.k8s_values_redis.redis.worker), "lockRenewTime") &&
+      !contains(keys(local.k8s_values_redis.redis.worker), "stalledInterval")
+    )
+    error_message = "With all three inputs left null, none of lockDuration/lockRenewTime/stalledInterval may render; the chart's own defaults (60000/10000/30000ms) must apply unstated."
+  }
+}
+
+run "queue_worker_lock_duration_rejects_a_value_below_the_chart_minimum" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 500
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_duration]
+}
+
+run "queue_worker_lock_duration_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 60000.5
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_duration]
+}
+
+run "queue_worker_lock_renew_time_rejects_a_value_below_the_chart_minimum" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_renew_time = 500
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+run "queue_worker_stalled_interval_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_stalled_interval = 0
+  }
+
+  expect_failures = [var.n8n_queue_worker_stalled_interval]
+}
+
+run "queue_worker_stalled_interval_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_stalled_interval = 1500.5
+  }
+
+  expect_failures = [var.n8n_queue_worker_stalled_interval]
+}
+
+# Lowering the lock duration to the chart's own renewal default or below,
+# while leaving the renewal interval null, guarantees the lock expires at or
+# before the first renewal: the effective-value cross-check must catch it.
+run "lowering_lock_duration_to_the_renewal_default_without_a_renewal_override_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration = 10000
+  }
+
+  expect_failures = [var.n8n_queue_worker_lock_renew_time]
+}
+
+# Setting the renewal interval explicitly below the lowered duration clears
+# the same warning.
+run "lowering_lock_duration_with_an_explicit_lower_renewal_is_accepted" {
+  command = plan
+
+  variables {
+    n8n_queue_worker_lock_duration   = 10000
+    n8n_queue_worker_lock_renew_time = 5000
+  }
+
+  assert {
+    condition     = local.k8s_values_redis.redis.worker.lockDuration == 10000
+    error_message = "A lock duration lowered to the chart's renewal default, paired with an explicit lower renewal interval, must still reach redis.worker.lockDuration."
+  }
+}
+
+# QUEUE_ is a module-managed prefix (n8n_managed_env_prefixes); this proves
+# the specific new names, not just the prefix mechanism in the abstract.
+run "queue_worker_lock_duration_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "QUEUE_WORKER_LOCK_DURATION", value = "20000" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "queue_worker_stalled_interval_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "QUEUE_WORKER_STALLED_INTERVAL", value = "15000" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
 }
 
 run "the_keda_trigger_carries_no_auth_metadata_without_auth" {
@@ -1130,6 +2006,196 @@ run "log_level_and_pool_size_reach_the_pods" {
   }
 }
 
+run "db_postgresdb_pool_size_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    db_postgresdb_pool_size = 20.5
+  }
+
+  expect_failures = [var.db_postgresdb_pool_size]
+}
+
+run "n8n_helm_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_helm_timeout = 600.5
+  }
+
+  expect_failures = [var.n8n_helm_timeout]
+}
+
+run "valkey_helm_timeout_defaults_to_600" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for r in helm_release.valkey : r.timeout == 600])
+    error_message = "valkey_helm_timeout must default to 600, the same literal the Valkey helm_release hardcoded before this input existed."
+  }
+}
+
+run "valkey_helm_timeout_reaches_the_release" {
+  command = plan
+
+  variables {
+    valkey_helm_timeout = 1800
+  }
+
+  assert {
+    condition     = alltrue([for r in helm_release.valkey : r.timeout == 1800])
+    error_message = "valkey_helm_timeout must reach helm_release.valkey's timeout argument."
+  }
+}
+
+run "valkey_helm_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    valkey_helm_timeout = 600.5
+  }
+
+  expect_failures = [var.valkey_helm_timeout]
+}
+
+run "valkey_helm_timeout_rejects_below_60" {
+  command = plan
+
+  variables {
+    valkey_helm_timeout = 59
+  }
+
+  expect_failures = [var.valkey_helm_timeout]
+}
+
+
+# Database connection acquisition and health-check ping settings: the chart
+# has no values path for any of the three, and DB_ is a module-managed
+# prefix, so config.extraEnv is the only door, and these variables are the
+# only way to reach it.
+run "db_connection_and_ping_settings_reach_the_pods" {
+  command = plan
+
+  variables {
+    db_postgresdb_connection_timeout_ms = 30000
+    db_ping_timeout_ms                  = 8000
+    db_ping_interval_seconds            = 5
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "DB_POSTGRESDB_CONNECTION_TIMEOUT", value = "30000" }
+    )
+    error_message = "db_postgresdb_connection_timeout_ms must render DB_POSTGRESDB_CONNECTION_TIMEOUT."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "DB_PING_TIMEOUT_MS", value = "8000" }
+    )
+    error_message = "db_ping_timeout_ms must render DB_PING_TIMEOUT_MS."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "DB_PING_INTERVAL_SECONDS", value = "5" }
+    )
+    error_message = "db_ping_interval_seconds must render DB_PING_INTERVAL_SECONDS."
+  }
+}
+
+run "db_connection_and_ping_settings_stay_unset_by_default" {
+  command = plan
+
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv :
+      e if contains(["DB_POSTGRESDB_CONNECTION_TIMEOUT", "DB_PING_TIMEOUT_MS", "DB_PING_INTERVAL_SECONDS"], e.name)
+    ]) == 0
+    error_message = "With all three inputs left null, none of DB_POSTGRESDB_CONNECTION_TIMEOUT, DB_PING_TIMEOUT_MS or DB_PING_INTERVAL_SECONDS may render; n8n's own defaults must apply unstated."
+  }
+}
+
+run "db_postgresdb_connection_timeout_ms_rejects_a_negative_value" {
+  command = plan
+
+  variables {
+    db_postgresdb_connection_timeout_ms = -1
+  }
+
+  expect_failures = [var.db_postgresdb_connection_timeout_ms]
+}
+
+run "db_postgresdb_connection_timeout_ms_rejects_a_value_past_the_node_timer_ceiling" {
+  command = plan
+
+  variables {
+    db_postgresdb_connection_timeout_ms = 2147483648
+  }
+
+  expect_failures = [var.db_postgresdb_connection_timeout_ms]
+}
+
+run "db_postgresdb_connection_timeout_ms_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    db_postgresdb_connection_timeout_ms = 1500.5
+  }
+
+  expect_failures = [var.db_postgresdb_connection_timeout_ms]
+}
+
+run "db_ping_timeout_ms_rejects_zero_and_below" {
+  command = plan
+
+  variables {
+    db_ping_timeout_ms = 0
+  }
+
+  expect_failures = [var.db_ping_timeout_ms]
+}
+
+run "db_ping_interval_seconds_rejects_zero_and_below" {
+  command = plan
+
+  variables {
+    db_ping_interval_seconds = 0
+  }
+
+  expect_failures = [var.db_ping_interval_seconds]
+}
+
+# DB_ is a module-managed prefix (n8n_managed_env_prefixes), so every name
+# under it is already rejected generically; this proves the two new names
+# specifically, not just the prefix mechanism in the abstract.
+run "db_ping_timeout_ms_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_PING_TIMEOUT_MS", value = "9000" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "db_postgresdb_connection_timeout_name_is_rejected_from_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_POSTGRESDB_CONNECTION_TIMEOUT", value = "15000" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 # The module provisions no object storage and writes none of these names, so a
 # caller pointing n8n at their own bucket is a supported configuration rather
 # than a collision with something the module manages. This asserts the pair
@@ -1168,6 +2234,137 @@ run "a_module_managed_env_name_is_still_rejected" {
   variables {
     n8n_extra_env = [
       { name = "DB_POSTGRESDB_HOST", value = "somewhere-else" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+# ── SMTP and telemetry ──────────────────────────────────────────────────────
+# Both are opt-in: at the defaults neither family may appear in extraEnv, so
+# n8n's own behavior (no mail, telemetry on) stands untouched and unclaimed.
+
+run "no_smtp_and_no_telemetry_env_at_the_defaults" {
+  command = plan
+
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv : e.name
+      if startswith(e.name, "N8N_SMTP_") || e.name == "N8N_EMAIL_MODE" || e.name == "N8N_DIAGNOSTICS_ENABLED"
+    ]) == 0
+    error_message = "With n8n_smtp and n8n_diagnostics_enabled unset, no SMTP or telemetry env var may be rendered; n8n's own defaults stand."
+  }
+}
+
+run "smtp_renders_the_family_with_the_password_as_a_secret_ref" {
+  command = plan
+
+  variables {
+    n8n_smtp = {
+      host   = "mail.test.example.com"
+      sender = "n8n <n8n@test.example.com>"
+      user   = "n8n@test.example.com"
+      password_secret_ref = {
+        name = "smtp-credentials"
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for pair in [
+        ["N8N_EMAIL_MODE", "smtp"],
+        ["N8N_SMTP_HOST", "mail.test.example.com"],
+        ["N8N_SMTP_PORT", "465"],
+        ["N8N_SMTP_SSL", "true"],
+        ["N8N_SMTP_STARTTLS", "true"],
+        ["N8N_SMTP_SENDER", "n8n <n8n@test.example.com>"],
+        ["N8N_SMTP_USER", "n8n@test.example.com"],
+        ] : contains(
+        [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${try(e.value, "")}"],
+        "${pair[0]}=${pair[1]}"
+      )
+    ])
+    error_message = "Configuring n8n_smtp must render the full N8N_SMTP_* family with the object's values and the port/ssl/starttls defaults."
+  }
+
+  # The password is the one entry that must not be a value.
+  assert {
+    condition = anytrue([
+      for e in local.k8s_values_config.config.extraEnv :
+      try(e.valueFrom.secretKeyRef.name == "smtp-credentials" && e.valueFrom.secretKeyRef.key == "password", false)
+      if e.name == "N8N_SMTP_PASS"
+    ])
+    error_message = "N8N_SMTP_PASS must be a secretKeyRef into the caller's Secret with the default key \"password\", never a literal value in the release."
+  }
+}
+
+run "smtp_without_auth_renders_no_user_or_password_entry" {
+  command = plan
+
+  variables {
+    n8n_smtp = {
+      host   = "relay.test.example.com"
+      sender = "n8n@test.example.com"
+    }
+  }
+
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv : e.name
+      if e.name == "N8N_SMTP_USER" || e.name == "N8N_SMTP_PASS"
+    ]) == 0
+    error_message = "With no user and no password_secret_ref, neither N8N_SMTP_USER nor N8N_SMTP_PASS may render, for an unauthenticated relay."
+  }
+}
+
+run "an_empty_smtp_host_is_rejected" {
+  command = plan
+
+  variables {
+    n8n_smtp = {
+      host   = ""
+      sender = "n8n@test.example.com"
+    }
+  }
+
+  expect_failures = [var.n8n_smtp]
+}
+
+run "telemetry_false_renders_the_off_switch" {
+  command = plan
+
+  variables {
+    n8n_diagnostics_enabled = false
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "N8N_DIAGNOSTICS_ENABLED=false",
+    )
+    error_message = "n8n_diagnostics_enabled = false must render N8N_DIAGNOSTICS_ENABLED=false to turn telemetry off."
+  }
+}
+
+run "the_smtp_and_telemetry_names_cannot_ride_the_env_escape_hatch" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_SMTP_HOST", value = "evil.example.com" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "the_diagnostics_name_cannot_ride_the_env_escape_hatch" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_DIAGNOSTICS_ENABLED", value = "true" },
     ]
   }
 
@@ -1251,6 +2448,47 @@ run "repointing_the_webhook_segment_is_rejected_too" {
   }
 
   expect_failures = [var.n8n_extra_env]
+}
+
+# N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS was reserved under a comment claiming
+# the module sets it; nothing anywhere ever did, so the reservation only
+# blocked a caller from setting it themselves.
+run "the_settings_file_permissions_switch_is_settable_through_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", value = "true" },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS", value = "true" },
+    )
+    error_message = "N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS must reach config.extraEnv through n8n_extra_env; the module renders no typed input for it."
+  }
+}
+
+# N8N_EXTERNAL_SECRETS_UPDATE_INTERVAL was reserved with nothing behind it;
+# n8n_external_secrets_enabled covers the switch but not its refresh interval.
+run "the_external_secrets_refresh_interval_is_settable_through_extra_env" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "N8N_EXTERNAL_SECRETS_UPDATE_INTERVAL", value = "600" },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "N8N_EXTERNAL_SECRETS_UPDATE_INTERVAL", value = "600" },
+    )
+    error_message = "N8N_EXTERNAL_SECRETS_UPDATE_INTERVAL must reach config.extraEnv through n8n_extra_env; the module renders no typed input for it."
+  }
 }
 
 run "a_secret_name_with_an_empty_label_is_rejected" {
@@ -1345,54 +2583,32 @@ run "the_same_env_name_in_both_inputs_is_rejected" {
   expect_failures = [var.n8n_extra_env_from_secret]
 }
 
-# The chart's webhook Ingress renders four of the five prefixes n8n serves from
-# the webhook processors. The fifth (/mcp) falls through to the main pods, which
-# answer 200 with the editor's HTML because no handler is registered, a webhook
-# that looks delivered and never runs. Confirmed live against chart 1.10.0.
-run "the_prefixes_the_chart_does_not_route_get_their_own_ingress" {
+# Chart 1.16.0 added /mcp/ to the chart's own webhook Ingress
+# (templates/ingress-webhook.yaml), closing the gap that used to leave it
+# falling through to the main pods: before that, a webhook that looked
+# delivered and never ran, because the main pods answered 200 with the
+# editor's HTML and registered no handler for it. Confirmed by diffing
+# ingress-webhook.yaml between chart 1.10.0 and 1.16.0.
+#
+# The module used to carry a derived "unrouted" subtraction and a
+# supplementary kubernetes_ingress_v1.n8n_mcp resource to cover /mcp while
+# the chart did not. Both were removed rather than left dormant: an
+# unconditionally empty dynamic "path" block fails the Kubernetes provider's
+# schema validation (an Ingress rule needs at least one path) even at
+# count = 0, so "leave it in case the chart regresses" was not available as
+# a shape once every prefix the module knows about is chart-routed.
+run "the_chart_routes_every_webhook_prefix_itself" {
   command = plan
 
   assert {
-    condition     = contains(local.n8n_unrouted_webhook_prefixes, "/mcp")
-    error_message = "/mcp is not routed by the chart's own Ingress, so it must be in the supplementary set."
-  }
-
-  assert {
-    condition     = length(kubernetes_ingress_v1.n8n_mcp) == 1
-    error_message = "create_ingress = true must render the supplementary Ingress while any prefix is unrouted."
-  }
-
-  assert {
-    condition = alltrue([
-      for p in kubernetes_ingress_v1.n8n_mcp[0].spec[0].rule[0].http[0].path :
-      p.backend[0].service[0].name == local.n8n_webhook_service_name
-    ])
-    error_message = "Every supplementary path must target the webhook processors, not the main Service."
-  }
-
-  # The set is a subtraction, so a prefix added to one list and not the other
-  # shows up here rather than as a silent routing hole in production.
-  assert {
-    condition = length(setsubtract(
-      local.n8n_webhook_path_prefixes,
-      setunion(local.n8n_chart_routed_webhook_prefixes, local.n8n_unrouted_webhook_prefixes)
-    )) == 0
-    error_message = "Every advertised webhook prefix must be either chart-routed or in the supplementary Ingress."
+    condition = length(setsubtract(local.n8n_webhook_path_prefixes, [
+      "/webhook", "/webhook-waiting", "/form", "/form-waiting", "/mcp",
+    ])) == 0
+    error_message = "Every prefix n8n_webhook_path_prefixes advertises must be one this chart version's own webhook Ingress routes. If the chart ever drops one, this module needs its supplementary Ingress back, not a passing test."
   }
 }
 
-run "the_supplementary_ingress_is_absent_when_the_caller_owns_routing" {
-  command = plan
 
-  variables {
-    create_ingress = false
-  }
-
-  assert {
-    condition     = length(kubernetes_ingress_v1.n8n_mcp) == 0
-    error_message = "create_ingress = false must render no Ingress at all, supplementary included."
-  }
-}
 
 # ip is a Cilium-specific convenience: it renders io.cilium/lb-ipam-ips, which
 # only Cilium LB-IPAM reads. On MetalLB or kube-vip a caller setting ip alone
@@ -1465,6 +2681,59 @@ run "proxy_annotations_survive_an_empty_cluster_issuer" {
   }
 }
 
+# One input, two env names, and they are not the same setting: the chart
+# renders TZ (process clock) from config.timezone, and no chart template
+# renders GENERIC_TIMEZONE, which is the timezone Schedule Triggers fire in
+# and whose n8n default is America/New_York. Emitted only when n8n_timezone
+# is set away from this module's own literal default ("UTC"), so a caller
+# who leaves it alone sees no render change; a caller who customizes it away
+# from UTC without this entry would have every schedule fire on US Eastern
+# while the log timestamps made the configuration look honored.
+run "the_scheduler_timezone_stays_unset_at_the_default" {
+  command = plan
+
+  assert {
+    condition = !contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "GENERIC_TIMEZONE",
+    )
+    error_message = "GENERIC_TIMEZONE must not render at the default n8n_timezone (UTC), so this fix changes nothing for a caller who set nothing."
+  }
+
+  assert {
+    condition     = local.k8s_values_config.config.timezone == "UTC"
+    error_message = "config.timezone must still carry the default."
+  }
+}
+
+run "a_timezone_override_moves_the_scheduler_timezone" {
+  command = plan
+
+  variables {
+    n8n_timezone = "Europe/London"
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "GENERIC_TIMEZONE=Europe/London",
+    )
+    error_message = "Overriding n8n_timezone must move GENERIC_TIMEZONE, or schedules fire in a different timezone than the one configured."
+  }
+}
+
+run "the_scheduler_timezone_cannot_ride_the_env_escape_hatch" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "GENERIC_TIMEZONE", value = "America/Chicago" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
 # ── The webhook processor keeps an autoscaler on the KEDA path ────────────────
 # The chart's own webhook HPA is gated on `not .Values.keda.enabled`, and its
 # webhook ScaledObject needs keda.webhookProcessor.enabled, which this module
@@ -1476,10 +2745,11 @@ run "attesting_keda_still_leaves_the_webhook_processor_an_autoscaler" {
   command = plan
 
   variables {
-    k8s_keda_installed            = true
-    n8n_webhook_hpa_min_replicas  = 3
-    n8n_webhook_hpa_max_replicas  = 9
-    n8n_webhook_hpa_cpu_threshold = 55
+    k8s_keda_installed                                    = true
+    n8n_webhook_hpa_min_replicas                          = 3
+    n8n_webhook_hpa_max_replicas                          = 9
+    n8n_webhook_hpa_cpu_threshold                         = 55
+    n8n_webhook_hpa_scale_up_stabilization_window_seconds = 300
   }
 
   assert {
@@ -1499,6 +2769,24 @@ run "attesting_keda_still_leaves_the_webhook_processor_an_autoscaler" {
     condition     = kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook_processor[0].spec[0].scale_target_ref[0].name == local.n8n_webhook_service_name
     error_message = "The supplementary webhook HPA must target the webhook-processor Deployment."
   }
+
+  # The window used to be a hardcoded 0 here, so the input worked on the
+  # chart's own HPA and did nothing on the KEDA path: the one path
+  # docs/troubleshooting.md tells callers to raise it on.
+  assert {
+    condition     = kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook_processor[0].spec[0].behavior[0].scale_up[0].stabilization_window_seconds == 300
+    error_message = "The supplementary webhook HPA must take its scale-up stabilization window from n8n_webhook_hpa_scale_up_stabilization_window_seconds, not a literal."
+  }
+}
+
+run "webhook_hpa_stabilization_window_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_webhook_hpa_scale_up_stabilization_window_seconds = 300.5
+  }
+
+  expect_failures = [var.n8n_webhook_hpa_scale_up_stabilization_window_seconds]
 }
 
 # ── Pod network policy ────────────────────────────────────────────────────────
@@ -1898,6 +3186,16 @@ run "the_cnpg_pdb_is_on_when_there_are_replicas_to_protect" {
   }
 }
 
+run "cnpg_instances_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    cnpg_instances = 1.5
+  }
+
+  expect_failures = [var.cnpg_instances]
+}
+
 run "the_cnpg_pdb_can_be_forced_either_way" {
   command = plan
 
@@ -2279,6 +3577,67 @@ run "both_helm_releases_clean_up_after_a_failed_release" {
   }
 }
 
+# F-006: the Helm provider resolves an https:// repository through its
+# index.yaml, which needs the repository and the bare chart name as separate
+# arguments; an oci:// reference carries the path in the chart argument
+# instead. Only the oci:// shape was ever built, so an https:// mirror
+# rendered an unresolvable reference no index-backed repository serves.
+run "the_oci_chart_repository_keeps_its_own_shape" {
+  command = plan
+
+  assert {
+    condition     = helm_release.n8n.repository == null && helm_release.n8n.chart == "${var.n8n_chart_repository}/n8n"
+    error_message = "The default oci:// repository must render with a null repository argument and the full oci:// path folded into chart, exactly as before."
+  }
+}
+
+run "an_https_chart_repository_resolves_through_its_index" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "https://community-charts.github.io/helm-charts"
+  }
+
+  assert {
+    condition     = helm_release.n8n.repository == "https://community-charts.github.io/helm-charts" && helm_release.n8n.chart == "n8n"
+    error_message = "An https:// repository must render with the repository argument set and chart as the bare name, the same shape helm_release.valkey already uses; the oci:// shape renders no index this provider can resolve."
+  }
+}
+
+# F-049: both chart repositories reject a trailing slash. The module appends
+# /n8n to an OCI repository itself, so a mirror pasted with a slash would
+# render a double-slash reference.
+run "n8n_chart_repository_rejects_a_trailing_slash" {
+  command = plan
+
+  variables {
+    n8n_chart_repository = "oci://ghcr.io/n8n-io/n8n-helm-chart/"
+  }
+
+  expect_failures = [var.n8n_chart_repository]
+}
+
+run "valkey_chart_repository_rejects_a_trailing_slash" {
+  command = plan
+
+  variables {
+    valkey_chart_repository = "https://valkey-io.github.io/valkey-helm/"
+  }
+
+  expect_failures = [var.valkey_chart_repository]
+}
+
+# F-050: valkey_chart_version takes n8n_chart_version's exact-SemVer rule.
+run "valkey_chart_version_rejects_a_range" {
+  command = plan
+
+  variables {
+    valkey_chart_version = "~> 0.12.0"
+  }
+
+  expect_failures = [var.valkey_chart_version]
+}
+
 # ── The namespace gets long enough to finish deleting ─────────────────────────
 # Deleting this namespace waits on a CNPG Cluster tearing down and PVCs whose
 # provisioner has to detach real volumes, which ran past the 2m this used to
@@ -2347,6 +3706,82 @@ run "proxy_hops_are_reserved_against_the_env_escape_hatch" {
   }
 
   expect_failures = [var.n8n_extra_env]
+}
+
+# ── One payload limit, two consumers ───────────────────────────────────────────
+# F-060/F-079: n8n_payload_size_max is null by default, which leaves n8n's own
+# 16 MiB unset and the Ingress proxy-body-size annotation at its original
+# literal (32m) exactly as today. Setting it derives both N8N_PAYLOAD_SIZE_MAX
+# and the annotation from the same value plus 2 MiB of multipart-framing
+# headroom, so the proxy and n8n cannot be made to disagree once either one is
+# tuned. ingress_proxy_body_size mirrors the same derivation for
+# create_ingress = false callers.
+
+run "payload_size_max_null_leaves_todays_defaults_untouched" {
+  command = plan
+
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv : e if e.name == "N8N_PAYLOAD_SIZE_MAX"
+    ]) == 0
+    error_message = "With n8n_payload_size_max left null, N8N_PAYLOAD_SIZE_MAX must not be rendered, so n8n keeps its own 16 MiB default unset."
+  }
+
+  assert {
+    condition     = local.k8s_ingress_annotations["nginx.ingress.kubernetes.io/proxy-body-size"] == "32m"
+    error_message = "With n8n_payload_size_max left null, the proxy-body-size annotation must stay at its original literal."
+  }
+
+  assert {
+    condition     = output.ingress_proxy_body_size == "32m"
+    error_message = "ingress_proxy_body_size must mirror the same literal while the input is unset."
+  }
+}
+
+run "setting_the_payload_limit_moves_both_consumers_together" {
+  command = plan
+
+  variables {
+    n8n_payload_size_max = 30
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : "${e.name}=${e.value}"],
+      "N8N_PAYLOAD_SIZE_MAX=30",
+    )
+    error_message = "Setting n8n_payload_size_max must render N8N_PAYLOAD_SIZE_MAX on every pod type."
+  }
+
+  assert {
+    condition     = local.k8s_ingress_annotations["nginx.ingress.kubernetes.io/proxy-body-size"] == "32m"
+    error_message = "The proxy annotation must derive from the same input, with the 2 MiB headroom (30 + 2)."
+  }
+
+  assert {
+    condition     = output.ingress_proxy_body_size == local.k8s_ingress_annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+    error_message = "The exported body size must always equal the module's own rendered annotation, so a caller-owned Ingress cannot drift from it."
+  }
+}
+
+run "payload_size_max_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    n8n_payload_size_max = 16.5
+  }
+
+  expect_failures = [var.n8n_payload_size_max]
+}
+
+run "payload_size_max_rejects_zero" {
+  command = plan
+
+  variables {
+    n8n_payload_size_max = 0
+  }
+
+  expect_failures = [var.n8n_payload_size_max]
 }
 
 run "proxy_hops_reject_a_count_that_is_not_a_hop" {
@@ -2646,7 +4081,9 @@ run "no_extra_env_name_collides_with_a_chart_rendered_name" {
     n8n_task_runners_enabled   = true
   }
 
-  # Read off a live n8n-1.10.0 release: every name the chart puts in a
+  # Read off a live n8n-1.10.0 release, and updated for chart 1.16.0's rename
+  # of WEBHOOK_URL to N8N_WEBHOOK_URL (confirmed by rendering this module's
+  # values through the pinned chart): every name the chart puts in a
   # container's env list itself, via configMapKeyRef or secretKeyRef, across
   # all three pod types. Anything here has a typed chart value and must be set
   # that way, never appended.
@@ -2666,7 +4103,9 @@ run "no_extra_env_name_collides_with_a_chart_rendered_name" {
         "QUEUE_BULL_REDIS_PORT", "QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD",
         "QUEUE_WORKER_LOCK_DURATION", "QUEUE_WORKER_LOCK_RENEW_TIME",
         "QUEUE_WORKER_MAX_STALLED_COUNT", "QUEUE_WORKER_STALLED_INTERVAL",
-        "TZ", "WEBHOOK_URL",
+        "TZ", "N8N_WEBHOOK_URL", "EXECUTIONS_DATA_SAVE_ON_SUCCESS",
+        "EXECUTIONS_DATA_SAVE_ON_ERROR", "EXECUTIONS_DATA_SAVE_ON_PROGRESS",
+        "EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS",
       ]),
     )) == 0
     error_message = "An env var the chart already renders is also appended to config.extraEnv. The duplicate applies once and then fails every helm upgrade - set the chart's typed value instead."
@@ -2822,6 +4261,50 @@ run "the_in_cluster_postgres_ignores_external_connection_inputs" {
   }
 }
 
+# F-050: both names are rendered unquoted into the Cluster CR and a connection
+# string, so they are validated as unquoted Postgres identifiers.
+run "cnpg_database_name_rejects_a_value_that_needs_quoting" {
+  command = plan
+
+  variables {
+    cnpg_database_name = "n8n-prod"
+  }
+
+  expect_failures = [var.cnpg_database_name]
+}
+
+run "cnpg_database_owner_rejects_a_leading_digit" {
+  command = plan
+
+  variables {
+    cnpg_database_owner = "9n8n"
+  }
+
+  expect_failures = [var.cnpg_database_owner]
+}
+
+# F-050: the two storage-size inputs take the same Kubernetes quantity shape
+# every memory input here already enforces.
+run "cnpg_storage_size_rejects_a_malformed_quantity" {
+  command = plan
+
+  variables {
+    cnpg_storage_size = "10 gigs"
+  }
+
+  expect_failures = [var.cnpg_storage_size]
+}
+
+run "valkey_storage_size_rejects_a_malformed_quantity" {
+  command = plan
+
+  variables {
+    valkey_storage_size = "8GB"
+  }
+
+  expect_failures = [var.valkey_storage_size]
+}
+
 run "the_external_postgres_defaults_match_the_cnpg_ones" {
   command = plan
 
@@ -2879,14 +4362,19 @@ run "a_database_port_outside_the_tcp_range_is_rejected" {
   expect_failures = [var.db_port]
 }
 
-# ── Postgres TLS has exactly one source ───────────────────────────────────────
-# The chart offers database.ssl, and this module must not use it. Its enable
-# flag renders DB_POSTGRESDB_SSL, a name n8n does not read (the image reads
-# DB_POSTGRESDB_SSL_ENABLED), and its rejectUnauthorized = false renders a name
-# this module already emits, which duplicates an env var and fails every later
-# helm upgrade. TLS is expressed through config.extraEnv alone.
+# ── Postgres TLS has exactly one source per name ──────────────────────────────
+# DB_POSTGRESDB_SSL_ENABLED and DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED are
+# expressed through config.extraEnv (db_postgresdb_ssl_enabled and
+# db_postgresdb_ssl_reject_unauthorized), never through the chart's
+# database.ssl.enabled/.rejectUnauthorized: before chart 1.15.0 the enable flag
+# rendered DB_POSTGRESDB_SSL, a name n8n does not read, and rejectUnauthorized
+# = false renders a name this module already emits unconditionally, which
+# duplicates an env var and fails every later helm upgrade. The one exception
+# is database.ssl.ca, the only way to deliver a CA bundle to the chart: see
+# "a_ca_bundle_reaches_the_chart_without_duplicating_ssl_enabled" below for how
+# that case avoids the same collision.
 
-run "the_chart_ssl_key_is_never_set" {
+run "the_chart_ssl_key_stays_unset_without_a_ca" {
   command = plan
 
   variables {
@@ -2895,7 +4383,7 @@ run "the_chart_ssl_key_is_never_set" {
 
   assert {
     condition     = !contains(keys(local.k8s_values_database.database), "ssl")
-    error_message = "database.ssl must stay unset: its enable flag renders DB_POSTGRESDB_SSL, which n8n does not read, and its rejectUnauthorized renders a name this module already emits."
+    error_message = "database.ssl must stay unset with no CA configured: its enable flag renders DB_POSTGRESDB_SSL on charts before 1.15.0, and its rejectUnauthorized renders a name this module already emits."
   }
 
   assert {
@@ -2903,7 +4391,15 @@ run "the_chart_ssl_key_is_never_set" {
       [for e in local.k8s_values_config.config.extraEnv : e.name if e.name == "DB_POSTGRESDB_SSL_ENABLED"],
       "DB_POSTGRESDB_SSL_ENABLED",
     )
-    error_message = "DB_POSTGRESDB_SSL_ENABLED must be rendered through config.extraEnv, which is the only source of Postgres TLS."
+    error_message = "DB_POSTGRESDB_SSL_ENABLED must be rendered through config.extraEnv when no CA is being delivered."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED", value = "false" }
+    )
+    error_message = "db_postgresdb_ssl_reject_unauthorized must default to false, preserving this module's original behavior."
   }
 }
 
@@ -2917,6 +4413,249 @@ run "disabling_tls_still_leaves_the_chart_key_unset" {
   assert {
     condition     = !contains(keys(local.k8s_values_database.database), "ssl")
     error_message = "database.ssl must stay unset on both sides of db_postgresdb_ssl_enabled."
+  }
+}
+
+# A fixed, framing-valid test CA. Not a real issuing authority; only the PEM
+# delimiters and ASCII content are exercised by the variable's own validation
+# and by these plan-time assertions.
+run "a_ca_bundle_reaches_the_chart_without_duplicating_ssl_enabled" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "  -----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----  \n"
+  }
+
+  # The chart (pinned at n8n_chart_version's default) renders
+  # DB_POSTGRESDB_SSL_ENABLED from database.ssl.enabled on its own at this
+  # version, so the module must not also carry it in config.extraEnv: a
+  # second entry of that name is the duplicate that fails every later helm
+  # upgrade.
+  assert {
+    condition = !contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "DB_POSTGRESDB_SSL_ENABLED",
+    )
+    error_message = "DB_POSTGRESDB_SSL_ENABLED must not be rendered through config.extraEnv once the chart already carries it through database.ssl.enabled."
+  }
+
+  # config.extraEnv stays the one source of DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+  # regardless: the chart's own database.ssl.rejectUnauthorized is pinned true
+  # by local.postgres_ssl_ca_values, which suppresses its conditional render of
+  # that same name.
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED", value = "true" }
+    )
+    error_message = "DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED must still be rendered through config.extraEnv even while a CA is active."
+  }
+
+  assert {
+    condition = local.k8s_values_database.database.ssl == {
+      enabled            = true
+      rejectUnauthorized = true
+      ca                 = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+    }
+    error_message = "database.ssl must carry the trimmed CA with enabled and rejectUnauthorized both pinned true."
+  }
+}
+
+# A chart repository mirror is gated by the chart version alone, like the
+# upstream registry: a mirror must serve the pinned version verbatim (see
+# n8n_chart_repository), so a mirrored chart at 1.15 or later renders
+# DB_POSTGRESDB_SSL_ENABLED from database.ssl.enabled and config.extraEnv must
+# not carry a second one. Gating on the host instead left the duplicate entry
+# that fails every later helm upgrade on every mirror.
+run "a_mirrored_chart_is_gated_by_its_version_not_its_host" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+    n8n_chart_repository                  = "oci://registry.example.com/mirror/n8n-helm-chart"
+  }
+
+  assert {
+    condition     = local.n8n_chart_renders_postgres_ssl_enabled
+    error_message = "A mirror serving the pinned chart (1.15 or later by default) must be treated as rendering DB_POSTGRESDB_SSL_ENABLED itself, exactly like the upstream repository."
+  }
+
+  assert {
+    condition = !contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "DB_POSTGRESDB_SSL_ENABLED",
+    )
+    error_message = "A mirrored chart at 1.15 or later renders DB_POSTGRESDB_SSL_ENABLED from database.ssl.enabled, so config.extraEnv must not carry a duplicate."
+  }
+}
+
+# A chart the module cannot verify (a prerelease, which may predate the 1.15
+# fix) falls back to keeping config.extraEnv's own DB_POSTGRESDB_SSL_ENABLED
+# even while a CA is active, trading a possible duplicate for a possible
+# missing entry: the safer direction per
+# local.n8n_chart_renders_postgres_ssl_enabled in locals.tf.
+run "an_unverifiable_prerelease_chart_keeps_its_own_ssl_enabled_entry" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+    n8n_chart_version                     = "1.17.0-rc.1"
+  }
+
+  assert {
+    condition     = !local.n8n_chart_renders_postgres_ssl_enabled
+    error_message = "A prerelease chart cannot be verified to carry the 1.15 fix, so the gate must stay false."
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "DB_POSTGRESDB_SSL_ENABLED",
+    )
+    error_message = "An unverifiable chart must keep config.extraEnv's own DB_POSTGRESDB_SSL_ENABLED entry rather than assume it renders from database.ssl.enabled."
+  }
+}
+
+# ── Postgres TLS plan-time warnings ────────────────────────────────────────────
+
+run "a_ca_with_verification_off_is_warned_about" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = false
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+  }
+
+  expect_failures = [check.db_postgresdb_ssl_ca_pem_requires_verification]
+}
+
+run "a_ca_with_tls_off_entirely_is_warned_about_too" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled = false
+    db_postgresdb_ssl_ca_pem  = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+  }
+
+  expect_failures = [check.db_postgresdb_ssl_ca_pem_requires_verification]
+}
+
+run "verification_on_with_a_ca_draws_no_warning" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+  }
+}
+
+# NODE_TLS_REJECT_UNAUTHORIZED=0 only matters on the no-CA verifying path: see
+# the comment on check.postgres_ssl_verification_disabled_by_node_tls_env
+# (n8n.tf) for why a CA makes the variable irrelevant.
+run "node_tls_reject_unauthorized_env_defeats_verification_with_no_ca" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    n8n_extra_env = [
+      { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = "0" },
+    ]
+  }
+
+  expect_failures = [check.postgres_ssl_verification_disabled_by_node_tls_env]
+}
+
+run "node_tls_reject_unauthorized_env_is_moot_once_a_ca_is_set" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A\n-----END CERTIFICATE-----"
+    n8n_extra_env = [
+      { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = "0" },
+    ]
+  }
+}
+
+run "node_tls_reject_unauthorized_env_is_fine_with_verification_off" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_enabled             = true
+    db_postgresdb_ssl_reject_unauthorized = false
+    n8n_extra_env = [
+      { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = "0" },
+    ]
+  }
+}
+
+# ── db_postgresdb_ssl_ca_pem's own validation ──────────────────────────────────
+
+run "ca_pem_rejects_text_without_pem_framing" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_ca_pem = "not a certificate"
+  }
+
+  expect_failures = [var.db_postgresdb_ssl_ca_pem]
+}
+
+run "ca_pem_rejects_non_ascii_content" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8Añ\n-----END CERTIFICATE-----"
+  }
+
+  expect_failures = [var.db_postgresdb_ssl_ca_pem]
+}
+
+# 128 * 1024 "A"s, well past what either bundle below needs; substr trims to
+# the exact body length each test wants. Built from two nested range() calls,
+# each under range()'s own 1024-value cap, rather than one call for the whole
+# ~131 KB body.
+run "ca_pem_rejects_a_bundle_over_the_env_var_size_limit" {
+  command = plan
+
+  variables {
+    # One character of body past the 131050 trimmed-length limit.
+    db_postgresdb_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\n${substr(join("", [for i in range(128) : join("", [for j in range(1024) : "A"])]), 0, 131050 - length("-----BEGIN CERTIFICATE-----\n\n-----END CERTIFICATE-----") + 1)}\n-----END CERTIFICATE-----"
+  }
+
+  expect_failures = [var.db_postgresdb_ssl_ca_pem]
+}
+
+run "ca_pem_accepts_a_bundle_at_exactly_the_size_limit" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\n${substr(join("", [for i in range(128) : join("", [for j in range(1024) : "A"])]), 0, 131050 - length("-----BEGIN CERTIFICATE-----\n\n-----END CERTIFICATE-----"))}\n-----END CERTIFICATE-----"
+  }
+
+  assert {
+    condition     = length(trimspace(var.db_postgresdb_ssl_ca_pem)) == 131050
+    error_message = "Test setup error: the generated bundle must be exactly 131050 trimmed characters to exercise the boundary."
+  }
+}
+
+run "ca_pem_null_is_the_default" {
+  command = plan
+
+  assert {
+    condition     = var.db_postgresdb_ssl_ca_pem == null
+    error_message = "db_postgresdb_ssl_ca_pem must default to null."
   }
 }
 
@@ -2964,6 +4703,20 @@ run "a_caller_can_choose_filesystem_binary_data" {
     ]))
     error_message = "config.extraEnv renders a duplicate name, which fails every later helm upgrade."
   }
+}
+
+# F-047/F-048: a trailing slash passed the old alltrue() list, because
+# strcontains("//") cannot see the empty segment a trailing slash creates on
+# its own, and handed n8n a double-slash storage path.
+run "binary_data_path_rejects_a_trailing_slash" {
+  command = plan
+
+  variables {
+    n8n_binary_data_mode = "filesystem"
+    n8n_binary_data_path = "/opt/x/"
+  }
+
+  expect_failures = [var.n8n_binary_data_path]
 }
 
 run "the_s3_block_stays_off_so_the_chart_never_renders_those_names" {
@@ -3464,16 +5217,24 @@ run "the_main_strategy_rejects_a_surging_value" {
 }
 
 # ── The single main pod's disruption budget ───────────────────────────────────
-# The chart defaults pdb.enabled to true at minAvailable = 1 and renders it over
-# the main Deployment, which this module pins to one replica. That is
-# allowedDisruptions = 0 for the life of the deployment: the node holding the
-# main pod can never be drained, so a Talos node upgrade stalls behind it.
+# Through chart 1.10.0, the chart defaulted pdb.enabled to true at
+# minAvailable = 1 and rendered it over the main Deployment, which this
+# module pins to one replica: allowedDisruptions = 0 for the life of the
+# deployment, so the node holding the main pod could never be drained and a
+# Talos node upgrade stalled behind it. Chart 1.16.0 closed that structurally
+# (n8n-io/n8n-hosting#228): templates/pdb.yaml now renders only when main runs
+# more than one replica, which this module never does, so the object no
+# longer renders at all regardless of this input; see the comment above
+# local.k8s_values_pdb in locals.tf, and tests/scripts/check-n8n-chart.sh,
+# which renders the real chart to prove
+# it. The assertions below are on the values tree the module hands to Helm,
+# which is as far as a mocked plan can see either way.
 run "the_main_pdb_is_off_by_default" {
   command = plan
 
   assert {
     condition     = local.k8s_values_pdb.pdb.enabled == false
-    error_message = "pdb.enabled must render false by default. The chart's own default is true at minAvailable = 1, which against replicaCount = 1 blocks every voluntary eviction and wedges node drains."
+    error_message = "pdb.enabled must render false by default. Before chart 1.16.0 the chart's own default was true at minAvailable = 1, which against replicaCount = 1 blocked every voluntary eviction and wedged node drains; chart 1.16.0 stopped rendering the object at all for a single main, but the module still states its own default explicitly rather than leaning on the chart's."
   }
 
   assert {
@@ -3485,7 +5246,7 @@ run "the_main_pdb_is_off_by_default" {
   # to leave the worker and webhook tiers alone.
   assert {
     condition     = local.k8s_values_final.replicaCount == 1
-    error_message = "The main Deployment must stay at one replica, which is what makes minAvailable = 1 unsatisfiable and this input necessary."
+    error_message = "The main Deployment must stay at one replica, which is what makes the chart's PDB gate (main replicas > 1) permanently unsatisfied and this input's default moot either way."
   }
 }
 
@@ -3501,20 +5262,17 @@ run "the_main_pdb_can_be_turned_back_on" {
     error_message = "n8n_main_pdb_enabled = true must reach the chart, or the escape hatch is accepted and discarded."
   }
 
-  # Reaching the chart is only half of it. Turning this on is exactly the
-  # configuration that wedges a node drain, so the plan has to say so: a
-  # warning nobody sees is the same as no warning. This asserts the diagnostic
-  # fires, not that the plan fails, since a check block warns rather than
-  # errors.
-  expect_failures = [check.main_pdb_blocks_the_main_pod_node_drain]
+  # Reaching the chart's values tree is as far as a mocked plan can prove.
+  # Whether the chart then actually renders a PodDisruptionBudget for this
+  # module's single-replica main (it does not, as of chart 1.16.0) is a Helm
+  # template question a plan-time check cannot ask; tests/scripts/check-n8n-chart.sh
+  # renders the real chart with this exact scenario to prove that half.
 }
 
 # The typed input is not the only way in. n8n_extra_helm_values is merged after
 # the module's own values and Helm gives the later file precedence, so the
-# overlay can render the same object with the same consequence. A check that
-# only read the input would stay silent on exactly the configuration it exists
-# to catch.
-run "the_extra_values_overlay_cannot_re_enable_the_pdb_silently" {
+# overlay can render the same object.
+run "the_extra_values_overlay_can_also_ask_for_the_pdb" {
   command = plan
 
   variables {
@@ -3526,17 +5284,13 @@ run "the_extra_values_overlay_cannot_re_enable_the_pdb_silently" {
   }
 
   assert {
-    condition     = local.n8n_pdb_enabled_via_extra_values
-    error_message = "The overlay setting pdb.enabled = true must be visible at plan time, or the check cannot warn about it."
+    condition     = try(yamldecode(var.n8n_extra_helm_values).pdb.enabled, false) == true
+    error_message = "The overlay setting pdb.enabled = true must be visible at plan time."
   }
-
-  expect_failures = [check.main_pdb_blocks_the_main_pod_node_drain]
 }
 
-# The detection must not fire on overlays that say nothing about the PDB, or
-# the warning becomes noise on every deployment that uses the escape hatch at
-# all, and a warning people learn to ignore is worse than none.
-run "an_unrelated_extra_values_overlay_leaves_the_pdb_check_quiet" {
+# The detection must not fire on overlays that say nothing about the PDB.
+run "an_unrelated_extra_values_overlay_leaves_the_pdb_detection_quiet" {
   command = plan
 
   variables {
@@ -3547,32 +5301,35 @@ run "an_unrelated_extra_values_overlay_leaves_the_pdb_check_quiet" {
   }
 
   assert {
-    condition     = !local.n8n_pdb_enabled_via_extra_values
+    condition     = try(yamldecode(var.n8n_extra_helm_values).pdb.enabled, false) != true
     error_message = "An overlay that never mentions pdb must not read as enabling it."
   }
 }
 
-# The tag is the one image key the module does NOT leave to the chart. The
-# chart's default is the floating `stable`, resolved per node at pull time
-# under IfNotPresent, so leaving it unset lets a rescheduled pod cross a
-# version boundary and run n8n's one-way startup migrations with no plan, no
-# apply and no operator in the loop.
+# The tag is the one image key the module does NOT leave to the chart. Before
+# chart 1.12.0, the chart's default was the floating `stable`, resolved per
+# node at pull time under IfNotPresent; from 1.12.0 on, an empty tag resolves
+# to the pinned chart's own appVersion instead, which is a fixed version but
+# still not one this module's CHANGELOG controls. Either way, leaving this
+# unset lets a chart bump (or, pre-1.12.0, a rescheduled pod) move the running
+# n8n version with no plan, no apply and no operator in the loop.
 run "the_image_tag_is_pinned_by_default" {
   command = plan
 
-  # A bare version, for two reasons at once: the chart's own fallback is
-  # `stable`, which resolves per node at pull time; and whenever
-  # n8n_task_runner_image_tag is null (its default) the chart derives the
-  # runner sidecar's tag from this one, so a tag n8nio/runners never
-  # published fails the pull on every main and worker pod.
+  # A bare version, for two reasons at once: handing the choice to the chart
+  # resolves to its appVersion (or `stable` pre-1.12.0) rather than a version
+  # this module's CHANGELOG tracks; and whenever n8n_task_runner_image_tag is
+  # null (its default) the chart derives the runner sidecar's tag from this
+  # one, so a tag n8nio/runners never published fails the pull on every
+  # worker pod.
   assert {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.n8n_image_tag))
-    error_message = "n8n_image_tag must default to a concrete, bare n8n version: null or a floating tag lets the chart's `stable` resolve per node at pull time, and a non-version tag makes the derived n8nio/runners sidecar tag unpullable."
+    error_message = "n8n_image_tag must default to a concrete, bare n8n version: null lets the chart's own default (its appVersion, or `stable` pre-1.12.0) apply instead, and a non-version tag makes the derived n8nio/runners sidecar tag unpullable."
   }
 
   assert {
     condition     = local.k8s_values_image.image.tag == var.n8n_image_tag
-    error_message = "image.tag must carry n8n_image_tag into the chart, or the pinned default is accepted and then discarded while the pods run `stable`."
+    error_message = "image.tag must carry n8n_image_tag into the chart, or the pinned default is accepted and then discarded while the pods run the chart's own default instead."
   }
 }
 
@@ -3656,6 +5413,20 @@ run "reinstalling_missing_packages_reaches_the_pods" {
     error_message = "n8n_reinstall_missing_packages must render N8N_REINSTALL_MISSING_PACKAGES when true."
   }
 }
+
+# F-083: check.webhook_resources_sized_for_reinstall_missing_packages
+# interpolates all four webhook quantities and branches on this toggle, and
+# Terraform evaluates a check's error_message alongside its condition rather
+# than lazily on failure. Before nullable = false, an explicit null on any of
+# the five aborted the plan from inside a block whose whole purpose is to
+# warn without failing. The run proving the plan simply succeeds at the
+# defaults, "explicit_nulls_on_webhook_resources_fall_back_to_defaults", now
+# lives in
+# tests/opentofu-gaps/nullable-variable-null-override-gap.tftest.hcl:
+# OpenTofu v1.13.2's test runner does not fall an explicit `variables` block
+# null on a nullable = false input back to its default the way `tofu`'s own
+# documented language behaviour and real Terraform both do (see that file's
+# header).
 
 run "opentelemetry_reaches_the_pods_only_when_enabled" {
   command = plan
@@ -3991,6 +5762,105 @@ run "cnpg_max_connections_rejects_a_value_postgres_cannot_take" {
   expect_failures = [var.cnpg_max_connections]
 }
 
+# ── Postgres connection budget advisory ───────────────────────────────────────
+# postgres_connection_budget_check_enabled defaults false. Set oversized
+# ceilings (10 x (1 + 50 + 8) = 590, far past cnpg_max_connections' default of
+# 200) and prove the plan still succeeds with the toggle untouched: the check
+# must be silent by default, not merely coincidentally fitting.
+run "postgres_connection_budget_check_stays_silent_by_default" {
+  command = plan
+
+  variables {
+    n8n_worker_keda_max_replicas = 50
+  }
+}
+
+# Enabled, the same oversized ceiling against the cnpg path's known value
+# (cnpg_max_connections, default 200) must warn: 10 x (1 + 20 + 8) = 290 > 200.
+run "postgres_connection_budget_check_warns_when_ceilings_exceed_cnpg_max_connections" {
+  command = plan
+
+  variables {
+    postgres_connection_budget_check_enabled = true
+    n8n_worker_keda_max_replicas             = 20
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+}
+
+# Enabled with ceilings that fit (10 x (1 + 5 + 8) = 140 <= 200) must draw no
+# warning.
+run "postgres_connection_budget_check_passes_when_ceilings_fit" {
+  command = plan
+
+  variables {
+    postgres_connection_budget_check_enabled = true
+    n8n_worker_keda_max_replicas             = 5
+  }
+}
+
+# Exact boundary: db_postgresdb_pool_size x (1 + worker + webhook) landing
+# exactly on cnpg_max_connections' default of 200 (1 x (1 + 100 + 99) = 200)
+# must not fire. The comparison is <=, so "fits" includes the limit itself.
+run "postgres_connection_budget_check_stays_silent_exactly_at_the_limit" {
+  command = plan
+
+  variables {
+    postgres_connection_budget_check_enabled = true
+    db_postgresdb_pool_size                  = 1
+    n8n_worker_keda_max_replicas             = 100
+    n8n_webhook_hpa_max_replicas             = 99
+  }
+}
+
+# One connection past the same limit (1 x (1 + 100 + 100) = 201) must fire.
+# Paired with the previous run, this pins the inclusive boundary in both
+# directions so an off-by-one in the comparison operator cannot pass silently.
+run "postgres_connection_budget_check_warns_one_over_the_limit" {
+  command = plan
+
+  variables {
+    postgres_connection_budget_check_enabled = true
+    db_postgresdb_pool_size                  = 1
+    n8n_worker_keda_max_replicas             = 100
+    n8n_webhook_hpa_max_replicas             = 100
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+}
+
+# On the external path the module manages nothing on the server, so the known
+# value falls back to PostgreSQL's own stock default of 100. The module's own
+# default ceilings (10 x (1 + 10 + 8) = 190) already exceed that, which is
+# exactly why the toggle defaults false.
+run "postgres_connection_budget_check_uses_the_stock_default_on_the_external_path" {
+  command = plan
+
+  variables {
+    postgres_connection_budget_check_enabled = true
+    postgres_backend                         = "external"
+    db_host                                  = "postgres.internal.example.com"
+    db_password                              = "not-a-real-password"
+  }
+
+  expect_failures = [check.postgres_pool_size_fits_known_max_connections]
+}
+
+# Behind the pooler, pod count stops being a term in the connection
+# arithmetic (the Pooler sets the real connection count instead), so the
+# model does not apply and the check must stay silent even against ceilings
+# that would otherwise warn.
+run "postgres_connection_budget_check_stays_silent_behind_the_pooler" {
+  command = plan
+
+  variables {
+    postgres_connection_budget_check_enabled = true
+    cnpg_pooler_enabled                      = true
+    db_postgresdb_ssl_enabled                = false
+    n8n_worker_keda_max_replicas             = 20
+  }
+}
+
 # Upstream's supported tags name the image type and distribution, and the bare
 # major it defaults to here is the deprecated spelling. Rejecting the supported
 # form would leave the module on the tags that are going away.
@@ -4257,5 +6127,1680 @@ run "extra_helm_values_still_reaches_everything_else" {
       podAnnotations:
         example.com/owner: platform
     YAML
+  }
+}
+
+
+# ── n8n_extra_ca_pem ─────────────────────────────────────────────────────────
+# Ported from the AWS sibling (n8n-io/terraform-aws-n8n#202). Emission is
+# proven against local.k8s_values_volumes/config/pod_annotations here;
+# tests/scripts/check-n8n-chart.sh proves the real chart accepts the shape on
+# all three pod types and keeps it off the task-runner sidecar.
+
+run "n8n_extra_ca_pem_is_null_by_default_and_emits_nothing" {
+  command = plan
+
+  assert {
+    condition     = length(local.k8s_values_volumes.extraVolumes) == 0 && length(local.k8s_values_volumes.extraVolumeMounts) == 0
+    error_message = "With n8n_extra_ca_pem unset, no ca-bundle volume or mount should be rendered."
+  }
+
+  assert {
+    condition     = length(local.n8n_ca_bundle_env) == 0
+    error_message = "With n8n_extra_ca_pem unset, NODE_EXTRA_CA_CERTS must not be rendered."
+  }
+
+  assert {
+    condition     = length(local.k8s_values_pod_annotations) == 0
+    error_message = "With n8n_extra_ca_pem unset and valkey_password_rotation_roll_enabled at its default (false), no podAnnotations should be rendered."
+  }
+}
+
+run "n8n_extra_ca_pem_reaches_the_chart" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END CERTIFICATE-----
+    PEM
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_volumes.extraVolumes,
+      {
+        name = "ca-bundle"
+        secret = {
+          secretName = "n8n-ca-bundle-secret"
+          items      = [{ key = "ca.crt", path = "ca.crt" }]
+        }
+      }
+    )
+    error_message = "n8n_extra_ca_pem must render the ca-bundle volume."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_volumes.extraVolumeMounts,
+      {
+        name      = "ca-bundle"
+        mountPath = "/etc/n8n-certs/ca-bundle.crt"
+        subPath   = "ca.crt"
+        readOnly  = true
+      }
+    )
+    error_message = "n8n_extra_ca_pem must render the ca-bundle mount read-only at /etc/n8n-certs/ca-bundle.crt."
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "NODE_EXTRA_CA_CERTS", value = "/etc/n8n-certs/ca-bundle.crt" }
+    )
+    error_message = "n8n_extra_ca_pem must set NODE_EXTRA_CA_CERTS to the mounted path."
+  }
+
+  assert {
+    condition     = local.k8s_values_pod_annotations.podAnnotations["checksum/extra-ca"] == sha256("${trimspace(var.n8n_extra_ca_pem)}\n")
+    error_message = "The checksum/extra-ca pod annotation must be the sha256 of the (trimmed) PEM, so a changed PEM rolls the pods."
+  }
+}
+
+run "n8n_extra_ca_pem_checksum_changes_with_the_pem" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBdifferent0987654321bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      -----END CERTIFICATE-----
+    PEM
+  }
+
+  # The checksum is a pure function of this run's own PEM (sha256 of the
+  # trimmed content, matching local.n8n_ca_bundle_pem), recomputed at every
+  # plan rather than cached from a prior apply. Proving it matches the formula
+  # here, against a PEM that differs from the one in the run above, is what
+  # shows a changed PEM produces a changed annotation and so rolls the pods.
+  assert {
+    condition     = local.k8s_values_pod_annotations.podAnnotations["checksum/extra-ca"] == sha256("${trimspace(var.n8n_extra_ca_pem)}\n")
+    error_message = "The checksum/extra-ca pod annotation must track this run's own PEM."
+  }
+}
+
+run "n8n_extra_ca_pem_rejects_a_missing_certificate" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = "not a certificate"
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "n8n_extra_ca_pem_rejects_a_private_key" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END CERTIFICATE-----
+      -----BEGIN PRIVATE KEY-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END PRIVATE KEY-----
+    PEM
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "n8n_extra_ca_pem_reserves_the_ca_bundle_volume_name_while_set" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END CERTIFICATE-----
+    PEM
+    n8n_extra_volumes = [{
+      name       = "ca-bundle"
+      config_map = { name = "my-own-ca" }
+    }]
+    n8n_extra_volume_mounts = [{
+      name       = "ca-bundle"
+      mount_path = "/etc/my-own-ca"
+      read_only  = true
+    }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+# The same name is accepted when n8n_extra_ca_pem is unset: the reservation is
+# conditional, not permanent, so this is the same configuration the
+# "extra_volumes_reach_the_chart" run elsewhere in this file already exercises.
+run "ca_bundle_volume_name_is_free_when_n8n_extra_ca_pem_is_unset" {
+  command = plan
+
+  variables {
+    n8n_extra_volumes = [{
+      name       = "ca-bundle"
+      config_map = { name = "my-own-ca" }
+    }]
+    n8n_extra_volume_mounts = [{
+      name       = "ca-bundle"
+      mount_path = "/etc/my-own-ca"
+      read_only  = true
+    }]
+  }
+
+  assert {
+    condition     = length(local.k8s_values_volumes.extraVolumes) == 1
+    error_message = "A caller-owned \"ca-bundle\" volume must be accepted when n8n_extra_ca_pem is not set."
+  }
+}
+
+run "n8n_extra_ca_pem_reserves_the_mount_path_while_set" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END CERTIFICATE-----
+    PEM
+    n8n_extra_volumes = [{
+      name   = "my-ca"
+      secret = { secret_name = "my-own-ca-secret" }
+    }]
+    n8n_extra_volume_mounts = [{
+      name       = "my-ca"
+      mount_path = "/etc/n8n-certs/ca-bundle.crt"
+      read_only  = true
+    }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "n8n_extra_ca_pem_reserves_node_extra_ca_certs_in_extra_env_while_set" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END CERTIFICATE-----
+    PEM
+    n8n_extra_env = [
+      { name = "NODE_EXTRA_CA_CERTS", value = "/somewhere/else.crt" },
+    ]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+run "n8n_extra_ca_pem_reserves_node_extra_ca_certs_in_extra_env_from_secret_while_set" {
+  command = plan
+
+  variables {
+    n8n_extra_ca_pem = <<-PEM
+      -----BEGIN CERTIFICATE-----
+      MIIBtest1234567890aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      -----END CERTIFICATE-----
+    PEM
+    n8n_extra_env_from_secret = [{
+      name        = "NODE_EXTRA_CA_CERTS"
+      secret_name = "caller-ca-secret"
+      secret_key  = "path"
+    }]
+  }
+
+  expect_failures = [var.n8n_extra_ca_pem]
+}
+
+# NODE_EXTRA_CA_CERTS is free to use through n8n_extra_env when
+# n8n_extra_ca_pem is unset, same conditional-reservation shape as the volume
+# name and mount path above: a caller may mount their own bundle entirely
+# through the generic escape hatches without ever touching this input.
+run "node_extra_ca_certs_is_free_in_extra_env_when_n8n_extra_ca_pem_is_unset" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "NODE_EXTRA_CA_CERTS", value = "/opt/my-ca/bundle.crt" },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      local.k8s_values_config.config.extraEnv,
+      { name = "NODE_EXTRA_CA_CERTS", value = "/opt/my-ca/bundle.crt" }
+    )
+    error_message = "NODE_EXTRA_CA_CERTS must reach the chart via n8n_extra_env when n8n_extra_ca_pem is not set."
+  }
+}
+
+# ── DNS-name validation: n8n_domain / n8n_additional_domains ─────────────────
+# The regex used to be a single character class that admitted "a--b..com": no
+# per-label structure, so a doubled dot or a hyphen-only label passed. These
+# cover the shapes the tightened grammar now rejects, and that a legitimate
+# name with hyphens still passes.
+
+run "n8n_domain_rejects_a_doubled_dot" {
+  command = plan
+
+  variables {
+    n8n_domain = "n8n..example.com"
+  }
+
+  expect_failures = [var.n8n_domain]
+}
+
+run "n8n_domain_rejects_a_label_starting_with_a_hyphen" {
+  command = plan
+
+  variables {
+    n8n_domain = "-n8n.example.com"
+  }
+
+  expect_failures = [var.n8n_domain]
+}
+
+run "n8n_domain_rejects_a_label_ending_with_a_hyphen" {
+  command = plan
+
+  variables {
+    n8n_domain = "n8n-.example.com"
+  }
+
+  expect_failures = [var.n8n_domain]
+}
+
+run "n8n_domain_rejects_a_label_over_63_characters" {
+  command = plan
+
+  variables {
+    n8n_domain = "${join("", [for i in range(64) : "a"])}.example.com"
+  }
+
+  expect_failures = [var.n8n_domain]
+}
+
+run "n8n_domain_accepts_internal_hyphens" {
+  command = plan
+
+  variables {
+    n8n_domain = "n8n-prod.example.com"
+  }
+
+  assert {
+    condition     = var.n8n_domain == "n8n-prod.example.com"
+    error_message = "A hyphen inside a label, away from its edges, must still be accepted."
+  }
+}
+
+run "n8n_additional_domains_rejects_a_doubled_dot" {
+  command = plan
+
+  variables {
+    n8n_additional_domains = ["hooks..example.com"]
+  }
+
+  expect_failures = [var.n8n_additional_domains]
+}
+
+run "n8n_additional_domains_rejects_a_label_over_63_characters" {
+  command = plan
+
+  variables {
+    n8n_additional_domains = ["${join("", [for i in range(64) : "a"])}.example.com"]
+  }
+
+  expect_failures = [var.n8n_additional_domains]
+}
+
+
+# ── V8 heap tuning: n8n_node_max_old_space_size_mb ───────────────────────────
+
+run "node_max_old_space_size_omits_node_options_by_default" {
+  command = plan
+
+  assert {
+    condition = length([
+      for e in local.k8s_values_config.config.extraEnv : e if e.name == "NODE_OPTIONS"
+    ]) == 0
+    error_message = "With n8n_node_max_old_space_size_mb left null, no NODE_OPTIONS entry should render at all."
+  }
+}
+
+run "node_max_old_space_size_renders_the_flag" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 3072
+  }
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "NODE_OPTIONS"
+    ]) == "--max-old-space-size=3072"
+    error_message = "n8n_node_max_old_space_size_mb must render NODE_OPTIONS=--max-old-space-size=<value> in config.extraEnv."
+  }
+}
+
+run "node_max_old_space_size_rejects_below_256" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 128
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+run "node_max_old_space_size_rejects_a_fractional_value" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 3072.5
+  }
+
+  expect_failures = [var.n8n_node_max_old_space_size_mb]
+}
+
+# NODE_OPTIONS is reserved in n8n_extra_env only while the tuning input is set:
+# with it null there is nothing of the module's for a caller's own NODE_OPTIONS
+# (unrelated flags) to clobber.
+run "node_options_is_free_in_extra_env_when_the_tuning_input_is_unset" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [{ name = "NODE_OPTIONS", value = "--enable-source-maps" }]
+  }
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "NODE_OPTIONS"
+    ]) == "--enable-source-maps"
+    error_message = "With n8n_node_max_old_space_size_mb null, NODE_OPTIONS must be free for n8n_extra_env to set."
+  }
+}
+
+run "node_options_is_reserved_in_extra_env_once_the_tuning_input_is_set" {
+  command = plan
+
+  variables {
+    n8n_node_max_old_space_size_mb = 2048
+    n8n_extra_env                  = [{ name = "NODE_OPTIONS", value = "--enable-source-maps" }]
+  }
+
+  expect_failures = [var.n8n_extra_env]
+}
+
+
+# ── Credential overwrites: n8n_credentials_overwrite_secret_ref ──────────────
+
+run "credentials_overwrite_renders_no_volume_by_default" {
+  command = plan
+
+  assert {
+    condition     = length([for v in local.k8s_values_volumes.extraVolumes : v if v.name == "credentials-overwrite"]) == 0
+    error_message = "With n8n_credentials_overwrite_secret_ref null, no credentials-overwrite volume should render."
+  }
+
+  assert {
+    condition     = length(local.n8n_credentials_overwrite_env) == 0
+    error_message = "With n8n_credentials_overwrite_secret_ref null, no CREDENTIALS_OVERWRITE_DATA_FILE entry should render."
+  }
+}
+
+run "credentials_overwrite_reaches_the_rendered_values" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+  }
+
+  assert {
+    condition = one([
+      for v in local.k8s_values_volumes.extraVolumes : v if v.name == "credentials-overwrite"
+    ]).secret.secretName == "n8n-credentials-overwrite"
+    error_message = "n8n_credentials_overwrite_secret_ref.name must reach the rendered Secret volume."
+  }
+
+  assert {
+    condition = one([
+      for v in local.k8s_values_volumes.extraVolumes : v if v.name == "credentials-overwrite"
+    ]).secret.items[0].key == "credentials-overwrite.json"
+    error_message = "key must default to \"credentials-overwrite.json\"."
+  }
+
+  assert {
+    condition = one([
+      for m in local.k8s_values_volumes.extraVolumeMounts : m if m.name == "credentials-overwrite"
+    ]).mountPath == "/etc/n8n/credentials-overwrite"
+    error_message = "The mount path must be /etc/n8n/credentials-overwrite."
+  }
+
+  assert {
+    condition = one([
+      for m in local.k8s_values_volumes.extraVolumeMounts : m if m.name == "credentials-overwrite"
+    ]).readOnly == true
+    error_message = "The credentials-overwrite mount must be read-only."
+  }
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "CREDENTIALS_OVERWRITE_DATA_FILE"
+    ]) == "/etc/n8n/credentials-overwrite/credentials-overwrite.json"
+    error_message = "CREDENTIALS_OVERWRITE_DATA_FILE must point at the mounted file path."
+  }
+}
+
+run "credentials_overwrite_honors_a_custom_key" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+      key  = "overwrite.json"
+    }
+  }
+
+  assert {
+    condition = one([
+      for e in local.k8s_values_config.config.extraEnv : e.value if e.name == "CREDENTIALS_OVERWRITE_DATA_FILE"
+    ]) == "/etc/n8n/credentials-overwrite/overwrite.json"
+    error_message = "A custom key must be reflected in both the mounted path and CREDENTIALS_OVERWRITE_DATA_FILE."
+  }
+}
+
+run "credentials_overwrite_rejects_a_bad_secret_name" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "Not_A_Valid_Name"
+    }
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_rejects_a_bad_key" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+      key  = ".."
+    }
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_conflicts_with_extra_env" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_env = [{ name = "CREDENTIALS_OVERWRITE_DATA_FILE", value = "/tmp/whatever" }]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_reserves_the_volume_name" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_volumes = [{
+      name   = "credentials-overwrite"
+      secret = { secret_name = "something-else" }
+    }]
+    n8n_extra_volume_mounts = [{
+      name       = "credentials-overwrite"
+      mount_path = "/opt/something-else"
+    }]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+run "credentials_overwrite_reserves_the_mount_path" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_volumes = [{
+      name   = "my-own-mount"
+      secret = { secret_name = "something-else" }
+    }]
+    n8n_extra_volume_mounts = [{
+      name       = "my-own-mount"
+      mount_path = "/etc/n8n/credentials-overwrite"
+    }]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+# n8n_credentials_overwrite_secret_ref's own collision validation only
+# checked n8n_extra_env (the plain escape hatch), not
+# n8n_extra_env_from_secret (the Secret-backed one), even though both render
+# into the same config.extraEnv list: a caller using the Secret-backed input
+# instead of the plain one hit no guard at all until the matching validation
+# was added above.
+run "credentials_overwrite_conflicts_with_extra_env_from_secret" {
+  command = plan
+
+  variables {
+    n8n_credentials_overwrite_secret_ref = {
+      name = "n8n-credentials-overwrite"
+    }
+    n8n_extra_env_from_secret = [
+      { name = "CREDENTIALS_OVERWRITE_DATA_FILE", secret_name = "something-else", secret_key = "value" },
+    ]
+  }
+
+  expect_failures = [var.n8n_credentials_overwrite_secret_ref]
+}
+
+# ── Pod DNS: n8n_dns_config ───────────────────────────────────────────────────
+
+run "dns_config_omits_the_key_by_default" {
+  command = plan
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_dns), "dnsConfig")
+    error_message = "With n8n_dns_config null, the dnsConfig key must be omitted from the values tree entirely."
+  }
+}
+
+run "dns_config_renders_ndots" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "1" }]
+    }
+  }
+
+  assert {
+    condition     = local.k8s_values_dns.dnsConfig.options[0].name == "ndots" && local.k8s_values_dns.dnsConfig.options[0].value == "1"
+    error_message = "n8n_dns_config.options must reach the chart's dnsConfig.options."
+  }
+}
+
+run "dns_config_renders_nameservers_and_searches" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.10"]
+      searches    = ["svc.cluster.local"]
+    }
+  }
+
+  assert {
+    condition     = tolist(local.k8s_values_dns.dnsConfig.nameservers) == tolist(["10.0.0.10"])
+    error_message = "n8n_dns_config.nameservers must reach the chart's dnsConfig.nameservers."
+  }
+
+  assert {
+    condition     = tolist(local.k8s_values_dns.dnsConfig.searches) == tolist(["svc.cluster.local"])
+    error_message = "n8n_dns_config.searches must reach the chart's dnsConfig.searches."
+  }
+}
+
+run "dns_config_rejects_more_than_three_nameservers" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["10.0.0.10", "10.0.0.11", "10.0.0.12", "10.0.0.13"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "dns_config_rejects_a_malformed_nameserver" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      nameservers = ["not-an-ip"]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "dns_config_rejects_an_out_of_range_ndots" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "16" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+run "dns_config_rejects_a_fractional_ndots" {
+  command = plan
+
+  variables {
+    n8n_dns_config = {
+      options = [{ name = "ndots", value = "1.5" }]
+    }
+  }
+
+  expect_failures = [var.n8n_dns_config]
+}
+
+# ── The queue survives a crash, and an in-place upgrade does not deadlock ─────
+# The chart's generated valkey.conf carries no persistence directives, so the
+# server's built-in defaults apply: RDB snapshots only, appendonly no, up to
+# an hour of accepted jobs lost silently on a crash. And in standalone mode
+# the chart renders a Deployment whose default RollingUpdate strategy starts
+# the new pod against a ReadWriteOnce PVC the old pod still holds, so the
+# first in-place values change deadlocks on Multi-Attach. The Recreate fix
+# carries no input and is unconditional (and changing only a Deployment's
+# strategy.type never itself restarts anything, so adopting it alone is
+# quiet); the persistence toggle and the rotation-roll checksum both default
+# off, so all three are asserted separately with no override_resource needed
+# at the defaults.
+run "the_valkey_deployment_recreates_rather_than_rolling" {
+  command = plan
+
+  variables {
+    redis_backend = "valkey"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      yamldecode(r.values[0]).deploymentStrategy == "Recreate"
+    ])
+    error_message = "The Valkey Deployment must use Recreate: RollingUpdate against the chart's ReadWriteOnce PVC deadlocks every in-place upgrade on Multi-Attach."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      !can(yamldecode(r.values[0]).valkeyConfig)
+    ])
+    error_message = "valkey_append_only_enabled defaults to false, so the default plan must render no valkeyConfig at all, which is the chart's own default, not an empty string that would still mount a config file."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      !can(yamldecode(r.values[0]).podAnnotations)
+    ])
+    error_message = "valkey_password_rotation_roll_enabled defaults to false, so the default plan must render no podAnnotations at all: introducing that key is itself a pod-template change, and a default caller who rotated nothing and asked for nothing should not eat the one-time Recreate outage that adding it causes."
+  }
+}
+
+run "enabling_append_only_persists_the_queue_across_a_crash" {
+  command = plan
+
+  variables {
+    redis_backend              = "valkey"
+    valkey_append_only_enabled = true
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      strcontains(yamldecode(r.values[0]).valkeyConfig, "appendonly yes")
+    ])
+    error_message = "valkey_append_only_enabled = true must render appendonly yes into valkeyConfig, or a queue crash silently loses every job accepted since the last RDB snapshot."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      strcontains(yamldecode(r.values[0]).valkeyConfig, "appendfsync everysec")
+    ])
+    error_message = "appendfsync everysec must accompany appendonly, bounding the loss window to about one second of writes."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      yamldecode(r.values[0]).deploymentStrategy == "Recreate"
+    ])
+    error_message = "Recreate is not tied to the persistence toggle: the Multi-Attach deadlock exists either way."
+  }
+}
+
+# ── Rotating the generated Valkey password rolls both sides, opt-in ───────────
+# The n8n pods resolve the password from a secretKeyRef once at start and
+# Valkey loads its ACL file once at start, so without a checksum annotation on
+# both releases a rotation restarts nothing and the first unrelated restart on
+# either side lands on the other side's generation, breaking the queue.
+# valkey_password_rotation_roll_enabled defaults to false: introducing the
+# checksum key into podAnnotations for the first time is itself a
+# pod-template change, and with deploymentStrategy = Recreate already in
+# place that first change takes Valkey fully down and back up once, not an
+# overlap. A default caller who rotated nothing and asked for nothing should
+# not eat that outage as a side effect of a module upgrade, so the whole
+# mechanism is opt-in and renders nothing until explicitly turned on.
+run "the_valkey_password_checksum_is_absent_until_opted_in" {
+  command = plan
+
+  variables {
+    redis_backend = "valkey"
+  }
+
+  assert {
+    condition     = length(local.k8s_values_pod_annotations) == 0
+    error_message = "With valkey_password_rotation_roll_enabled at its default (false), no podAnnotations should be rendered on the n8n release."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      !can(yamldecode(r.values[0]).podAnnotations)
+    ])
+    error_message = "With valkey_password_rotation_roll_enabled at its default (false), the Valkey release must render no podAnnotations key."
+  }
+}
+
+# The external-redis path has no module-generated credential to hash, and the
+# gate keeps its rendered values byte-identical regardless of the toggle.
+run "the_external_redis_path_renders_no_pod_annotations_even_when_enabled" {
+  command = plan
+
+  variables {
+    redis_backend                         = "external"
+    redis_host                            = "redis.internal.example.com"
+    valkey_password_rotation_roll_enabled = true
+  }
+
+  assert {
+    condition     = !contains(keys(local.k8s_values_final), "podAnnotations")
+    error_message = "No podAnnotations key may render on the external-redis path; the checksum exists only for the credential the module itself generates, regardless of the toggle."
+  }
+}
+
+# ── The n8n release waits for Postgres, not just for the Cluster manifest ─────
+# A plan-time test cannot observe a race. What it can hold is the shape of the
+# barrier: that a readiness gate exists on the CNPG path, that it polls the
+# Cluster's own rw Service with no carriage returns in the script, that it is
+# sized rather than BestEffort, that it carries no TTL (a TTL deletes the Job
+# object itself, which would recreate it on every later plan, forever), and
+# that it is absent on the external backend where the database is the
+# caller's and already running. The edge from the release to this Job is the
+# part that removes the race, and it is proven at apply by the graph itself
+# rather than here.
+run "the_cnpg_backend_gets_a_postgres_readiness_barrier" {
+  command = plan
+
+  assert {
+    condition     = length(kubernetes_job_v1.cnpg_ready) == 1
+    error_message = "The CNPG backend must create a readiness Job: kubectl_manifest applies the Cluster without waiting for it, so without this the n8n release starts against a database that may not exist yet."
+  }
+
+  assert {
+    condition = strcontains(
+      kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2],
+      local.cnpg_service_host
+    )
+    error_message = "The readiness Job must poll the CNPG Cluster's rw Service, which is the host the release connects to when no pooler is in front of it."
+  }
+
+  assert {
+    condition     = !strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "\r")
+    error_message = "The readiness script must contain no carriage returns: /bin/sh in the container is dash, and it reads `then\\r` as a word rather than a keyword, so a CRLF checkout would die on the script's first `if`."
+  }
+
+  # Reuses the operand image on purpose. A second image would be another pull
+  # to schedule, another tag to keep current, and another thing to mirror on an
+  # air-gapped cluster, for a binary the operand already ships.
+  assert {
+    condition     = kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].image == "ghcr.io/cloudnative-pg/postgresql:${var.cnpg_postgres_image_tag}"
+    error_message = "The readiness Job must run the same operand image as the Cluster, which is where pg_isready comes from."
+  }
+
+  assert {
+    condition     = kubernetes_job_v1.cnpg_ready[0].spec[0].ttl_seconds_after_finished == null
+    error_message = "The readiness Job must not set ttl_seconds_after_finished: the TTL controller deletes the Job object itself, not just its completed pod, so Terraform would recreate it on every plan run past the TTL window, forever."
+  }
+
+  assert {
+    condition = alltrue([
+      kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].resources[0].requests.cpu == "50m",
+      kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].resources[0].requests.memory == "64Mi",
+      kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].resources[0].limits.cpu == "200m",
+      kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].resources[0].limits.memory == "128Mi",
+    ])
+    error_message = "The readiness Job's container must declare requests and limits, or it cannot schedule where a ResourceQuota requires them and a LimitRange default applies unseen."
+  }
+}
+
+run "an_external_postgres_gets_no_readiness_barrier" {
+  command = plan
+
+  variables {
+    postgres_backend = "external"
+    db_host          = "postgres.example.com"
+    db_password      = "not-a-real-password"
+  }
+
+  assert {
+    condition     = length(kubernetes_job_v1.cnpg_ready) == 0
+    error_message = "The readiness Job belongs to the CNPG Cluster this module creates. On the external backend there is no Cluster to wait for, and polling a database the module does not own would fail an apply over the caller's own infrastructure."
+  }
+}
+
+# cnpg_ready_timeout governs the same barrier: the default must reproduce the
+# hardcoded 300-attempt / 2s-sleep budget this module shipped before the input
+# existed, so a deployment that leaves it unset behaves unchanged.
+run "cnpg_ready_timeout_defaults_to_the_original_budget" {
+  command = plan
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "-ge 300")
+    error_message = "cnpg_ready_timeout must default to 600s, reproducing the 300-attempt threshold (300 x 2s sleep) this module hardcoded before the input existed."
+  }
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "within 600s")
+    error_message = "The failure message must name the actual configured budget."
+  }
+}
+
+# Raising it moves both the attempt threshold and the failure message, so a
+# caller with a healthy but slow bootstrap (large WAL replay, cold storage)
+# gets more time independent of n8n_helm_timeout, which this Job completes
+# before helm_release.n8n's own wait even starts.
+run "cnpg_ready_timeout_is_configurable" {
+  command = plan
+
+  variables {
+    cnpg_ready_timeout = 1800
+  }
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "-ge 900")
+    error_message = "cnpg_ready_timeout = 1800 must raise the attempt threshold to 900 (1800s / 2s sleep), not stay pinned at the old hardcoded 300."
+  }
+
+  assert {
+    condition     = strcontains(kubernetes_job_v1.cnpg_ready[0].spec[0].template[0].spec[0].container[0].command[2], "within 1800s")
+    error_message = "The failure message must name the raised budget, not the old hardcoded 10 minutes."
+  }
+}
+
+run "cnpg_ready_timeout_rejects_a_fraction" {
+  command = plan
+
+  variables {
+    cnpg_ready_timeout = 600.5
+  }
+
+  expect_failures = [var.cnpg_ready_timeout]
+}
+
+run "cnpg_ready_timeout_rejects_below_60" {
+  command = plan
+
+  variables {
+    cnpg_ready_timeout = 59
+  }
+
+  expect_failures = [var.cnpg_ready_timeout]
+}
+
+# ── The database, pooler and queue are sized only when asked ──────────────────
+# All twelve sizing inputs default null, rendering no resources key at all:
+# today's BestEffort scheduling, unchanged for a caller who sets nothing.
+run "backend_resources_are_absent_at_defaults" {
+  command = plan
+
+  assert {
+    condition     = !contains(keys(yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec), "resources")
+    error_message = "The CNPG Cluster must render no resources key while every cnpg_*_request/_limit input is null, or an existing deployment's BestEffort scheduling changes on adoption."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      !can(yamldecode(r.values[0]).resources)
+    ])
+    error_message = "The Valkey release must render no resources key while every valkey_*_request/_limit input is null."
+  }
+
+  assert {
+    condition     = local.n8n_backend_cpu_request_millis["postgres"] == 0 && local.n8n_backend_cpu_request_millis["pooler"] == 0 && local.n8n_backend_cpu_request_millis["valkey"] == 0
+    error_message = "Every backend term in the capacity model must be 0 while its sizing inputs are unset, matching the rendered reality that nothing was requested."
+  }
+}
+
+run "cnpg_cluster_resources_reach_the_spec_when_set" {
+  command = plan
+
+  variables {
+    cnpg_cpu_request    = "500m"
+    cnpg_cpu_limit      = "2000m"
+    cnpg_memory_request = "1Gi"
+    cnpg_memory_limit   = "2Gi"
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.resources.requests.cpu == "500m"
+    error_message = "cnpg_cpu_request must reach the Cluster spec verbatim."
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.resources.requests.memory == "1Gi"
+    error_message = "cnpg_memory_request must reach the Cluster spec verbatim."
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.resources.limits.cpu == "2000m" && yamldecode(kubectl_manifest.cnpg_cluster[0].yaml_body).spec.resources.limits.memory == "2Gi"
+    error_message = "cnpg_cpu_limit and cnpg_memory_limit must reach the Cluster spec verbatim."
+  }
+}
+
+run "cnpg_cpu_request_rejects_a_memory_quantity" {
+  command = plan
+
+  variables {
+    cnpg_cpu_request = "128Mi"
+  }
+
+  expect_failures = [var.cnpg_cpu_request]
+}
+
+run "cnpg_cpu_request_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_cpu_request = " 500m"
+  }
+
+  expect_failures = [var.cnpg_cpu_request]
+}
+
+run "cnpg_cpu_limit_rejects_a_memory_quantity" {
+  command = plan
+
+  variables {
+    cnpg_cpu_limit = "256Mi"
+  }
+
+  expect_failures = [var.cnpg_cpu_limit]
+}
+
+run "cnpg_cpu_limit_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_cpu_limit = " 2000m"
+  }
+
+  expect_failures = [var.cnpg_cpu_limit]
+}
+
+run "cnpg_memory_request_rejects_a_cpu_quantity" {
+  command = plan
+
+  variables {
+    cnpg_memory_request = "500m"
+  }
+
+  expect_failures = [var.cnpg_memory_request]
+}
+
+run "cnpg_memory_request_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_memory_request = "1Gi "
+  }
+
+  expect_failures = [var.cnpg_memory_request]
+}
+
+run "cnpg_memory_limit_rejects_a_cpu_quantity" {
+  command = plan
+
+  variables {
+    cnpg_memory_limit = "2000m"
+  }
+
+  expect_failures = [var.cnpg_memory_limit]
+}
+
+run "cnpg_memory_limit_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_memory_limit = "2Gi "
+  }
+
+  expect_failures = [var.cnpg_memory_limit]
+}
+
+run "cnpg_pooler_resources_reach_the_spec_when_set" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled        = true
+    db_postgresdb_ssl_enabled  = false
+    cnpg_pooler_cpu_request    = "100m"
+    cnpg_pooler_cpu_limit      = "500m"
+    cnpg_pooler_memory_request = "128Mi"
+    cnpg_pooler_memory_limit   = "256Mi"
+  }
+
+  assert {
+    condition = alltrue([
+      for m in kubectl_manifest.cnpg_pooler :
+      yamldecode(m.yaml_body).spec.template.spec.containers[0].resources.requests.cpu == "100m"
+    ])
+    error_message = "The Pooler's pgbouncer container must carry cnpg_pooler_cpu_request; every database connection runs through it when enabled."
+  }
+
+  assert {
+    condition = alltrue([
+      for m in kubectl_manifest.cnpg_pooler :
+      yamldecode(m.yaml_body).spec.template.spec.containers[0].resources.limits.memory == "256Mi"
+    ])
+    error_message = "The Pooler's pgbouncer container must carry cnpg_pooler_memory_limit."
+  }
+}
+
+run "cnpg_pooler_cpu_request_rejects_a_memory_quantity" {
+  command = plan
+
+  variables {
+    cnpg_pooler_cpu_request = "128Mi"
+  }
+
+  expect_failures = [var.cnpg_pooler_cpu_request]
+}
+
+run "cnpg_pooler_cpu_request_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_pooler_cpu_request = " 100m"
+  }
+
+  expect_failures = [var.cnpg_pooler_cpu_request]
+}
+
+run "cnpg_pooler_cpu_limit_rejects_a_memory_quantity" {
+  command = plan
+
+  variables {
+    cnpg_pooler_cpu_limit = "256Mi"
+  }
+
+  expect_failures = [var.cnpg_pooler_cpu_limit]
+}
+
+run "cnpg_pooler_cpu_limit_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_pooler_cpu_limit = " 500m"
+  }
+
+  expect_failures = [var.cnpg_pooler_cpu_limit]
+}
+
+run "cnpg_pooler_memory_request_rejects_a_cpu_quantity" {
+  command = plan
+
+  variables {
+    cnpg_pooler_memory_request = "100m"
+  }
+
+  expect_failures = [var.cnpg_pooler_memory_request]
+}
+
+run "cnpg_pooler_memory_request_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_pooler_memory_request = "128Mi "
+  }
+
+  expect_failures = [var.cnpg_pooler_memory_request]
+}
+
+run "cnpg_pooler_memory_limit_rejects_a_cpu_quantity" {
+  command = plan
+
+  variables {
+    cnpg_pooler_memory_limit = "500m"
+  }
+
+  expect_failures = [var.cnpg_pooler_memory_limit]
+}
+
+run "cnpg_pooler_memory_limit_rejects_whitespace" {
+  command = plan
+
+  variables {
+    cnpg_pooler_memory_limit = "256Mi "
+  }
+
+  expect_failures = [var.cnpg_pooler_memory_limit]
+}
+
+run "valkey_resources_reach_the_chart_values_when_set" {
+  command = plan
+
+  variables {
+    redis_backend         = "valkey"
+    valkey_cpu_request    = "250m"
+    valkey_cpu_limit      = "1000m"
+    valkey_memory_request = "256Mi"
+    valkey_memory_limit   = "1Gi"
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      yamldecode(r.values[0]).resources.requests.cpu == "250m" && yamldecode(r.values[0]).resources.requests.memory == "256Mi"
+    ])
+    error_message = "valkey_cpu_request and valkey_memory_request must reach the chart values verbatim."
+  }
+
+  assert {
+    condition = alltrue([
+      for r in helm_release.valkey :
+      yamldecode(r.values[0]).resources.limits.cpu == "1000m" && yamldecode(r.values[0]).resources.limits.memory == "1Gi"
+    ])
+    error_message = "valkey_cpu_limit and valkey_memory_limit must reach the chart values verbatim."
+  }
+}
+
+run "valkey_cpu_request_rejects_a_memory_quantity" {
+  command = plan
+
+  variables {
+    valkey_cpu_request = "256Mi"
+  }
+
+  expect_failures = [var.valkey_cpu_request]
+}
+
+run "valkey_cpu_request_rejects_whitespace" {
+  command = plan
+
+  variables {
+    valkey_cpu_request = " 250m"
+  }
+
+  expect_failures = [var.valkey_cpu_request]
+}
+
+run "valkey_cpu_limit_rejects_a_memory_quantity" {
+  command = plan
+
+  variables {
+    valkey_cpu_limit = "1Gi"
+  }
+
+  expect_failures = [var.valkey_cpu_limit]
+}
+
+run "valkey_cpu_limit_rejects_whitespace" {
+  command = plan
+
+  variables {
+    valkey_cpu_limit = " 1000m"
+  }
+
+  expect_failures = [var.valkey_cpu_limit]
+}
+
+run "valkey_memory_request_rejects_a_cpu_quantity" {
+  command = plan
+
+  variables {
+    valkey_memory_request = "250m"
+  }
+
+  expect_failures = [var.valkey_memory_request]
+}
+
+run "valkey_memory_request_rejects_whitespace" {
+  command = plan
+
+  variables {
+    valkey_memory_request = "256Mi "
+  }
+
+  expect_failures = [var.valkey_memory_request]
+}
+
+run "valkey_memory_limit_rejects_a_cpu_quantity" {
+  command = plan
+
+  variables {
+    valkey_memory_limit = "1000m"
+  }
+
+  expect_failures = [var.valkey_memory_limit]
+}
+
+run "valkey_memory_limit_rejects_whitespace" {
+  command = plan
+
+  variables {
+    valkey_memory_limit = "1Gi "
+  }
+
+  expect_failures = [var.valkey_memory_limit]
+}
+
+# The guard mirrors cnpg_resource_request_not_above_limit (postgres_cnpg.tf):
+# a request above its own limit is a shape the Kubernetes API rejects
+# outright, so the warning here must actually fire rather than only
+# type-check.
+run "valkey_cpu_request_above_its_limit_is_warned_about" {
+  command = plan
+
+  variables {
+    redis_backend      = "valkey"
+    valkey_cpu_request = "1000m"
+    valkey_cpu_limit   = "500m"
+  }
+
+  expect_failures = [check.valkey_resource_request_not_above_limit]
+}
+
+run "valkey_memory_request_above_its_limit_is_warned_about" {
+  command = plan
+
+  variables {
+    redis_backend         = "valkey"
+    valkey_memory_request = "1Gi"
+    valkey_memory_limit   = "256Mi"
+  }
+
+  expect_failures = [check.valkey_resource_request_not_above_limit]
+}
+
+run "valkey_request_at_its_limit_draws_no_warning" {
+  command = plan
+
+  variables {
+    redis_backend         = "valkey"
+    valkey_cpu_request    = "250m"
+    valkey_cpu_limit      = "250m"
+    valkey_memory_request = "256Mi"
+    valkey_memory_limit   = "256Mi"
+  }
+}
+
+# The Kubernetes rejection this check warns about only happens to a Valkey
+# pod this module actually renders. On the external redis backend,
+# helm_release.valkey never renders (redis_valkey.tf's count is gated on
+# local.valkey_enabled), so a mismatched pair here is inert and must not
+# warn, the same shape as postgres_cnpg.tf's cnpg_enabled gate.
+run "valkey_resource_mismatch_on_the_external_backend_draws_no_warning" {
+  command = plan
+
+  variables {
+    redis_backend      = "external"
+    redis_host         = "redis.external.example.com"
+    valkey_cpu_request = "1000m"
+    valkey_cpu_limit   = "500m"
+  }
+}
+
+# Hand-computed against this module's own defaults so a silent term change
+# fails loudly: main 1 × (1000m + 200m task runner), workers 10 × (500m +
+# 200m), webhooks 8 × 300m = 10600m with nothing backend-sized. Postgres and
+# Valkey are both enabled by default (postgres_backend = "cnpg", redis_backend
+# = "valkey"), but their terms stay 0 until their sizing inputs are set.
+run "the_capacity_model_counts_nothing_from_unset_backends" {
+  command = plan
+
+  assert {
+    condition     = local.n8n_peak_cpu_request_millis == 10600
+    error_message = "Peak demand at the defaults must be 10600m: main 1200m, workers 7000m, webhooks 2400m, and zero from every backend whose sizing inputs are unset."
+  }
+}
+
+run "the_capacity_model_counts_backend_terms_only_when_set" {
+  command = plan
+
+  variables {
+    cnpg_cpu_request   = "500m"
+    valkey_cpu_request = "250m"
+  }
+
+  assert {
+    condition     = local.n8n_peak_cpu_request_millis == 11350
+    error_message = "Peak demand must be 11350m: the 10600m base plus postgres 1 × 500m plus valkey 1 × 250m, now that both are set."
+  }
+}
+
+run "the_pooler_term_counts_only_while_the_pooler_is_enabled" {
+  command = plan
+
+  variables {
+    cnpg_pooler_enabled       = true
+    db_postgresdb_ssl_enabled = false
+    cnpg_pooler_cpu_request   = "100m"
+  }
+
+  assert {
+    condition     = local.n8n_peak_cpu_request_millis == 10800
+    error_message = "Peak demand must be 10800m: the 10600m base plus the pooler's 2 (cnpg_pooler_instances) × 100m, with postgres and valkey both still unsized."
+  }
+}
+
+# A mismatched request/limit pair on the external backend reaches no Cluster
+# or Pooler at all (both are documented "only used when postgres_backend =
+# cnpg" / "cnpg_pooler_enabled"), so the check must stay silent there, unlike
+# every other case above where cnpg is the active backend. A run with no
+# expect_failures fails outright if the check still fired.
+run "the_resource_limit_check_stays_quiet_on_the_external_backend" {
+  command = plan
+
+  variables {
+    postgres_backend        = "external"
+    db_host                 = "postgres.example.com"
+    db_password             = "not-a-real-password"
+    cnpg_cpu_request        = "2000m"
+    cnpg_cpu_limit          = "500m"
+    cnpg_pooler_cpu_request = "500m"
+    cnpg_pooler_cpu_limit   = "100m"
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_cluster) == 0
+    error_message = "postgres_backend = \"external\" must plan no CNPG Cluster; the caller's server is the database."
+  }
+}
+
+# A mismatched Pooler request/limit pair reaches no Pooler at all while
+# cnpg_pooler_enabled stays at its default (false), even with the Cluster
+# itself active (postgres_backend = "cnpg"). Gating this half of the check
+# on cnpg_enabled alone, rather than cnpg_pooler_enabled, would warn about a
+# Pooler pod that is never rendered.
+run "the_pooler_resource_limit_check_stays_quiet_with_the_pooler_disabled" {
+  command = plan
+
+  variables {
+    cnpg_pooler_cpu_request = "500m"
+    cnpg_pooler_cpu_limit   = "100m"
+  }
+
+  assert {
+    condition     = length(kubectl_manifest.cnpg_pooler) == 0
+    error_message = "cnpg_pooler_enabled defaults to false, so no Pooler should be planned."
+  }
+}
+
+# ── The namespace takes the caller's labels and annotations ───────────────────
+# Pod Security Admission is switched on by labeling the namespace, an object
+# the caller cannot otherwise reach on the path where the module creates it.
+run "namespace_labels_and_annotations_reach_the_namespace" {
+  command = plan
+
+  variables {
+    k8s_namespace_labels = {
+      "pod-security.kubernetes.io/enforce" = "restricted"
+    }
+    k8s_namespace_annotations = {
+      "owner" = "platform-team"
+    }
+  }
+
+  assert {
+    condition     = kubernetes_namespace.n8n[0].metadata[0].labels["pod-security.kubernetes.io/enforce"] == "restricted"
+    error_message = "Caller labels must reach the namespace; the PSA enforce label is the reason the input exists."
+  }
+
+  assert {
+    condition     = kubernetes_namespace.n8n[0].metadata[0].labels["app.kubernetes.io/managed-by"] == "terraform-kubernetes-n8n"
+    error_message = "The module's managed-by label must survive the merge when the caller does not override it."
+  }
+
+  assert {
+    condition     = kubernetes_namespace.n8n[0].metadata[0].annotations["owner"] == "platform-team"
+    error_message = "Caller annotations must reach the namespace."
+  }
+}
+
+run "namespace_labels_and_annotations_are_empty_by_default" {
+  command = plan
+
+  assert {
+    condition     = try(length(kubernetes_namespace.n8n[0].metadata[0].annotations), 0) == 0
+    error_message = "With k8s_namespace_annotations at its default ({}), the namespace must carry no annotations, matching today's rendered namespace exactly."
+  }
+
+  assert {
+    condition     = lookup(kubernetes_namespace.n8n[0].metadata[0].labels, "app.kubernetes.io/managed-by", null) == "terraform-kubernetes-n8n"
+    error_message = "With k8s_namespace_labels at its default ({}), the namespace must still carry the module's own managed-by label."
+  }
+
+  assert {
+    condition     = try(length(kubernetes_namespace.n8n[0].metadata[0].labels), 0) == 1
+    error_message = "With k8s_namespace_labels at its default ({}), the namespace must carry exactly one label, the module's own managed-by, matching today's rendered namespace exactly."
+  }
+}
+
+# ── Official n8n names are carved out of the DB_/QUEUE_ guard ─────────────────
+# The DB_ and QUEUE_ reservations exist to protect module-written connection
+# settings, but they also caught official n8n names the module writes nowhere:
+# the external-Postgres mutual-TLS material the chart's own values comment
+# says to supply via config.extraEnv, and the client tuning families. Those
+# exact names pass; everything else under the prefixes stays blocked.
+run "a_carved_out_db_name_passes_the_env_escape_hatch" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_POSTGRESDB_SSL_CERT", value = "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----" },
+      { name = "DB_POSTGRESDB_STATEMENT_TIMEOUT", value = "30000" },
+    ]
+  }
+
+  assert {
+    condition = alltrue([
+      for wanted in ["DB_POSTGRESDB_SSL_CERT", "DB_POSTGRESDB_STATEMENT_TIMEOUT"] :
+      contains([for e in local.k8s_values_config.config.extraEnv : e.name], wanted)
+    ])
+    error_message = "Carved-out DB_ names must pass validation and render; without them an external Postgres requiring mutual TLS cannot be wired at all."
+  }
+}
+
+run "a_carved_out_name_passes_the_secret_backed_input_too" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "DB_POSTGRESDB_SSL_KEY"
+        secret_name = "db-client-tls"
+        secret_key  = "tls.key"
+      },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "DB_POSTGRESDB_SSL_KEY",
+    )
+    error_message = "The carve-out must apply to the secret-backed input as well; key material is exactly what belongs in a Secret rather than in values."
+  }
+}
+
+run "a_connection_coordinate_is_still_refused_despite_the_carveouts" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_POSTGRESDB_HOST", value = "not-the-module-database" },
+    ]
+  }
+
+  # The carve-out is exact names, not a prefix hole: module-written connection
+  # coordinates stay blocked, or the escape hatch could silently repoint the
+  # deployment at another database.
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "ssl_ca_stays_refused_because_it_already_has_a_typed_door" {
+  command = plan
+
+  variables {
+    n8n_extra_env = [
+      { name = "DB_POSTGRESDB_SSL_CA", value = "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----" },
+    ]
+  }
+
+  # Deliberately not carved out, unlike DB_POSTGRESDB_SSL_CERT/_KEY just above:
+  # db_postgresdb_ssl_ca_pem already renders this exact destination through
+  # the chart's own database.ssl.ca value, so opening this name here would let
+  # a caller set the same thing two ways.
+  expect_failures = [var.n8n_extra_env]
+}
+
+run "a_queue_client_tls_carveout_reaches_the_secret_backed_input" {
+  command = plan
+
+  variables {
+    n8n_extra_env_from_secret = [
+      {
+        name        = "QUEUE_BULL_REDIS_TLS_SERVERNAME"
+        secret_name = "redis-client-tls"
+        secret_key  = "servername"
+      },
+    ]
+  }
+
+  assert {
+    condition = contains(
+      [for e in local.k8s_values_config.config.extraEnv : e.name],
+      "QUEUE_BULL_REDIS_TLS_SERVERNAME",
+    )
+    error_message = "QUEUE_BULL_REDIS_TLS_SERVERNAME is a carved-out name with no chart value of its own; it must pass the secret-backed guard."
+  }
+}
+
+# ── Two silent misconfigurations now warn at plan time ────────────────────────
+
+run "a_database_with_no_backup_warns_until_acknowledged" {
+  command = plan
+
+  variables {
+    cnpg_backup_acknowledged = null
+  }
+
+  expect_failures = [check.cnpg_has_no_backup_configured]
+}
+
+run "acknowledging_the_backup_trade_silences_the_warning" {
+  command = plan
+
+  # The fixture's acknowledged = true is exactly this case; asserted
+  # explicitly so the silencing path is pinned rather than incidental.
+  assert {
+    condition     = var.cnpg_backup_acknowledged == true
+    error_message = "The fixture must acknowledge the backup trade, or every run in this file would warn."
+  }
+}
+
+run "configuring_a_backup_silences_the_warning_by_fixing_it" {
+  command = plan
+
+  variables {
+    cnpg_backup_acknowledged = null
+    cnpg_backup = {
+      barmanObjectStore = {
+        destinationPath = "s3://backups/n8n"
+        endpointURL     = "https://minio.internal.example.com"
+      }
+    }
+    # The default image type cannot serve the in-tree barman path; that
+    # pairing has its own check, out of scope here.
+    cnpg_postgres_image_tag = "16"
+  }
+
+  # No expect_failures: with a backup configured the check passes.
+  assert {
+    condition     = var.cnpg_backup != null
+    error_message = "This run exists to prove the check stays quiet when a backup is configured."
+  }
+}
+
+run "a_lan_ip_without_allocator_annotations_warns" {
+  command = plan
+
+  variables {
+    metrics_lan_expose = {
+      enabled = true
+      ip      = "192.0.2.10"
+    }
+  }
+
+  expect_failures = [check.lan_expose_ip_is_allocator_specific]
+}
+
+run "the_cnpg_half_of_the_lan_expose_warning_fires_too" {
+  command = plan
+
+  variables {
+    cnpg_lan_expose = {
+      enabled = true
+      ip      = "192.0.2.11"
+    }
+  }
+
+  expect_failures = [check.lan_expose_ip_is_allocator_specific]
+}
+
+run "an_allocator_annotation_silences_the_lan_expose_warning" {
+  command = plan
+
+  variables {
+    metrics_lan_expose = {
+      enabled = true
+      ip      = "192.0.2.10"
+      annotations = {
+        "io.cilium/lb-ipam-ips" = "192.0.2.10"
+      }
+    }
+  }
+
+  # No expect_failures: an explicit allocator annotation is the caller saying
+  # they have met their allocator, whichever one it is.
+  assert {
+    condition     = length(var.metrics_lan_expose.annotations) > 0
+    error_message = "This run exists to prove the check stays quiet when annotations are set."
   }
 }

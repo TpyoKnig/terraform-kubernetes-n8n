@@ -56,6 +56,12 @@ module "n8n" {
 
   n8n_timezone = "America/New_York"
 
+  # No backup, acknowledged rather than left to warn on every plan. A homelab
+  # example is the case the acknowledgement exists for: the database's only
+  # copy is its PVC, that is the documented shape here, and docs/operations.md
+  # covers adding continuous archiving when it stops being acceptable.
+  cnpg_backup_acknowledged = false
+
   # Both LoadBalancer Services below are off unless you name an address for
   # them. They exist for tooling that lives outside the cluster: a Grafana that
   # queries n8n's execution tables directly, a Prometheus that cannot use
@@ -77,61 +83,28 @@ module "n8n" {
   # main + worker pods; base n8n image ships no Python).
   n8n_task_runners_enabled = true
 
-  # Observability: emit metrics + traces to an in-cluster Alloy / OTel
-  # collector. Change service_name if you run multiple n8n instances so they
-  # separate in Grafana.
+  # Observability: /metrics is enabled here (the module defaults this input to
+  # false), because it is scraped rather than pushed and so needs no
+  # collector; an in-cluster Prometheus or Alloy picks it up as is. OTLP
+  # tracing defaults to this lab's own collector via otel_endpoint; point it
+  # elsewhere, or set it to null to turn tracing off, without touching
+  # anything else. The tuning inputs are gated on the same condition because
+  # the module warns (plan-time, non-blocking) when tuning is set while the
+  # master switch is off. Change service_name if you run multiple n8n
+  # instances so they separate in Grafana.
   n8n_metrics_enabled             = true
-  n8n_otel_enabled                = true
-  n8n_otel_exporter_otlp_endpoint = "http://alloy-otlp.monitoring.svc.cluster.local:4318"
-  n8n_otel_exporter_service_name  = var.namespace
-  n8n_otel_traces_sample_rate     = "1.0"
-  n8n_otel_traces_production_only = false
+  n8n_otel_enabled                = var.otel_endpoint != null
+  n8n_otel_exporter_otlp_endpoint = var.otel_endpoint
+  n8n_otel_exporter_service_name  = var.otel_endpoint != null ? var.namespace : null
+  n8n_otel_traces_sample_rate     = var.otel_endpoint != null ? "1.0" : null
+  n8n_otel_traces_production_only = var.otel_endpoint != null ? false : null
 
-  # n8n's AI Assistant and Agents modules are a good fit for a lab, but they
-  # need an Anthropic API key and a sandbox credential, which means a Secret
-  # this example does not create. Left commented so the example applies into an
-  # empty namespace unchanged; create the Secret first, then add these.
-  #
-  #   kubectl create secret generic ai-assistant-secrets \
-  #     --from-literal=model-api-key=... \
-  #     --from-literal=sandbox-api-key=...
-  #
-  # n8n_extra_env is unset in this example, so this goes in whole, brackets
-  # included, rather than as loose entries to paste somewhere:
-  #
-  #   n8n_extra_env = [
-  #     { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
-  #     { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
-  #     { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
-  #     { name = "N8N_SANDBOX_SERVICE_URL", value = "http://sandbox-api.n8n-sandbox.svc.cluster.local:8080" },
-  #   ]
-  #
-  # n8n_extra_env is typed list(object({ name, value })) with no valueFrom
-  # shape, so secret-backed variables go through n8n_extra_env_from_secret,
-  # which renders the secretKeyRef for you and keeps the value out of state:
-  #
-  # n8n_extra_env_from_secret = [
-  #   {
-  #     name        = "N8N_INSTANCE_AI_MODEL_API_KEY"
-  #     secret_name = "ai-assistant-secrets"
-  #     secret_key  = "model-api-key"
-  #   },
-  #   {
-  #     name        = "N8N_SANDBOX_SERVICE_API_KEY"
-  #     secret_name = "ai-assistant-secrets"
-  #     secret_key  = "sandbox-api-key"
-  #   },
-  # ]
-  #
-  # Both keys, not just the model one: the Secret above carries sandbox-api-key
-  # precisely because the sandbox API authenticates with it, and a sandbox
-  # enabled without N8N_SANDBOX_SERVICE_API_KEY cannot execute anything. See
-  # docs/ai-assistant.md for the full worked block.
-  #
-  # Not n8n_extra_helm_values. That sets config.extraEnv wholesale, which Helm
-  # would substitute for the module's own list; the module now rejects such an
-  # overlay at plan time rather than letting the release install misconfigured,
-  # so the input simply refuses this route.
+  # n8n's AI Assistant and Agents modules are not wired up here. They need an
+  # Anthropic API key and a sandbox credential, so a Secret this example does
+  # not create, and the inputs that carry them are easy to get subtly wrong.
+  # Rather than a commented illustration repeated in four example roots, which
+  # is how the last one drifted out of date, there is one runnable version:
+  # examples/homelab-ai-assistant, with the reasoning in docs/ai-assistant.md.
 
   # ── Shared storage ─────────────────────────────────────────────────────────
   # Reaches main, worker and webhook-processor alike, which is exactly what the

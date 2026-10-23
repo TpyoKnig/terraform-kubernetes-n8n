@@ -69,6 +69,12 @@ module "n8n" {
 
   n8n_timezone = "America/New_York"
 
+  # No backup, acknowledged rather than left to warn on every plan. A homelab
+  # example is the case the acknowledgement exists for: the database's only
+  # copy is its PVC, that is the documented shape here, and docs/operations.md
+  # covers adding continuous archiving when it stops being acceptable.
+  cnpg_backup_acknowledged = false
+
   # Both LoadBalancer Services below are off unless you name an address for
   # them. They exist for tooling that lives outside the cluster: a Grafana that
   # queries n8n's execution tables directly, a Prometheus that cannot use
@@ -111,13 +117,20 @@ module "n8n" {
   # hand. The module's own stance is the same one this example inherits: the
   # sandbox is a caller prerequisite, like the ingress controller or the CNPG
   # operator, not something the module or its examples provision.
-  n8n_extra_env = [
-    { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
-    { name = "N8N_INSTANCE_AI_MODEL", value = var.ai_model },
-    { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
-    { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
-    { name = "N8N_SANDBOX_SERVICE_URL", value = local.sandbox_service_url },
-  ]
+  n8n_extra_env = concat(
+    [
+      { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },
+      { name = "N8N_INSTANCE_AI_MODEL", value = var.ai_model },
+      { name = "N8N_INSTANCE_AI_SANDBOX_ENABLED", value = "true" },
+      { name = "N8N_INSTANCE_AI_SANDBOX_PROVIDER", value = "n8n-sandbox" },
+      { name = "N8N_SANDBOX_SERVICE_URL", value = local.sandbox_service_url },
+    ],
+    # Optional web search. Only emitted when set, so the default render is
+    # unchanged and no empty variable reaches n8n.
+    var.searxng_url == null ? [] : [
+      { name = "N8N_INSTANCE_AI_SEARXNG_URL", value = var.searxng_url },
+    ],
+  )
 
   # Nothing here passes through Terraform, so no key reaches the Helm release
   # or the state file. The Secret is created out of band on purpose - declaring

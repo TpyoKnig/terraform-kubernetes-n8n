@@ -390,3 +390,45 @@ run "sandbox_service_url_follows_a_non_default_release_and_namespace" {
     error_message = "ai_model should pass through to the output unchanged; got ${output.ai_assistant.model}."
   }
 }
+
+run "searxng_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = output.ai_assistant.searxng_url == null
+    error_message = "searxng_url must default to null so the default render sets no web search."
+  }
+}
+
+run "searxng_url_reaches_the_output" {
+  command = plan
+
+  variables {
+    searxng_url = "http://searxng-http.searxng.svc.cluster.local:8080"
+  }
+
+  assert {
+    condition     = output.ai_assistant.searxng_url == "http://searxng-http.searxng.svc.cluster.local:8080"
+    error_message = "searxng_url should pass through unchanged."
+  }
+}
+
+run "searxng_url_rejects_a_value_without_a_scheme" {
+  command = plan
+
+  variables {
+    searxng_url = "searxng.searxng.svc:8080"
+  }
+
+  expect_failures = [var.searxng_url]
+}
+
+run "searxng_url_rejects_whitespace" {
+  command = plan
+
+  variables {
+    searxng_url = "http://searxng .searxng.svc:8080"
+  }
+
+  expect_failures = [var.searxng_url]
+}
