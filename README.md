@@ -123,7 +123,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.1"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -252,11 +252,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.4.0` is the current release: the n8n Helm chart pin moves `1.10.0` -> `1.17.0` (n8n `2.44.5`, so an upgrade runs database migrations: back up first and read `docs/upgrading-n8n.md`), the Kubernetes provider moves to the `~> 3.0` line, `n8n_execution_concurrency_limit` defaults to `-1` so `n8n_worker_concurrency` takes effect, and a batch of new tuning inputs (pruning, payload size, readiness barrier and Valkey timeouts) plus the `SMOKE_RESOLVE_IP` smoke-test setting land (it takes an IP literal only: resolve a load-balancer hostname first and pass the address). Worker readiness now checks real health over HTTP, so first-ready is slower. `N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input `0.3.1` added are removed. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
+`0.4.1` is the current release. It adds the `kubernetes_namespace_v1` rename behind `moved` blocks that `0.4.0` described but did not contain, and raises the `hashicorp/kubernetes` floor to `3.3` (see `docs/upgrading-n8n.md`). `0.4.0` moved the n8n Helm chart pin `1.10.0` -> `1.17.0` (n8n `2.44.5`, so an upgrade runs database migrations: back up first and read `docs/upgrading-n8n.md`), the Kubernetes provider to the `~> 3.0` line, and `n8n_execution_concurrency_limit` to `-1` so `n8n_worker_concurrency` takes effect, with a batch of new tuning inputs (pruning, payload size, readiness barrier and Valkey timeouts) plus the `SMOKE_RESOLVE_IP` smoke-test setting (it takes an IP literal only: resolve a load-balancer hostname first and pass the address). Worker readiness now checks real health over HTTP, so first-ready is slower. `N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input `0.3.1` added are removed. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
 
 Still pre-1.0, so a minor bump may break the input surface. `~> 0.4.0` is the constraint the usage example uses; it takes patches and holds the minor (`~> 0.4` would also accept `0.5.0` and later). `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, on Terraform and OpenTofu alike: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, on Terraform and OpenTofu alike: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 

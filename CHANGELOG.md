@@ -7,6 +7,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.4.1], The namespace rename
+
+Finishes a change `0.4.0` described but did not contain: the namespace rename
+to `kubernetes_namespace_v1` behind `moved` blocks, which merged after the
+`0.4.0` tag. It raises the `hashicorp/kubernetes` floor to `3.3`, so a caller
+who pins the provider lower in their own root module must raise it before
+taking this version. A plan on an existing deployment shows the namespace as
+moved, with no destroy.
+
 ### Changed
 
 - **`kubernetes_namespace.n8n` renamed to `kubernetes_namespace_v1.n8n`**
@@ -25,6 +34,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   must run it before upgrading, because `state mv` cannot change a resource's
   type; see `docs/upgrading-n8n.md`. A caller who pins `kubernetes` below
   `3.3.0` in their own root module must raise it first.
+
+- README badges for the Terraform and OpenTofu registries, the latest
+  release, CI and the license. The registry pages show them from this tag on.
 
 ## [0.4.0], The chart 1.17.0 round
 
@@ -520,12 +532,11 @@ passing, an execution run by a worker and not main.
   `kubernetes_namespace.n8n` and the four unversioned `kubernetes_secret`
   resources in `n8n.tf` (`n8n`, `n8n_db`, `n8n_redis`, `n8n_ca_bundle`):
   kubernetes provider 3.x deprecates the unversioned resource types in favor
-  of their `_v1` equivalents. They are not renamed here: the provider has no
-  `moved` support across that rename
+  of their `_v1` equivalents. The four Secrets are not renamed: the provider
+  has no `moved` support across that rename for them
   (`hashicorp/terraform-provider-kubernetes` issue #2812), and renaming
-  without one would destroy and recreate the namespace, taking every object
-  in it with it. A rename to the `_v1` types is tracked as a separate,
-  deliberate change behind `moved` blocks once the provider supports them.
+  without one would destroy and recreate them. The namespace rename waited on
+  the same support and ships in 0.4.1.
   All ten `.terraform.lock.hcl` files (root, seven examples, both
   submodules) regenerated for `linux_amd64`, `linux_arm64` and
   `darwin_arm64`.
@@ -1988,7 +1999,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.1...HEAD
+[0.4.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.1
 [0.4.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.0
 [0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
 [0.3.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.0
