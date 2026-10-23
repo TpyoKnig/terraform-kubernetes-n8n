@@ -495,7 +495,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   requirement must move to `~> 3.0` (or an unconstrained/wider range) before
   picking up this version; see `docs/upgrading-n8n.md`. `terraform validate`
   now prints a cosmetic "Deprecated Resource" warning for
-  `kubernetes_namespace.n8n` and the four unversioned `kubernetes_secret`
+  the four unversioned `kubernetes_secret`
   resources in `n8n.tf` (`n8n`, `n8n_db`, `n8n_redis`, `n8n_ca_bundle`):
   kubernetes provider 3.x deprecates the unversioned resource types in favor
   of their `_v1` equivalents. The Secrets are not renamed here: the provider
