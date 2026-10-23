@@ -100,9 +100,12 @@ DEPLOY_MODE="${DEPLOY_MODE:-}"        # set to 'single' or 'multi' to skip auto-
 SMOKE_RESOLVE_IP="${SMOKE_RESOLVE_IP:-}"
 
 # Accepts an IPv4 literal (four dot-separated octets, each 0-255) or an IPv6
-# literal (hex groups and colons, at least one colon). Not a full RFC 4291
-# validator, it is only meant to catch hostnames and typos before any request
-# is made.
+# literal. Not a full RFC 4291 validator (no zone IDs, no brackets), but it
+# does walk the real IPv6 grammar: at most one "::", 1-4 hex digits per
+# group, exactly 8 groups when uncompressed (fewer with "::", which fills
+# the rest with zeros), and an optional embedded IPv4 literal as the final
+# group. This exists to catch hostnames and typos before any request is
+# made, not after curl already failed.
 smoke_resolve_ip_valid() {
   local ip="$1" octet
   if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
@@ -111,7 +114,66 @@ smoke_resolve_ip_valid() {
     done
     return 0
   fi
-  [[ "$ip" =~ ^[0-9A-Fa-f:]+$ && "$ip" == *:* ]]
+  smoke_resolve_ipv6_valid "$ip"
+}
+
+# bash 3.2 safe: no associative arrays, no mapfile, no ${var,,}.
+smoke_resolve_ipv6_valid() {
+  local ip="$1"
+  [[ -n "$ip" ]] || return 1
+  [[ "$ip" =~ ^[0-9A-Fa-f:.]+$ ]] || return 1
+  [[ "$ip" == *:* ]] || return 1
+  [[ "$ip" == *:::* ]] && return 1
+  [[ "$ip" =~ ^:[^:] ]] && return 1
+  [[ "$ip" =~ [^:]:$ ]] && return 1
+
+  local tmp="$ip" cc_count=0
+  while [[ "$tmp" == *::* ]]; do
+    cc_count=$((cc_count + 1))
+    tmp="${tmp/::/}"
+  done
+  (( cc_count <= 1 )) || return 1
+
+  local has_cc=0 left="$ip" right=""
+  if (( cc_count == 1 )); then
+    has_cc=1
+    left="${ip%%::*}"
+    right="${ip#*::}"
+  fi
+
+  local -a left_groups=() right_groups=()
+  [[ -n "$left" ]] && IFS=':' read -r -a left_groups <<< "$left"
+  [[ -n "$right" ]] && IFS=':' read -r -a right_groups <<< "$right"
+
+  local g octet count=0 idx=0
+  local -a groups=("${left_groups[@]+"${left_groups[@]}"}" "${right_groups[@]+"${right_groups[@]}"}")
+  local total=${#groups[@]}
+  for g in "${groups[@]+"${groups[@]}"}"; do
+    idx=$((idx + 1))
+    if [[ "$g" == *.* ]]; then
+      # Embedded IPv4: only legal as the final group, and only after the
+      # "::" (if present) so it ends up last in the expanded address.
+      (( idx == total )) || return 1
+      (( has_cc == 1 && idx <= ${#left_groups[@]} )) && return 1
+      [[ "$g" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+      local -a octets
+      IFS='.' read -r -a octets <<< "$g"
+      (( ${#octets[@]} == 4 )) || return 1
+      for octet in "${octets[@]}"; do
+        (( octet <= 255 )) || return 1
+      done
+      count=$((count + 2))
+    else
+      [[ "$g" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      count=$((count + 1))
+    fi
+  done
+
+  if (( has_cc == 1 )); then
+    (( count <= 7 ))
+  else
+    (( count == 8 ))
+  fi
 }
 
 # Built once and spliced into every curl call via
@@ -821,9 +883,11 @@ else
       info "A 403 here often means the editor Ingress carries an IP allowlist"
       info "(k8s_ingress_extra_annotations / whitelist-source-range), and this"
       info "request reached it through a proxy or tunnel instead of from an"
-      info "allowed network. Set SMOKE_RESOLVE_IP to the ingress address"
-      info "(kubectl get ingress -n $NAMESPACE) or run from inside an allowed"
-      info "network."
+      info "allowed network. Set SMOKE_RESOLVE_IP to a literal IP address"
+      info "from the Ingress status (kubectl get ingress -n $NAMESPACE); a"
+      info "cloud load balancer may show a hostname there instead, resolve"
+      info "it first (e.g. dig +short <hostname>), or run from inside an"
+      info "allowed network."
     fi
   fi
 
@@ -867,8 +931,10 @@ else
     info "A 403 here often means the editor Ingress carries an IP allowlist"
     info "(k8s_ingress_extra_annotations / whitelist-source-range), and this"
     info "request reached it through a proxy or tunnel instead of from an"
-    info "allowed network. Set SMOKE_RESOLVE_IP to the ingress address"
-    info "(kubectl get ingress -n $NAMESPACE) or run from inside an allowed"
+    info "allowed network. Set SMOKE_RESOLVE_IP to a literal IP address from"
+    info "the Ingress status (kubectl get ingress -n $NAMESPACE); a cloud"
+    info "load balancer may show a hostname there instead, resolve it first"
+    info "(e.g. dig +short <hostname>), or run from inside an allowed"
     info "network."
   elif [[ "$api_status" == "000" ]]; then
     fail "API, connection failed (timeout or DNS error)"

@@ -172,17 +172,17 @@ You're responsible for pointing kubectl at the right cluster yourself in that ca
 
 Needed when the hostname is a real public record in front of the cluster, for example the Cloudflare examples' proxied CNAMEs to a tunnel, and the editor Ingress carries an IP allowlist. Ordinary requests then reach the allowlist from the tunnel's egress address instead of your network and get rejected with a 403 on an otherwise healthy deployment: the `/healthz` and API checks fail with that hint.
 
-Set `SMOKE_RESOLVE_IP` to the ingress address (`kubectl get ingress -n n8n`) and every request the script makes is routed there directly, while keeping the real `Host` header and TLS SNI:
+Set `SMOKE_RESOLVE_IP` to a literal IPv4/IPv6 address from the Ingress status (`kubectl get ingress -n n8n` may show a hostname instead of an IP for a cloud load balancer; resolve it first, e.g. `dig +short <hostname>`, or read `.status.loadBalancer.ingress[0].ip`) and every request the script makes is routed there directly, while keeping the real `Host` header and TLS SNI:
 
 ```bash
 SMOKE_RESOLVE_IP=203.0.113.10 N8N_API_KEY=your-key ../../tests/scripts/smoke-test.sh
 ```
 
-Leaving it unset keeps ordinary DNS resolution and changes nothing. If you are running an older copy of the script without this setting, the equivalent workaround is a per-process curl config:
+Leaving it unset keeps ordinary DNS resolution and changes nothing. If you are running an older copy of the script without this setting, the equivalent workaround is a per-process curl config (one `--resolve` pair per hostname, per port the script touches, since the old script also checks the HTTP → HTTPS redirect on port 80):
 
 ```bash
 mkdir /tmp/curlhome
-printf -- '--resolve n8n.example.com:443:203.0.113.10\n' > /tmp/curlhome/.curlrc
+printf -- '--resolve n8n.example.com:80:203.0.113.10\n--resolve n8n.example.com:443:203.0.113.10\n' > /tmp/curlhome/.curlrc
 CURL_HOME=/tmp/curlhome ./tests/scripts/smoke-test.sh
 ```
 
