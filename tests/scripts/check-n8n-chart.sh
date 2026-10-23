@@ -44,7 +44,7 @@ FAKE_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 console() {
   # grep -v blank | tail -1: the kubernetes provider can emit a deprecation
   # warning to stdout ahead of the actual result (AGENTS.md documents why
-  # this module still uses the unversioned kubernetes_namespace resource).
+  # this module still uses the unversioned kubernetes_secret resources).
   # terraform console has no flag to suppress or redirect warnings away from
   # stdout, and every expression evaluated here is a single-line
   # jsonencode(...)/string result, so the last non-blank line is always the

@@ -111,7 +111,7 @@ resource "kubernetes_secret_v1" "valkey_auth" {
 
   type = "Opaque"
 
-  depends_on = [kubernetes_namespace.n8n]
+  depends_on = [kubernetes_namespace_v1.n8n]
 }
 
 resource "helm_release" "valkey" {
@@ -218,7 +218,7 @@ resource "helm_release" "valkey" {
   ]
 
   depends_on = [
-    kubernetes_namespace.n8n,
+    kubernetes_namespace_v1.n8n,
     kubernetes_secret_v1.valkey_auth,
   ]
 

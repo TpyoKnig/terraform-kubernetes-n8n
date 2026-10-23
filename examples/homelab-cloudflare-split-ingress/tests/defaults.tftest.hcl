@@ -241,7 +241,7 @@ run "no_shared_claim_without_a_class" {
   # that turning shared storage on later cannot move it between two resource
   # addresses. See storage.tf for what that used to cost.
   assert {
-    condition     = kubernetes_namespace.n8n.metadata[0].name == var.namespace
+    condition     = kubernetes_namespace_v1.n8n.metadata[0].name == var.namespace
     error_message = "The example must own the namespace on every path, shared claim or not; its name should equal var.namespace."
   }
 }

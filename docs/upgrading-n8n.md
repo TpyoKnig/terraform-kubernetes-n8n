@@ -19,15 +19,33 @@ before picking up this module version. If you never declared your own
 beyond letting `terraform init -upgrade` resolve the new provider version.
 
 The next `terraform plan`/`apply` prints a cosmetic "Deprecated Resource"
-warning for `kubernetes_namespace.n8n` and four `kubernetes_secret`
-resources (`n8n`, `n8n_db`, `n8n_redis`, `n8n_ca_bundle`): kubernetes
-provider 3.x deprecates the unversioned resource types in favor of their
-`_v1` equivalents. No plan diff and no object changes follow from the
-warning alone. The module does not rename these resources: the provider has
-no `moved` support across that rename
+warning for four `kubernetes_secret` resources (`n8n`, `n8n_db`, `n8n_redis`,
+`n8n_ca_bundle`): kubernetes provider 3.x deprecates the unversioned
+resource types in favor of their `_v1` equivalents. No plan diff and no
+object changes follow from the warning alone. The module does not rename the
+Secrets: the provider has no `moved` support for that rename
 (`hashicorp/terraform-provider-kubernetes` issue #2812), and renaming
-without one would destroy and recreate the namespace, taking every object
-in it with it.
+without one would destroy and recreate them.
+
+## `kubernetes_namespace` renamed to `kubernetes_namespace_v1`, provider `~> 3.3`
+
+The namespace the module creates (`create_namespace = true`) and the
+namespace each example's `storage.tf` owns are now `kubernetes_namespace_v1.n8n`,
+each behind a `moved` block. The module's `kubernetes` constraint is
+`~> 3.3`: 3.3.0 is the first release where the `_v1` namespace supports
+`moved` from the unversioned type. Older 3.x releases fail the plan with
+`Move Resource State Not Supported`.
+
+**Effect on an existing deployment:** `terraform init -upgrade`, then plan.
+The namespace appears as moved, with no destroy. Confirm that before
+applying: a plan that destroys a namespace is never routine. A one-time
+in-place update for explicitly empty `metadata` maps is expected and safe.
+
+If an example-owned namespace still sits at the address the `storage.tf`
+comment tells you to `terraform state mv` from, run that `state mv` before
+upgrading. `state mv` cannot change a resource's type, so it targets the
+old `kubernetes_namespace.n8n` address and the `moved` block finishes the
+rename on the next apply.
 
 ## Version inputs
 

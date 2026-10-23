@@ -52,7 +52,7 @@ provider "registry.terraform.io/hashicorp/helm" {
 
 provider "registry.terraform.io/hashicorp/kubernetes" {
   version     = "3.4.0"
-  constraints = "~> 3.0"
+  constraints = "~> 3.0, ~> 3.3"
   hashes = [
     "h1:1MhhjtjkTzTxU1OnarvoK8a4JISljVXm5gyGVaSrVcw=",
     "h1:5y5WaxTR8Xia0MG/Y5yDHNEMqNJJUyJH8F03F6UxsfQ=",

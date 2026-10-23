@@ -3648,7 +3648,7 @@ run "valkey_chart_version_rejects_a_range" {
 run "the_namespace_delete_timeout_outlasts_a_real_teardown" {
   command = plan
 
-  # kubernetes_namespace.n8n is count-gated on this, and alltrue() over an
+  # kubernetes_namespace_v1.n8n is count-gated on this, and alltrue() over an
   # empty list returns true. Pinned for the same reason the Valkey run above
   # pins redis_backend: it is the default today, but a default is not a
   # guarantee.
@@ -3657,8 +3657,8 @@ run "the_namespace_delete_timeout_outlasts_a_real_teardown" {
   }
 
   assert {
-    condition     = alltrue([for n in kubernetes_namespace.n8n : n.timeouts.delete == "10m"])
-    error_message = "kubernetes_namespace.n8n must allow 10m to delete. Shorter, and a destroy that is merely waiting on storage reclaim fails while the namespace goes on to delete successfully, which reads as a broken destroy against a cluster that is already clean."
+    condition     = alltrue([for n in kubernetes_namespace_v1.n8n : n.timeouts.delete == "10m"])
+    error_message = "kubernetes_namespace_v1.n8n must allow 10m to delete. Shorter, and a destroy that is merely waiting on storage reclaim fails while the namespace goes on to delete successfully, which reads as a broken destroy against a cluster that is already clean."
   }
 }
 
@@ -7578,17 +7578,17 @@ run "namespace_labels_and_annotations_reach_the_namespace" {
   }
 
   assert {
-    condition     = kubernetes_namespace.n8n[0].metadata[0].labels["pod-security.kubernetes.io/enforce"] == "restricted"
+    condition     = kubernetes_namespace_v1.n8n[0].metadata[0].labels["pod-security.kubernetes.io/enforce"] == "restricted"
     error_message = "Caller labels must reach the namespace; the PSA enforce label is the reason the input exists."
   }
 
   assert {
-    condition     = kubernetes_namespace.n8n[0].metadata[0].labels["app.kubernetes.io/managed-by"] == "terraform-kubernetes-n8n"
+    condition     = kubernetes_namespace_v1.n8n[0].metadata[0].labels["app.kubernetes.io/managed-by"] == "terraform-kubernetes-n8n"
     error_message = "The module's managed-by label must survive the merge when the caller does not override it."
   }
 
   assert {
-    condition     = kubernetes_namespace.n8n[0].metadata[0].annotations["owner"] == "platform-team"
+    condition     = kubernetes_namespace_v1.n8n[0].metadata[0].annotations["owner"] == "platform-team"
     error_message = "Caller annotations must reach the namespace."
   }
 }
@@ -7597,17 +7597,17 @@ run "namespace_labels_and_annotations_are_empty_by_default" {
   command = plan
 
   assert {
-    condition     = try(length(kubernetes_namespace.n8n[0].metadata[0].annotations), 0) == 0
+    condition     = try(length(kubernetes_namespace_v1.n8n[0].metadata[0].annotations), 0) == 0
     error_message = "With k8s_namespace_annotations at its default ({}), the namespace must carry no annotations, matching today's rendered namespace exactly."
   }
 
   assert {
-    condition     = lookup(kubernetes_namespace.n8n[0].metadata[0].labels, "app.kubernetes.io/managed-by", null) == "terraform-kubernetes-n8n"
+    condition     = lookup(kubernetes_namespace_v1.n8n[0].metadata[0].labels, "app.kubernetes.io/managed-by", null) == "terraform-kubernetes-n8n"
     error_message = "With k8s_namespace_labels at its default ({}), the namespace must still carry the module's own managed-by label."
   }
 
   assert {
-    condition     = try(length(kubernetes_namespace.n8n[0].metadata[0].labels), 0) == 1
+    condition     = try(length(kubernetes_namespace_v1.n8n[0].metadata[0].labels), 0) == 1
     error_message = "With k8s_namespace_labels at its default ({}), the namespace must carry exactly one label, the module's own managed-by, matching today's rendered namespace exactly."
   }
 }

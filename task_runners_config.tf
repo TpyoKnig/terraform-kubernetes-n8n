@@ -111,5 +111,5 @@ resource "kubernetes_config_map_v1" "task_runners_config" {
     })
   }
 
-  depends_on = [kubernetes_namespace.n8n]
+  depends_on = [kubernetes_namespace_v1.n8n]
 }

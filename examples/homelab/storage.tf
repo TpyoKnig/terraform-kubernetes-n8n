@@ -62,7 +62,18 @@
 # The module-owned move leaves one further diff, which is expected and safe: an
 # in-place update dropping the app.kubernetes.io/managed-by label the module
 # set and this resource does not.
-resource "kubernetes_namespace" "n8n" {
+#
+# The commands above target the pre-rename address on purpose: `state mv`
+# cannot change a resource's type, so run them before upgrading to this
+# version, and the moved block below then renames the result to
+# kubernetes_namespace_v1 in the same apply, with no destroy. It needs
+# hashicorp/kubernetes >= 3.3.0.
+moved {
+  from = kubernetes_namespace.n8n
+  to   = kubernetes_namespace_v1.n8n
+}
+
+resource "kubernetes_namespace_v1" "n8n" {
   metadata {
     name = var.namespace
   }
@@ -73,7 +84,7 @@ resource "kubernetes_persistent_volume_claim_v1" "shared" {
 
   metadata {
     name      = "n8n-shared"
-    namespace = kubernetes_namespace.n8n.metadata[0].name
+    namespace = kubernetes_namespace_v1.n8n.metadata[0].name
   }
 
   spec {

@@ -44,7 +44,7 @@ module "n8n" {
   # plan-time diagnostic becomes an apply-time one. The name here stays known
   # at plan because it is a configured attribute, so this buys the edge without
   # making the namespace unknown.
-  k8s_namespace = kubernetes_namespace.n8n.metadata[0].name
+  k8s_namespace = kubernetes_namespace_v1.n8n.metadata[0].name
 
   # ── k8s-backend Postgres / Redis / Ingress ─────────────────────────────────
   cnpg_instances     = 1

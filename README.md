@@ -284,7 +284,7 @@ See [`docs/shared-responsibility.md`](./docs/shared-responsibility.md) for the f
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | ~> 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.3 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
 | <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
@@ -294,7 +294,7 @@ See [`docs/shared-responsibility.md`](./docs/shared-responsibility.md) for the f
 | ---- | ------- |
 | <a name="provider_helm"></a> [helm](#provider\_helm) | ~> 3.0 |
 | <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | ~> 1.14 |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.3 |
 | <a name="provider_random"></a> [random](#provider\_random) | ~> 3.0 |
 
 ## Modules
@@ -314,7 +314,7 @@ See [`docs/shared-responsibility.md`](./docs/shared-responsibility.md) for the f
 | [kubernetes_config_map_v1.task_runners_config](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/config_map_v1) | resource |
 | [kubernetes_horizontal_pod_autoscaler_v2.n8n_webhook_processor](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/horizontal_pod_autoscaler_v2) | resource |
 | [kubernetes_job_v1.cnpg_ready](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/job_v1) | resource |
-| [kubernetes_namespace.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace) | resource |
+| [kubernetes_namespace_v1.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace_v1) | resource |
 | [kubernetes_secret.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
 | [kubernetes_secret.n8n_ca_bundle](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |
 | [kubernetes_secret.n8n_db](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret) | resource |

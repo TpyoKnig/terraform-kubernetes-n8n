@@ -161,7 +161,7 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 | <a name="requirement_cloudflare"></a> [cloudflare](#requirement\_cloudflare) | ~> 5.0 |
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | ~> 1.14 |
-| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.0 |
+| <a name="requirement_kubernetes"></a> [kubernetes](#requirement\_kubernetes) | ~> 3.3 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.0 |
 | <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.14 |
 
@@ -170,7 +170,7 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_cloudflare"></a> [cloudflare](#provider\_cloudflare) | ~> 5.0 |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 3.3 |
 
 ## Modules
 
@@ -185,7 +185,7 @@ Both `Ingress` objects and both DNS records go with it. The tunnel does not.
 | [cloudflare_dns_record.n8n](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/dns_record) | resource |
 | [kubernetes_ingress_v1.editor](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
 | [kubernetes_ingress_v1.webhook](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/ingress_v1) | resource |
-| [kubernetes_namespace.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace) | resource |
+| [kubernetes_namespace_v1.n8n](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace_v1) | resource |
 | [kubernetes_persistent_volume_claim_v1.shared](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/persistent_volume_claim_v1) | resource |
 
 ## Inputs

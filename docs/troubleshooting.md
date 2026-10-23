@@ -146,7 +146,7 @@ Your resource had no dependency edge to the namespace, so Terraform scheduled it
 
 ### Fix
 
-Upgrade: `namespace` is now sourced from `kubernetes_namespace.n8n[0]` when the module creates the namespace (`create_namespace = true`, the default), so consuming it orders your resources implicitly. If you set `create_namespace = false` to deploy into a namespace you manage yourself, there is no module-owned namespace resource to order against; make sure that namespace already exists before applying this module.
+Upgrade: `namespace` is now sourced from `kubernetes_namespace_v1.n8n[0]` when the module creates the namespace (`create_namespace = true`, the default), so consuming it orders your resources implicitly. If you set `create_namespace = false` to deploy into a namespace you manage yourself, there is no module-owned namespace resource to order against; make sure that namespace already exists before applying this module.
 
 Also add an explicit dependency on the whole module for anything that routes to the module's Services:
 
