@@ -1,5 +1,11 @@
 # terraform-kubernetes-n8n
 
+[![Terraform Registry](https://img.shields.io/badge/Terraform%20Registry-TpyoKnig%2Fn8n%2Fkubernetes-844FBA?logo=terraform)](https://registry.terraform.io/modules/TpyoKnig/n8n/kubernetes/latest)
+[![OpenTofu Registry](https://img.shields.io/badge/OpenTofu%20Registry-TpyoKnig%2Fn8n%2Fkubernetes-FFDA18?logo=opentofu&logoColor=black)](https://search.opentofu.org/module/TpyoKnig/n8n/kubernetes/latest)
+[![Release](https://img.shields.io/github/v/release/TpyoKnig/terraform-kubernetes-n8n?label=release)](https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/TpyoKnig/terraform-kubernetes-n8n/terraform-tests.yml?branch=main&label=CI)](https://github.com/TpyoKnig/terraform-kubernetes-n8n/actions/workflows/terraform-tests.yml)
+[![License: MIT](https://img.shields.io/github/license/TpyoKnig/terraform-kubernetes-n8n)](LICENSE)
+
 > **⚠️ Community project, not an n8n product.**
 >
 > This module is written and maintained by [@TpyoKnig](https://github.com/TpyoKnig)
