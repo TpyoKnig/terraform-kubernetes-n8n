@@ -14,7 +14,10 @@ to `kubernetes_namespace_v1` behind `moved` blocks, which merged after the
 `0.4.0` tag. It raises the `hashicorp/kubernetes` floor to `3.3`, so a caller
 who pins the provider lower in their own root module must raise it before
 taking this version. A plan on an existing deployment shows the namespace as
-moved, with no destroy.
+moved, with no destroy, provided an example-owned namespace has first had the
+`terraform state mv` documented in its `storage.tf` and
+`docs/upgrading-n8n.md`; without it the plan destroys and recreates the
+namespace.
 
 ### Changed
 
