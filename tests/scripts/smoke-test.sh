@@ -90,6 +90,107 @@ N8N_URL="${N8N_URL:-}"
 N8N_API_KEY="${N8N_API_KEY:-}"
 DEPLOY_MODE="${DEPLOY_MODE:-}"        # set to 'single' or 'multi' to skip auto-detect
 
+# Route every curl request this script makes to this address, while keeping
+# the real Host header and TLS SNI. Needed when the hostname is a public
+# record in front of the cluster (for example a Cloudflare tunnel) and the
+# editor Ingress carries an IP allowlist: without this, requests reach the
+# allowlist from the tunnel's egress address instead of the caller's network,
+# and a healthy deployment fails every HTTP check with a plain 403. Unset by
+# default, which keeps ordinary DNS resolution and changes nothing.
+SMOKE_RESOLVE_IP="${SMOKE_RESOLVE_IP:-}"
+
+# Accepts an IPv4 literal (four dot-separated octets, each 0-255) or an IPv6
+# literal. Not a full RFC 4291 validator (no zone IDs, no brackets), but it
+# does walk the real IPv6 grammar: at most one "::", 1-4 hex digits per
+# group, exactly 8 groups when uncompressed (fewer with "::", which fills
+# the rest with zeros), and an optional embedded IPv4 literal as the final
+# group. This exists to catch hostnames and typos before any request is
+# made, not after curl already failed.
+smoke_resolve_ip_valid() {
+  local ip="$1" octet
+  if [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    for octet in ${ip//./ }; do
+      (( octet <= 255 )) || return 1
+    done
+    return 0
+  fi
+  smoke_resolve_ipv6_valid "$ip"
+}
+
+# bash 3.2 safe: no associative arrays, no mapfile, no ${var,,}.
+smoke_resolve_ipv6_valid() {
+  local ip="$1"
+  [[ -n "$ip" ]] || return 1
+  [[ "$ip" =~ ^[0-9A-Fa-f:.]+$ ]] || return 1
+  [[ "$ip" == *:* ]] || return 1
+  [[ "$ip" == *:::* ]] && return 1
+  [[ "$ip" =~ ^:[^:] ]] && return 1
+  [[ "$ip" =~ [^:]:$ ]] && return 1
+
+  local tmp="$ip" cc_count=0
+  while [[ "$tmp" == *::* ]]; do
+    cc_count=$((cc_count + 1))
+    tmp="${tmp/::/}"
+  done
+  (( cc_count <= 1 )) || return 1
+
+  local has_cc=0 left="$ip" right=""
+  if (( cc_count == 1 )); then
+    has_cc=1
+    left="${ip%%::*}"
+    right="${ip#*::}"
+  fi
+
+  local -a left_groups=() right_groups=()
+  [[ -n "$left" ]] && IFS=':' read -r -a left_groups <<< "$left"
+  [[ -n "$right" ]] && IFS=':' read -r -a right_groups <<< "$right"
+
+  local g octet count=0 idx=0
+  local -a groups=("${left_groups[@]+"${left_groups[@]}"}" "${right_groups[@]+"${right_groups[@]}"}")
+  local total=${#groups[@]}
+  for g in "${groups[@]+"${groups[@]}"}"; do
+    idx=$((idx + 1))
+    if [[ "$g" == *.* ]]; then
+      # Embedded IPv4: only legal as the final group, and only after the
+      # "::" (if present) so it ends up last in the expanded address.
+      (( idx == total )) || return 1
+      (( has_cc == 1 && idx <= ${#left_groups[@]} )) && return 1
+      [[ "$g" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+      local -a octets
+      IFS='.' read -r -a octets <<< "$g"
+      (( ${#octets[@]} == 4 )) || return 1
+      for octet in "${octets[@]}"; do
+        (( octet <= 255 )) || return 1
+      done
+      count=$((count + 2))
+    else
+      [[ "$g" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      count=$((count + 1))
+    fi
+  done
+
+  if (( has_cc == 1 )); then
+    (( count <= 7 ))
+  else
+    (( count == 8 ))
+  fi
+}
+
+# Built once and spliced into every curl call via
+# ${curl_route[@]+"${curl_route[@]}"}. That guard form (rather than a bare
+# "${curl_route[@]}") is required because bash 3.2 (macOS's default) treats
+# expanding an empty array as an unbound variable under `set -u`.
+curl_route=()
+if [[ -n "$SMOKE_RESOLVE_IP" ]]; then
+  if ! smoke_resolve_ip_valid "$SMOKE_RESOLVE_IP"; then
+    echo "ERROR: SMOKE_RESOLVE_IP must be an IPv4 or IPv6 literal address, got: $SMOKE_RESOLVE_IP" >&2
+    exit 1
+  fi
+  smoke_resolve_target="$SMOKE_RESOLVE_IP"
+  [[ "$smoke_resolve_target" == *:* ]] && smoke_resolve_target="[$smoke_resolve_target]"
+  curl_route=(--connect-to "::${smoke_resolve_target}:")
+fi
+
 # Multi-mode optional load test settings
 LOAD_TEST="${LOAD_TEST:-false}"
 LOAD_REQUESTS="${LOAD_REQUESTS:-100}"
@@ -141,6 +242,10 @@ require_cmd() {
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
 header "Preflight"
+
+if [[ -n "$SMOKE_RESOLVE_IP" ]]; then
+  info "Requests are routed to $SMOKE_RESOLVE_IP (SMOKE_RESOLVE_IP set), Host header and SNI unchanged"
+fi
 
 require_cmd kubectl
 require_cmd curl
@@ -736,7 +841,7 @@ else
   # curl writes 000 to stdout on a connection failure and also exits non-zero.
   # A `|| echo "000"` here would append a second 000, producing "000000" and
   # making the "000" branch below unreachable, so swallow the exit code instead.
-  healthz_status=$(curl -sk -o /dev/null -w "%{http_code}" \
+  healthz_status=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null -w "%{http_code}" \
     --max-time 10 "${N8N_URL%/}/healthz") || true
   [[ -z "$healthz_status" ]] && healthz_status="000"
 
@@ -774,13 +879,23 @@ else
     fi
   else
     fail "/healthz returned HTTP $healthz_status (expected 200)"
+    if [[ "$healthz_status" == "403" ]]; then
+      info "A 403 here often means the editor Ingress carries an IP allowlist"
+      info "(k8s_ingress_extra_annotations / whitelist-source-range), and this"
+      info "request reached it through a proxy or tunnel instead of from an"
+      info "allowed network. Set SMOKE_RESOLVE_IP to a literal IP address"
+      info "from the Ingress status (kubectl get ingress -n $NAMESPACE); a"
+      info "cloud load balancer may show a hostname there instead, resolve"
+      info "it first (e.g. dig +short <hostname>), or run from inside an"
+      info "allowed network."
+    fi
   fi
 
   # Verify HTTP → HTTPS redirect
   http_url="${N8N_URL/https:/http:}"
   if [[ "$http_url" != "$N8N_URL" ]]; then
     # Same trailing-|| trap as the healthz check above: curl already emits 000.
-    redirect_status=$(curl -sk -o /dev/null -w "%{http_code}" \
+    redirect_status=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null -w "%{http_code}" \
       --max-time 10 "$http_url") || true
     [[ -z "$redirect_status" ]] && redirect_status="000"
     if [[ "$redirect_status" =~ ^30[1-8]$ ]]; then
@@ -800,7 +915,7 @@ header "API Connectivity"
 if [[ -z "$N8N_URL" || -z "$N8N_API_KEY" ]]; then
   skip "API connectivity test (requires N8N_URL and N8N_API_KEY)"
 else
-  api_status=$(curl -sk -o /dev/null -w "%{http_code}" \
+  api_status=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null -w "%{http_code}" \
     --max-time 10 \
     -H "X-N8N-API-KEY: $N8N_API_KEY" \
     "${N8N_URL%/}/api/v1/workflows?limit=1") || true
@@ -811,6 +926,16 @@ else
     pass "API /api/v1/workflows responded HTTP $api_status"
   elif [[ "$api_status" == "401" ]]; then
     fail "API returned 401 Unauthorized, check your N8N_API_KEY"
+  elif [[ "$api_status" == "403" ]]; then
+    fail "API /api/v1/workflows returned HTTP 403"
+    info "A 403 here often means the editor Ingress carries an IP allowlist"
+    info "(k8s_ingress_extra_annotations / whitelist-source-range), and this"
+    info "request reached it through a proxy or tunnel instead of from an"
+    info "allowed network. Set SMOKE_RESOLVE_IP to a literal IP address from"
+    info "the Ingress status (kubectl get ingress -n $NAMESPACE); a cloud"
+    info "load balancer may show a hostname there instead, resolve it first"
+    info "(e.g. dig +short <hostname>), or run from inside an allowed"
+    info "network."
   elif [[ "$api_status" == "000" ]]; then
     fail "API, connection failed (timeout or DNS error)"
   else
@@ -933,7 +1058,7 @@ else
   fi
 
   # Create workflow
-  create_response=$(curl -sk -w "\n%{http_code}" \
+  create_response=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -w "\n%{http_code}" \
     --max-time 15 \
     -X POST \
     -H "X-N8N-API-KEY: $N8N_API_KEY" \
@@ -956,7 +1081,7 @@ else
     fi
 
     # Activate so the webhook listener starts
-    activate_status=$(curl -sk -o /dev/null -w "%{http_code}" \
+    activate_status=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null -w "%{http_code}" \
       --max-time 10 \
       -X POST \
       -H "X-N8N-API-KEY: $N8N_API_KEY" \
@@ -973,7 +1098,7 @@ else
         sleep 5
         info "Triggering execution via webhook - will be queued to a worker"
 
-        trigger_status=$(curl -sk -o /dev/null -w "%{http_code}" \
+        trigger_status=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null -w "%{http_code}" \
           --max-time 15 \
           -X POST \
           -H "Content-Type: application/json" \
@@ -989,7 +1114,7 @@ else
         trigger_body=""
         for _w in $(seq 1 5); do
           sleep 3
-          trigger_response=$(curl -sk -w "\n%{http_code}" \
+          trigger_response=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -w "\n%{http_code}" \
             --max-time 15 \
             -X POST \
             -H "Content-Type: application/json" \
@@ -1015,7 +1140,7 @@ else
         # on an execution that in fact went on to succeed seconds later.
         for i in $(seq 1 30); do
           sleep 2
-          exec_state=$(curl -sk \
+          exec_state=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} \
             --max-time 10 \
             -H "X-N8N-API-KEY: $N8N_API_KEY" \
             "${N8N_URL%/}/api/v1/executions?workflowId=${workflow_id}&limit=1" 2>/dev/null \
@@ -1046,10 +1171,10 @@ else
     fi
 
     # Cleanup, deactivate then delete
-    curl -sk -o /dev/null --max-time 10 -X POST \
+    curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null --max-time 10 -X POST \
       -H "X-N8N-API-KEY: $N8N_API_KEY" \
       "${N8N_URL%/}/api/v1/workflows/${workflow_id}/deactivate" 2>/dev/null || true
-    curl -sk -o /dev/null --max-time 10 -X DELETE \
+    curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null --max-time 10 -X DELETE \
       -H "X-N8N-API-KEY: $N8N_API_KEY" \
       "${N8N_URL%/}/api/v1/workflows/${workflow_id}" 2>/dev/null || true
     info "Test workflow deleted"
@@ -1137,7 +1262,7 @@ EOF
 
     load_workflow_id=""
 
-    load_create_response=$(curl -sk -w "\n%{http_code}" \
+    load_create_response=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -w "\n%{http_code}" \
       --max-time 15 \
       -X POST \
       -H "X-N8N-API-KEY: $N8N_API_KEY" \
@@ -1156,7 +1281,7 @@ EOF
         | "$PY_JSON" -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || echo "")
       info "Load test workflow created (id: $load_workflow_id, CPU burn: ${LOAD_JOB_DURATION_SECS}s per job)"
 
-      load_activate_status=$(curl -sk -o /dev/null -w "%{http_code}" \
+      load_activate_status=$(curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null -w "%{http_code}" \
         --max-time 10 \
         -X POST \
         -H "X-N8N-API-KEY: $N8N_API_KEY" \
@@ -1189,7 +1314,7 @@ EOF
         fi
 
         for i in $(seq 1 "$load_seed"); do
-          curl -sk -o /dev/null --max-time 10 \
+          curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null --max-time 10 \
             -X POST \
             -H "Content-Type: application/json" \
             -d "{\"job\": $i}" \
@@ -1231,7 +1356,7 @@ EOF
             info "Phase 2: queuing $load_remaining remaining jobs across $worker_after worker(s)..."
             info "Watch new workers pick up jobs: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=worker -w"
             for i in $(seq $((load_seed + 1)) "$LOAD_REQUESTS"); do
-              curl -sk -o /dev/null --max-time 10 \
+              curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null --max-time 10 \
                 -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"job\": $i}" \
@@ -1262,10 +1387,10 @@ EOF
       fi
 
       if [[ -n "$load_workflow_id" ]]; then
-        curl -sk -o /dev/null --max-time 10 -X POST \
+        curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null --max-time 10 -X POST \
           -H "X-N8N-API-KEY: $N8N_API_KEY" \
           "${N8N_URL%/}/api/v1/workflows/${load_workflow_id}/deactivate" 2>/dev/null || true
-        curl -sk -o /dev/null --max-time 10 -X DELETE \
+        curl -sk ${curl_route[@]+"${curl_route[@]}"} -o /dev/null --max-time 10 -X DELETE \
           -H "X-N8N-API-KEY: $N8N_API_KEY" \
           "${N8N_URL%/}/api/v1/workflows/${load_workflow_id}" 2>/dev/null || true
         info "Load test workflow deleted"

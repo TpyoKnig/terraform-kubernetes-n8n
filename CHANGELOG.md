@@ -9,6 +9,15 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Added
 
+- `tests/scripts/smoke-test.sh`: `SMOKE_RESOLVE_IP` setting that routes every
+  request the script makes to a given address while keeping the real `Host`
+  header and TLS SNI. Needed when the hostname is a real public record in
+  front of the cluster, for example the Cloudflare examples' proxied CNAMEs
+  to a tunnel, and the editor Ingress carries an IP allowlist: without it,
+  requests reach the allowlist from the tunnel's egress address instead of
+  the caller's network and a healthy deployment fails with a plain 403.
+  Unset by default, which changes nothing. The `/healthz` and API checks
+  also print a hint toward this setting when they see a 403.
 - `valkey_helm_timeout` (number, seconds, default `600`): seconds Terraform
   waits for the Valkey Helm release to converge, only used when
   `redis_backend = "valkey"`. The default matches the literal
