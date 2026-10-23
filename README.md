@@ -102,7 +102,7 @@ The module doesn't verify any of this up front, and what a missing piece looks l
 ```hcl
 module "n8n" {
   source  = "TpyoKnig/n8n/kubernetes"
-  version = "~> 0.3"
+  version = "~> 0.4.0"
 
   n8n_domain = "n8n.example.com"
 
@@ -113,18 +113,18 @@ module "n8n" {
 
 That's the whole required surface: a hostname and how to serve it. Everything else has a default that works on an ordinary cluster.
 
-**On OpenTofu, use the git source instead.** OpenTofu resolves registry modules against `registry.opentofu.org`, which is a separate index from HashiCorp's `registry.terraform.io`. This module is published to the latter only, so the address above fails with `Module not found`:
+**OpenTofu uses the same address.** The module is also published to `registry.opentofu.org`, a separate index from HashiCorp's `registry.terraform.io`, and new tags are indexed there too. If you prefer to bypass either registry, the git source resolves the same commit:
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.1"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"
 
   n8n_domain = "n8n.example.com"
   # ...
 }
 ```
 
-That resolves the same commit the registry serves. There is no `version` argument on a git source, so the `?ref=` **is** the pin, and a range constraint is not available: see [Stability and versioning](#stability-and-versioning).
+There is no `version` argument on a git source, so the `?ref=` **is** the pin, and a range constraint is not available: see [Stability and versioning](#stability-and-versioning).
 
 Providers are yours to configure. The module declares no `provider` blocks:
 
@@ -246,11 +246,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.3.1` is the current release: the `homelab-ai-assistant` example (n8n's AI Assistant and Agents module wired to an in-cluster `n8n-sandbox-service` on the `runner.isolation: privileged` path that works on Talos), a rewrite of `docs/ai-assistant.md`'s stale Sandbox section, and a fix for task runners — `n8n_task_runners_enabled` rendered the runner sidecar without emitting `N8N_RUNNERS_ENABLED`, so the task broker never started and Code nodes silently ran in n8n's own process. Upgrading a deployment with task runners enabled rolls main, worker and webhook-processor, and code execution moves into the sidecar. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
+`0.4.0` is the current release: the n8n Helm chart pin moves `1.10.0` -> `1.17.0` (n8n `2.44.5`, so an upgrade runs database migrations: back up first and read `docs/upgrading-n8n.md`), the Kubernetes provider moves to the `~> 3.0` line, `n8n_execution_concurrency_limit` defaults to `-1` so `n8n_worker_concurrency` takes effect, and a batch of new tuning inputs (pruning, payload size, readiness barrier and Valkey timeouts) plus the `SMOKE_RESOLVE_IP` smoke-test setting land (it takes an IP literal only: resolve a load-balancer hostname first and pass the address). Worker readiness now checks real health over HTTP, so first-ready is slower. `N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input `0.3.1` added are removed. `0.3.0`'s migration notes (pinned image tag, Recreate rollout, PostgreSQL 18 on fresh CNPG clusters) still apply when coming from `0.2.x`. Older tags stay where they are and keep working as exact pins.
 
-Still pre-1.0, so a minor bump may break the input surface. `~> 0.3` is the constraint the usage example uses; it takes patches and holds the minor. `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
+Still pre-1.0, so a minor bump may break the input surface. `~> 0.4.0` is the constraint the usage example uses; it takes patches and holds the minor (`~> 0.4` would also accept `0.5.0` and later). `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, and is **required on OpenTofu**, which resolves registry modules against a different index that this module is not published to: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.3.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, on Terraform and OpenTofu alike: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.4.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 

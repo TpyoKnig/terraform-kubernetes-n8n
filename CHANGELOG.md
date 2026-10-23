@@ -7,6 +7,26 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.4.0], The chart 1.17.0 round
+
+Moves the pinned n8n Helm chart from `1.10.0` to `1.17.0` (n8n `2.44.5`) and the
+Kubernetes provider to the `~> 3.0` line, with a sweep of new tuning inputs and
+bug fixes. Several things change a running deployment on the next apply, among
+them: n8n upgrades and runs database migrations (back up the database and pin
+`n8n_image_tag` first if you want a chart-only change), every worker rolls onto
+HTTP health probes and takes longer to become Ready, the Valkey pod is
+replaced in place (a short Redis outage that restarts the n8n pods), the worker pool
+drops to one replica until the autoscaler restores the floor, the
+module-managed MCP Ingress is destroyed (the chart's own webhook Ingress now
+routes `/mcp`), and `n8n_execution_concurrency_limit` now defaults to `-1`.
+`N8N_RUNNERS_ENABLED` and the `n8n_runners_enabled` input are removed. The
+smoke test's new `SMOKE_RESOLVE_IP` takes an IP literal only: resolve a
+load-balancer hostname first and pass the address. See
+`docs/upgrading-n8n.md` for the measured disruption. Verified live on the Talos
+lab (`examples/homelab-ai-assistant`, in-cluster Postgres and Valkey, KEDA):
+chart `1.17.0`, n8n `2.44.5`, all pods Ready with zero restarts, smoke test
+passing, an execution run by a worker and not main.
+
 ### Added
 
 - `tests/scripts/smoke-test.sh`: `SMOKE_RESOLVE_IP` setting that routes every
@@ -1949,7 +1969,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.3.1...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.0
 [0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
 [0.3.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.0
 [0.2.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.2.1
