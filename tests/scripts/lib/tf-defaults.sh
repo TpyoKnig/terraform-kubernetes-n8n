@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 # tf-defaults.sh: shared awk helper for reading a variable's string default
-# out of a .tf file. Sourced by chart-values-diff.sh and
-# check-helm-chart-coverage.sh: keep this the one place that knows the
-# format, so a change to how variables.tf defaults are parsed doesn't need to
-# land twice.
+# out of a .tf file. Sourced by chart-values-diff.sh,
+# check-helm-chart-coverage.sh, check-version-drift.sh and
+# check-webhook-routes.sh: keep this the one place that knows the format, so
+# a change to how variables.tf defaults are parsed doesn't need to land four
+# times.
 # Not executable on its own: no shebang, meant to be `source`d.
 
 read_default() {

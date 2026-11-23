@@ -7,6 +7,25 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `tests/scripts/check-webhook-routes.sh` (`task webhook-routes`), ported
+  from n8n-io/terraform-aws-n8n#216: compares `n8n_webhook_path_prefixes` in
+  `locals.tf` with the routes n8n registers in its
+  `if (this.webhooksEnabled)` block, at the version `n8n_image_tag` pins.
+  The list is written by hand and was wrong once already (the Slack and
+  Telegram callback paths above), and a mocked `terraform test` never looks
+  at n8n, so the runs that pin the list cannot notice a route n8n adds. It
+  fails both ways: a route no entry covers, and an entry that covers no
+  route. `tests/scripts/test-check-webhook-routes.sh` tests the script
+  offline and runs on every pull request as the new `webhook-routes` CI job;
+  the live check itself reaches `raw.githubusercontent.com` and is not
+  CI-gated, the same as `check-n8n-chart.sh` and
+  `check-helm-chart-coverage.sh`, so run it by hand before bumping
+  `n8n_image_tag` (see
+  [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#bumping)). No change for
+  callers: no input, output or resource changes.
+
 ### Fixed
 
 - Route n8n's Slack and Telegram human-in-the-loop callbacks,
