@@ -377,7 +377,89 @@ resource "helm_release" "n8n" {
   ]
 }
 
+# ── Supplementary webhook Ingress ─────────────────────────────────────────────
+# Routes the webhook prefixes the chart's own webhook Ingress does not
+# (local.n8n_unrouted_webhook_prefixes): today the Slack and Telegram
+# human-in-the-loop callbacks. Same hosts, class, annotations and TLS Secret as
+# the chart's Ingresses, so cert-manager sees one certificate request and the
+# ingress controller merges the paths by host. Paths carry no trailing slash:
+# n8n registers both callbacks as exact paths, and a Prefix rule on the bare
+# path matches it and anything below it.
+#
+# This assumes an ingress controller that merges separate Ingress objects
+# naming the same host and class into one routing table, which is how the
+# Kubernetes Ingress API is specified to work and how this module's default,
+# ingress-nginx, behaves (README: k8s_ingress_class_name). var.k8s_ingress_class_name
+# accepts any class name, so a caller pointing it at a controller that picks
+# only one Ingress per host rather than merging them would leave these two
+# paths unrouted, falling through to the chart's own webhook Ingress or the
+# editor's catch-all. Verify merge-by-host behavior before using a non-nginx
+# controller with create_ingress = true.
+#
+# Reads the module's own typed Ingress inputs (k8s_ingress_class_name,
+# k8s_ingress_hosts, k8s_ingress_annotations, k8s_ingress_tls_secret), the
+# same ones the chart's webhook Ingress is built from (k8s_webhook_ingress_block
+# below). n8n_extra_helm_values is documented as a raw overlay for anything
+# without a typed input (see that variable), and a caller using it to set
+# ingress.className, ingress.hosts, ingress.tls or ingress.annotations
+# directly on the chart's Ingress bypasses those typed inputs on that side
+# only: this Ingress would not follow the override, and the two could
+# diverge. The one override this module does track through n8n_extra_helm_values
+# is ingress.enabled (local.n8n_ingress_rendered above, which also gates this
+# resource); the rest fall under the same "escape hatch, caller's to use
+# correctly" contract as every other n8n_extra_helm_values override that
+# duplicates a typed input.
+resource "kubernetes_ingress_v1" "n8n_webhook_supplementary" {
+  count = var.create_ingress && local.n8n_ingress_rendered && length(local.n8n_unrouted_webhook_prefixes) > 0 ? 1 : 0
 
+  metadata {
+    name        = "n8n-webhook-processor-supplementary"
+    namespace   = local.namespace_name
+    annotations = local.k8s_ingress_annotations
+    labels = {
+      "app.kubernetes.io/name"       = "n8n"
+      "app.kubernetes.io/component"  = "webhook-processor"
+      "app.kubernetes.io/managed-by" = "Terraform"
+    }
+  }
+
+  spec {
+    ingress_class_name = var.k8s_ingress_class_name
+
+    dynamic "rule" {
+      for_each = local.k8s_ingress_hosts
+      content {
+        host = rule.value
+        http {
+          dynamic "path" {
+            for_each = local.n8n_unrouted_webhook_prefixes
+            content {
+              path      = path.value
+              path_type = "Prefix"
+              backend {
+                service {
+                  name = local.n8n_webhook_service_name
+                  port {
+                    number = local.n8n_service_port
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    tls {
+      hosts       = local.k8s_ingress_hosts
+      secret_name = local.k8s_ingress_tls_secret
+    }
+  }
+
+  # The backend Service is the chart's; routing to it before it exists makes
+  # some controllers log a missing-endpoints error until the release lands.
+  depends_on = [helm_release.n8n]
+}
 
 
 # ── OpenTelemetry diagnostic check ─────────────────────────────────────────

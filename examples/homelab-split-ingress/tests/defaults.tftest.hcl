@@ -123,14 +123,16 @@ run "the_webhook_prefixes_come_from_the_module" {
   command = plan
 
   # Hardcoding these in the example is how a split ingress silently loses an
-  # endpoint family when n8n adds one. All five must be present.
+  # endpoint family when n8n adds one. All seven must be present, the Slack
+  # and Telegram HITL callbacks included: they are sibling paths that a
+  # /webhook-waiting Prefix rule does not match.
   assert {
-    condition     = length(module.n8n.n8n_webhook_path_prefixes) == 5
-    error_message = "Expected five webhook path prefixes from the module; got ${length(module.n8n.n8n_webhook_path_prefixes)}."
+    condition     = length(module.n8n.n8n_webhook_path_prefixes) == 7
+    error_message = "Expected seven webhook path prefixes from the module; got ${length(module.n8n.n8n_webhook_path_prefixes)}."
   }
 
   assert {
-    condition     = alltrue([for p in ["/webhook", "/webhook-waiting", "/form", "/form-waiting", "/mcp"] : contains(module.n8n.n8n_webhook_path_prefixes, p)])
+    condition     = alltrue([for p in ["/webhook", "/webhook-waiting", "/form", "/form-waiting", "/mcp", "/webhook-waiting-slack", "/webhook-waiting-telegram"] : contains(module.n8n.n8n_webhook_path_prefixes, p)])
     error_message = "Every prefix the mains refuse must be routed to the webhook processors on both hostnames."
   }
 

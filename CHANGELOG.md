@@ -9,6 +9,23 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Route n8n's Slack and Telegram human-in-the-loop callbacks,
+  `/webhook-waiting-slack` and `/webhook-waiting-telegram`, to the webhook
+  processors (ported from n8n-io/terraform-aws-n8n#212). They are sibling
+  paths of `/webhook-waiting`, not sub-paths, so neither the chart's webhook
+  `Ingress` nor a `Prefix` rule for `/webhook-waiting` matched them. The
+  clicks fell through to `/`, reached the main pods, which run with
+  production webhooks disabled, and the waiting execution never resumed.
+  `n8n_webhook_path_prefixes` now lists both, so the split-ingress examples
+  and any `create_ingress = false` caller iterating it pick them up, and the
+  module renders `kubernetes_ingress_v1.n8n_webhook_supplementary`
+  (`n8n-webhook-processor-supplementary`) for the prefixes the chart's own
+  webhook `Ingress` leaves out. The next `apply` after upgrading creates that
+  new `Ingress`; its merging with the chart's own webhook `Ingress` by host is
+  untested on a live cluster, and assumes an ingress controller that merges
+  separate `Ingress` objects per host, as ingress-nginx (the module's
+  default) does. `tests/scripts/check-n8n-chart.sh` now fails when the
+  chart's routed set changes in either direction.
 - **`db_postgresdb_ssl_ca_pem` now measures its 131,050-byte limit in UTF-8
   bytes after trimming, not characters** (mirrors n8n-io/terraform-aws-n8n#215).
   Terraform's `length()` counts a CRLF line break once, so a bundle saved
