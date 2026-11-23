@@ -97,6 +97,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   reports only refresh the body. The decision lives in
   `tests/scripts/drift-issue-sync.sh`, whose offline self-test runs via
   `task version-drift`.
+- CI toolchain pins bumped to close out part of the weekly version-drift
+  report (issue #66): `TF_VERSION` `1.17.0` -> `1.17.2`, `TFLINT_VERSION`
+  `v0.64.0` -> `v0.66.0`. Both are patch-safe: no plan-time diff, no new
+  tflint findings.
 
 ## [0.4.1], The namespace rename
 
