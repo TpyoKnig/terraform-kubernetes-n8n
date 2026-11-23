@@ -718,6 +718,16 @@ you would treat any sandbox escape hatch.
   Terraform's. Changing `cnpg_postgres_image_tag` across a major version
   triggers the operator's own upgrade path; read the CNPG release notes
   first.
+- **`cnpg_postgres_image_tag`'s default (`18-minimal-trixie`) floats**, by
+  design: `ghcr.io/cloudnative-pg/postgresql` republishes it against the
+  newest `18.x` minor on every image build. CNPG rolls the single Postgres
+  instance whenever the tag's underlying digest changes, so a deployment
+  pinned to this module's default moves Postgres minor versions, with
+  downtime (`cnpg_instances = 1`), on whatever schedule upstream republishes
+  the tag, not on this module's own release cadence. Pin an exact tag
+  yourself (e.g. `18.7-minimal-trixie`) if you need to control when that
+  roll happens; this module deliberately does not do that for you (see
+  `docs/versioning.md`).
 - **The `gavinbunney/kubectl` provider** is what the CNPG `Cluster` CR is
   applied through. Configure it alongside `kubernetes` and `helm` in your root
   module, see `examples/homelab/providers.tf`. It is used rather than

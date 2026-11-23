@@ -131,6 +131,22 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   fire (see `docs/upgrading-n8n.md`), but nothing about chart values,
   webhook routing or task-runner behavior. See `docs/helm-chart-coverage.md`
   and `docs/upgrading-n8n.md` for the full bump writeups.
+- **`valkey_chart_version` default bumped `0.12.0` -> `1.0.0`** (issue #66).
+  An unpinned caller's next apply rolls the Valkey Deployment once
+  (`deploymentStrategy = "Recreate"`, a brief queue outage; see
+  `docs/upgrading-n8n.md`). 1.0.0 renames the keys this module sets:
+  `dataStorage.enabled` / `.requestedSize` / `.className` to
+  `persistence.enabled` / `.size` / `.storageClass`, and `valkeyConfig` to
+  `extraConfig`; the chart refuses to render the old keys, so
+  `redis_valkey.tf` now emits the new names. Verified with `helm template`
+  against both chart versions: the PVC name, Deployment name, its label
+  selector, and Service name are unchanged, so an existing PVC is kept
+  across the upgrade. The chart's own container names change to `valkey` /
+  `init` / `metrics`, and a readiness probe is now enabled by default;
+  neither needs a module change. This migration was already run against a
+  live homelab deployment Terraform adopted (the `n8n-redis` release),
+  which confirms the PVC survives the rename in practice, not only in
+  `helm template`. See `docs/upgrading-n8n.md` for the full writeup.
 
 ## [0.4.1], The namespace rename
 

@@ -6994,15 +6994,15 @@ run "enabling_append_only_persists_the_queue_across_a_crash" {
   assert {
     condition = alltrue([
       for r in helm_release.valkey :
-      strcontains(yamldecode(r.values[0]).valkeyConfig, "appendonly yes")
+      strcontains(yamldecode(r.values[0]).extraConfig, "appendonly yes")
     ])
-    error_message = "valkey_append_only_enabled = true must render appendonly yes into valkeyConfig, or a queue crash silently loses every job accepted since the last RDB snapshot."
+    error_message = "valkey_append_only_enabled = true must render appendonly yes into extraConfig, or a queue crash silently loses every job accepted since the last RDB snapshot."
   }
 
   assert {
     condition = alltrue([
       for r in helm_release.valkey :
-      strcontains(yamldecode(r.values[0]).valkeyConfig, "appendfsync everysec")
+      strcontains(yamldecode(r.values[0]).extraConfig, "appendfsync everysec")
     ])
     error_message = "appendfsync everysec must accompany appendonly, bounding the loss window to about one second of writes."
   }

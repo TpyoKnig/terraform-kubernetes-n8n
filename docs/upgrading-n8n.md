@@ -132,6 +132,32 @@ worker had already claimed when the pods went down is different: n8n sets
 Bull's `maxStalledCount` to 0, so a claimed job that is interrupted is not
 retried.
 
+## Valkey chart `0.12.0` -> `1.0.0` (this module's current pin)
+
+1.0.0 renames the keys this module sets on `helm_release.valkey`:
+`dataStorage.enabled` / `.requestedSize` / `.className` move to
+`persistence.enabled` / `.size` / `.storageClass`, and `valkeyConfig` (used
+only when `valkey_append_only_enabled = true`) moves to `extraConfig`. The
+chart refuses to render while the old keys are set, so this is not optional:
+`redis_valkey.tf` now emits the 1.0.0 names. Verified by rendering both
+chart versions' values through the real chart with `helm template`: the PVC
+name, the Deployment name, its label selector, and the Service name are all
+unchanged, so an existing PVC is kept and the release upgrades in place
+rather than being recreated under a new name.
+
+**Effect on an existing deployment:** the Valkey Deployment rolls once,
+same as every chart bump (`deploymentStrategy = "Recreate"`, so a brief
+queue outage; see "Valkey restarts during the upgrade" above). PVC
+`<release>-valkey` is kept, not recreated: the chart's own container names
+change to `valkey` / `init` / `metrics` (previously `<fullname>` /
+`<fullname>-init`), and a readiness probe is now enabled by default
+(`readinessProbe.enabled: true`), taking a pod out of the Service once it
+stops answering `PONG`. Neither needs a module change. This exact migration
+was run against a live homelab deployment adopted into Terraform state
+(production `n8n-redis` release): `dataStorage` moved to `persistence` with
+the same PVC (`n8n-redis-valkey`) kept, confirming the chart's own claim
+that PVC names do not depend on the rename.
+
 ## `n8n_execution_concurrency_limit` default `100` -> `-1`
 
 Not a chart or image bump, but it changes behavior on the next apply same as

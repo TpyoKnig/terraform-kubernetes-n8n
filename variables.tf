@@ -631,9 +631,9 @@ variable "n8n_diagnostics_enabled" {
 }
 
 variable "valkey_chart_version" {
-  description = "Version of the valkey-io/valkey-helm chart to install. Only used when redis_backend = \"valkey\"."
+  description = "Version of the valkey-io/valkey-helm chart to install. Only used when redis_backend = \"valkey\". 1.0.0 and later require Valkey 9.0 or later (image.tag); this module leaves image.tag unset, so the chart's own default applies."
   type        = string
-  default     = "0.12.0"
+  default     = "1.0.0"
   nullable    = false
 
   validation {
