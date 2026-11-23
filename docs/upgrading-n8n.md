@@ -204,8 +204,9 @@ honoring either budget.
 ## Bumping
 
 1. Set `n8n_image_tag`, any required `n8n_chart_version`, and, when using a custom application tag, the matching `n8n_task_runner_image_tag`.
-2. `terraform plan` and review the diff. `atomic = true` rolls back Kubernetes resources after a failed rollout, not PostgreSQL migrations.
-3. `terraform apply`. Watch the main and worker pods through the rollout:
+2. For a plain `X.Y.Z` `n8n_image_tag` (the common case; this check does not run for `n8n_image_tag = null` or a custom/suffixed tag such as `2.44.5-alpine`, which need a manual comparison of `n8n_webhook_path_prefixes` in `locals.tf` against the `if (this.webhooksEnabled)` block at the n8n version you are actually deploying), run `tests/scripts/check-webhook-routes.sh` (`task webhook-routes`) from a checkout of the module version whose `n8n_image_tag` default matches the tag you are deploying, before applying. The script reads that default from `variables.tf`, not the value in your root module, and downloads its `if (this.webhooksEnabled)` block to compare with `n8n_webhook_path_prefixes` in `locals.tf`, both ways. It is not CI-gated, because it reaches `raw.githubusercontent.com`, so this is the one place it actually runs. If it reports a route no entry covers, add the entry in the same pull request; if it reports an entry that covers no route, remove the stale entry or keep it and name it in `RETAINED_PREFIXES_DEFAULT` (`tests/scripts/check-webhook-routes.sh`) for callers still pinned to an older tag; see [docs/versioning.md](./versioning.md#bump-tiers).
+3. `terraform plan` and review the diff. `atomic = true` rolls back Kubernetes resources after a failed rollout, not PostgreSQL migrations.
+4. `terraform apply`. Watch the main and worker pods through the rollout:
 
    ```bash
    kubectl get pods -n <namespace> -l app.kubernetes.io/component=main -w
@@ -215,7 +216,7 @@ honoring either budget.
    kubectl get pods -n <namespace> -l app.kubernetes.io/component=worker -w
    ```
 
-4. Confirm the version actually running matches what you set, on a main pod
+5. Confirm the version actually running matches what you set, on a main pod
    and on every worker pod:
 
    ```bash
