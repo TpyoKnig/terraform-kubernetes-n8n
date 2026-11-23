@@ -156,19 +156,24 @@ label is added to it when missing, so another issue is never mistaken for
 the tracker (the most recently closed matching issue, by `closedAt`, is
 picked when none is open). A complete report replaces the body, except a
 clean report that finds no tracking issue at all, which creates nothing. A
-comment listing new and resolved findings is posted only when the set of
-`DRIFT:`/`ERROR:` lines changes, since an issue body edit notifies nobody.
-The issue closes when a report has neither, and reopens when the findings
-change while it is closed; closing it by hand with unchanged findings is
-respected, so later reports only refresh the body until the findings
-change. An incomplete report (a crash, or exit 1 for a missing tool) writes
-nothing to the issue, not even the label, and fails the run instead. A
-report with `ERROR:` lines is still synced, but those lines do not fail the
-run on their own: there is no step after the sync that inspects them, so a
-failed lookup is visible in the issue and the job summary, not as a red
-run. The decision lives in `tests/scripts/drift-issue-sync.sh`, whose
+comment listing new and resolved findings is posted whenever the
+`DRIFT:`/`ERROR:` lines change and some remain, whether the issue stays
+open or reopens, since an issue body edit notifies nobody; closing the
+issue posts its own notice instead, not a findings list. The issue closes
+when a report has neither, and reopens when the findings change to a
+different, non-empty set while it is closed (a change that resolves to
+none while closed does not reopen it: the body is still refreshed, but it
+stays closed). Closing it by hand with unchanged findings is respected, so
+later reports only refresh the body until the findings change. An
+incomplete report (a crash, or exit 1 for a missing
+tool) writes nothing to the issue, not even the label, and fails the run
+instead. A report with `ERROR:` lines is still synced, but those lines do
+not fail the run on their own: there is no step after the sync that
+inspects them, so a failed lookup is visible in the issue and the job
+summary, not as a red run. The decision (what to create, update, comment,
+close, or reopen) lives in `tests/scripts/drift-issue-sync.sh`, whose
 offline self-test runs via `task version-drift`; the workflow step itself
-only calls `gh`.
+only performs the GitHub writes, through `gh`.
 
 It cannot see, and does not attempt to check, the one thing with no public
 API at the granularity that matters here:
