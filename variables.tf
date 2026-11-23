@@ -440,7 +440,7 @@ variable "valkey_chart_repository" {
 variable "n8n_chart_version" {
   description = "n8n Helm chart version to deploy. Must be an exact version, not a constraint: the Helm provider resolves this literally."
   type        = string
-  default     = "1.17.0"
+  default     = "1.20.0"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", var.n8n_chart_version))
@@ -451,7 +451,7 @@ variable "n8n_chart_version" {
 variable "n8n_image_tag" {
   description = "n8n application image tag to deploy. Defaults to a concrete published version, which the module bumps deliberately with a CHANGELOG entry, on the same policy as the chart version pins above. Set it to null to hand the decision back to the chart, whose own default is empty, which resolves to the pinned chart's own appVersion (the n8n version that chart release was built and tested against) rather than to a floating tag. Before chart 1.12.0 the chart's own default was the floating `stable` tag, which resolved to whatever n8n version was latest at the moment a node pulled the image, and because the chart hardcodes an IfNotPresent pull policy, a node that already held a cached layer kept running the version it pulled whenever that was: the running version followed each node's pull history rather than the configuration. Handing the choice back to the chart today no longer has that failure mode, but it does mean an upgrade of n8n_chart_version alone, with this input left null, silently moves the running n8n version along with it. Nothing about either path is visible in a plan, which is why the module pins rather than defers. Pin a different version here to upgrade on your own schedule; see docs/upgrading-n8n.md for the order that upgrade has to follow, and <https://docs.n8n.io/2-0-breaking-changes/> for the n8n 2.x migration guide."
   type        = string
-  default     = "2.44.5"
+  default     = "2.48.8"
 
   validation {
     condition     = var.n8n_image_tag == null ? true : can(regex("^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$", var.n8n_image_tag))

@@ -111,6 +111,26 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   0 skipped, identical to the 3.3.30 baseline, so no new findings to
   triage. `.checkov.yaml`'s own re-verification comment and pass count are
   refreshed to match.
+- **`n8n_chart_version` default bumped `1.17.0` -> `1.20.0`, `n8n_image_tag`
+  default bumped `2.44.5` -> `2.48.8`** (issue #66). An unpinned caller's
+  next apply rolls every n8n pod: a Helm upgrade for the chart plus a new
+  application image. Diffed both versions' `values.yaml`,
+  `values.schema.json` and `templates/` directly: the only real chart
+  changes are additive, `keda.worker.advanced` /
+  `keda.webhookProcessor.advanced` (a new `spec.advanced` passthrough this
+  module does not set) and a telemetry-only `config.deploymentArtifact`
+  key. The chart's appVersion moves `2.44.5` -> `2.48.5`; this module's own
+  `n8n_image_tag` pin goes one step further, to `2.48.8`. The five webhook
+  path prefixes this module routes, the main-PDB chart gate, every worker
+  probe and the task-runner sidecar placement are all unchanged, verified
+  by `tests/scripts/check-n8n-chart.sh` and
+  `tests/scripts/check-helm-chart-coverage.sh` against chart 1.20.0; n8n's
+  own `packages/cli/src/abstract-server.ts` registers the identical set of
+  webhook routes at `2.44.5` and `2.48.8`. n8n 2.45.0 turned the durable
+  scheduler on by default, which changes when interval-based schedules
+  fire (see `docs/upgrading-n8n.md`), but nothing about chart values,
+  webhook routing or task-runner behavior. See `docs/helm-chart-coverage.md`
+  and `docs/upgrading-n8n.md` for the full bump writeups.
 
 ## [0.4.1], The namespace rename
 

@@ -2215,10 +2215,12 @@ locals {
   # scale-down delay a caller actually observes is Kubernetes' own default HPA
   # scaleDown stabilization window, 300s, which KEDA's ScaledObject inherits
   # for every scale-down step above the floor; measured live at ~298s. Chart
-  # 1.17.0 exposes no values path to the ScaledObject's spec.advanced, so that
-  # window cannot be shortened from this module (confirmed: keda.worker.advanced
-  # renders no spec.advanced key through `helm template`), so it is left at the
-  # default.
+  # 1.20.0 added a real values path to the ScaledObject's spec.advanced
+  # (keda.worker.advanced, verified: `helm template` renders whatever is set
+  # there straight into spec.advanced), so the window could now be shortened
+  # with `advanced.horizontalPodAutoscalerConfig.behavior.scaleDown`. This
+  # module does not set it yet: leaving the default is a deliberate choice,
+  # not a chart limitation anymore, pending a caller-facing input for it.
   k8s_values_keda = var.k8s_keda_installed ? {
     keda = {
       enabled = true

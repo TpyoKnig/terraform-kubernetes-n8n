@@ -5,14 +5,14 @@ what it leaves alone. Written so you can tell before you start whether the knob
 you need is a typed input, a chart default, or something you have to reach
 through the escape hatch.
 
-Measured against chart **1.17.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
+Measured against chart **1.20.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
 source at [n8n-io/n8n-hosting](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n)),
 which is the version `n8n_chart_version` pins by default. The chart offers 48
 top-level keys. This module writes 25 of them.
 
 Everything below was measured, not recalled: the values tree was rendered with
 `terraform console` and diffed against the chart's own `values.yaml` at tag
-`v1.17.0`. An earlier draft of this file was written from a render taken at
+`v1.20.0`. An earlier draft of this file was written from a render taken at
 defaults, which reported every null-defaulted input as unexposed and was wrong
 about four of them.
 
@@ -20,9 +20,9 @@ about four of them.
 
 | | Input | Default | Pinned? |
 | --- | --- | --- | --- |
-| Chart version | `n8n_chart_version` | `1.17.0` | Yes, and it must be an exact version. The Helm provider resolves it literally, not as a constraint. |
+| Chart version | `n8n_chart_version` | `1.20.0` | Yes, and it must be an exact version. The Helm provider resolves it literally, not as a constraint. |
 | Chart repository | `n8n_chart_repository` | `oci://ghcr.io/n8n-io/n8n-helm-chart` | Yes. Repoint it at a private mirror if the cluster has no egress to ghcr.io. |
-| n8n application version | `n8n_image_tag` | `"2.44.5"` | Yes. Bumping it is a module change with a CHANGELOG entry, on the same policy as the two rows above. Set it to null to hand the choice back to the chart, which ships with an empty tag that resolves to the chart's own appVersion (2.44.5 for 1.17.0; `appVersion: stable` before chart 1.12.0). |
+| n8n application version | `n8n_image_tag` | `"2.48.8"` | Yes. Bumping it is a module change with a CHANGELOG entry, on the same policy as the two rows above. Set it to null to hand the choice back to the chart, which ships with an empty tag that resolves to the chart's own appVersion (2.48.5 for 1.20.0; `appVersion: stable` before chart 1.12.0). |
 
 **Out of the box this module pins the chart and the application**, so the
 deployment is reproducible and an upgrade is a one-line diff your CI can raise,
@@ -30,8 +30,8 @@ review and roll back, which is the whole point. The module is validated against
 the version it defaults to:
 
 ```hcl
-n8n_chart_version = "1.17.0"    # the chart
-n8n_image_tag     = "2.44.5"    # the application, and the module's default
+n8n_chart_version = "1.20.0"    # the chart
+n8n_image_tag     = "2.48.8"    # the application, and the module's default
 ```
 
 Pin a different version whenever you want to move on your own schedule;
@@ -68,7 +68,7 @@ new schema on the old code. None of that appears in a plan.
 | `webhook.url` | Exposed as `n8n_webhook_url`. |
 | `ingress.*` | Exposed as `create_ingress` (enabled), `k8s_ingress_class_name` (className), `k8s_ingress_host` / `n8n_additional_domains` (hosts), and the TLS secret name derived from the hostnames. Annotations come from the computed `k8s_ingress_annotations` local: the module's own proxy-body-size/timeout keys, `cert-manager.io/cluster-issuer` from `k8s_ingress_cluster_issuer` when set, and `k8s_ingress_extra_annotations` merged on top (the actual input for caller-supplied annotations, last write wins). `sticky.enabled` is hardcoded false: there is only ever one main pod, so there is nothing to be sticky to. `webhookProcessor` gets its own Ingress block mirroring the main block's className, hosts, annotations and TLS. `n8n_extra_helm_values` can still enable, disable or fully replace the block; see the `n8n_proxy_hops` validation for how the module tells a caller-owned Ingress from its own. |
 | `hpa.main`, `hpa.worker`, `hpa.webhookProcessor` | Exposed through the `n8n_*_hpa_*` inputs. |
-| `keda.enabled`, `keda.worker` | Rendered only when `k8s_keda_installed = true`. Bounded by the `n8n_worker_keda_*` inputs. |
+| `keda.enabled`, `keda.worker` | Rendered only when `k8s_keda_installed = true`. Bounded by the `n8n_worker_keda_*` inputs. `keda.worker.advanced` (chart 1.20.0+, renders `spec.advanced` on the worker `ScaledObject`) is not exposed yet; the module leaves Kubernetes' own HPA scale-down stabilization window in place. |
 | `keda.webhookProcessor` | Not exposed. Queue-depth scaling applies to workers, which are what consume the queue. |
 | `database.*` | Exposed. `postgres_backend` selects `cnpg` or `external`; the `db_*` inputs carry the external endpoint. |
 | `database.ssl` | **Mostly not set**, with one conditional exception. `database.ssl.enabled` / `.rejectUnauthorized` stay unset on every path that is not delivering a CA: Postgres TLS is wired through environment variables instead (`db_postgresdb_ssl_enabled`, `db_postgresdb_ssl_reject_unauthorized`), so those two settings have one source rather than two that can disagree. When `db_postgresdb_ssl_ca_pem` is set and `db_postgresdb_ssl_enabled` is true, the module also sets `database.ssl.enabled = true` and `.rejectUnauthorized = true` (`local.postgres_ssl_ca_values` in `locals.tf`), pinned regardless of `db_postgresdb_ssl_reject_unauthorized`, so the chart's own `config.extraEnv` guard never fires and that env var stays the only source of the rendered value. `database.ssl.ca` is exposed as `db_postgresdb_ssl_ca_pem`, see [`docs/postgresql-tls.md`](./postgresql-tls.md). |
@@ -78,6 +78,7 @@ new schema on the old code. None of that appears in a plan.
 | `redis.prefix` | Exposed as `redis_key_prefix` (renders QUEUE_BULL_PREFIX). Omitted when null so Bull's own `bull` default applies; the same input also sets N8N_REDIS_KEY_PREFIX and the KEDA listName. |
 | `config.extraEnv` | Exposed as `n8n_extra_env`, applied to every n8n pod. Reserved names are rejected at plan time. |
 | `config.timezone` | Exposed as `n8n_timezone`. |
+| `config.deploymentArtifact` | Not exposed. Chart 1.20.0 adds this telemetry-only key, rendered as `N8N_DEPLOYMENT_ARTIFACT`; left at the chart's own default (`helm-chart/<chart version>`). |
 | `executions.*` | Exposed: `n8n_execution_timeout` / `_timeout_max` (timeout, timeoutMax), `n8n_execution_concurrency_limit` (concurrency.productionLimit, default `-1`, so `queueMode.workerConcurrency` governs instead; see `docs/operations.md` → "How worker concurrency and scale-out interact"), `n8n_pruning_max_age` / `_max_count` (pruning). The chart reads these top-level only; there is no `config.executions`. |
 | `taskRunners.*` | Exposed: enabled, mode, native Python runner, and the launcher config through the allowlist inputs. |
 | `taskRunners.image.tag` | Exposed as `n8n_task_runner_image_tag`. Omitted when null, so the chart falls back to the application image tag. |
@@ -126,7 +127,7 @@ you find them in a CrashLoopBackOff. A custom repository with no explicit tag is
 rejected, because a custom repository almost never publishes one called
 `stable`. A custom image with task runners on and no runner tag is rejected,
 because the chart would otherwise resolve the runner tag from the application
-tag, and `n8nio/runners` has never published `2.44.5-mynodes`. A
+tag, and `n8nio/runners` has never published `2.48.8-mynodes`. A
 `n8n_custom_extensions_path` that no volume mount or custom image provides is
 rejected too.
 
