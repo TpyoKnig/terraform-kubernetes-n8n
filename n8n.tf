@@ -385,8 +385,18 @@ resource "helm_release" "n8n" {
 # ingress controller merges the paths by host. Paths carry no trailing slash:
 # n8n registers both callbacks as exact paths, and a Prefix rule on the bare
 # path matches it and anything below it.
+#
+# This assumes an ingress controller that merges separate Ingress objects
+# naming the same host and class into one routing table, which is how the
+# Kubernetes Ingress API is specified to work and how this module's default,
+# ingress-nginx, behaves (README: k8s_ingress_class_name). var.k8s_ingress_class_name
+# accepts any class name, so a caller pointing it at a controller that picks
+# only one Ingress per host rather than merging them would leave these two
+# paths unrouted, falling through to the chart's own webhook Ingress or the
+# editor's catch-all. Verify merge-by-host behavior before using a non-nginx
+# controller with create_ingress = true.
 resource "kubernetes_ingress_v1" "n8n_webhook_supplementary" {
-  count = var.create_ingress && length(local.n8n_unrouted_webhook_prefixes) > 0 ? 1 : 0
+  count = var.create_ingress && local.n8n_ingress_rendered && length(local.n8n_unrouted_webhook_prefixes) > 0 ? 1 : 0
 
   metadata {
     name        = "n8n-webhook-processor-supplementary"

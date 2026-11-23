@@ -17,7 +17,7 @@ output "n8n_webhook_service_name" {
 }
 
 output "n8n_webhook_path_prefixes" {
-  description = "Path prefixes that must be routed to n8n_webhook_service_name rather than n8n_service_name. The main pods run with production webhooks disabled, so every one of these returns 404 if it reaches them: /webhook, /webhook-waiting, /form, /form-waiting, /mcp, and the Slack and Telegram human-in-the-loop callbacks /webhook-waiting-slack and /webhook-waiting-telegram (sibling paths, so a /webhook-waiting Prefix rule does not cover them). Route all of them when building your own Ingress with create_ingress = false."
+  description = "Path prefixes that must be routed to n8n_webhook_service_name rather than n8n_service_name. The main pods run with production webhooks disabled, so requests to any of these that reach them get no webhook handler and fall through to the editor HTML (200), not a webhook response: /webhook, /webhook-waiting, /form, /form-waiting, /mcp, and the Slack and Telegram human-in-the-loop callbacks /webhook-waiting-slack and /webhook-waiting-telegram (sibling paths, so a /webhook-waiting Prefix rule does not cover them). Route all of them when building your own Ingress with create_ingress = false."
   value       = local.n8n_webhook_path_prefixes
 }
 

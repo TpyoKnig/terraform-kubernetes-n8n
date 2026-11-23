@@ -25,15 +25,19 @@ locals {
   n8n_service_port         = 5678
 
   # Path prefixes that must reach the webhook processors rather than the main
-  # pods. The main pods run with production webhooks disabled, so every one of
-  # these 404s if it reaches them. The list mirrors the routes n8n registers
-  # under `if (this.webhooksEnabled)` in packages/cli/src/abstract-server.ts.
+  # pods. The main pods run with production webhooks disabled, so none of
+  # these has a registered handler there: a request that reaches a main pod
+  # instead falls through to the editor's single-page-app handler, which
+  # answers 200 with the editor HTML rather than a webhook response. The list
+  # mirrors the routes n8n registers under `if (this.webhooksEnabled)` in
+  # packages/cli/src/abstract-server.ts.
   #
   # /webhook-waiting-slack and /webhook-waiting-telegram are the Slack and
   # Telegram human-in-the-loop callbacks. They are sibling paths, not
   # sub-paths of /webhook-waiting: a Prefix rule matches whole path elements,
   # so /webhook-waiting never covers them, and without their own entries the
-  # button clicks fell through to "/" and the main pods 404'd them.
+  # button clicks fell through to "/" and got the editor HTML (200) back
+  # from the main pods instead of a webhook response.
   n8n_webhook_path_prefixes = [
     "/webhook",
     "/webhook-waiting",

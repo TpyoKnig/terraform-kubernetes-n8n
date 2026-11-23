@@ -20,8 +20,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   and any `create_ingress = false` caller iterating it pick them up, and the
   module renders `kubernetes_ingress_v1.n8n_webhook_supplementary`
   (`n8n-webhook-processor-supplementary`) for the prefixes the chart's own
-  webhook `Ingress` leaves out. `tests/scripts/check-n8n-chart.sh` now fails
-  when the chart's routed set changes in either direction.
+  webhook `Ingress` leaves out. The next `apply` after upgrading creates that
+  new `Ingress`; its merging with the chart's own webhook `Ingress` by host is
+  untested on a live cluster, and assumes an ingress controller that merges
+  separate `Ingress` objects per host, as ingress-nginx (the module's
+  default) does. `tests/scripts/check-n8n-chart.sh` now fails when the
+  chart's routed set changes in either direction.
 
 ## [0.4.1], The namespace rename
 

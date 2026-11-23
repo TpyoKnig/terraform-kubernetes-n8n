@@ -5,8 +5,9 @@ Two hostnames instead of one, on the same Kubernetes-native backend as [`../home
 ```
 editor_host   →  n8n-main                editor UI, REST API, /webhook-test
 webhook_host  →  n8n-webhook-processor   /webhook, /webhook-waiting, /form,
-                                         /form-waiting, /mcp, the Slack and
-                                         Telegram HITL callbacks
+                                         /form-waiting, /mcp,
+                                         /webhook-waiting-slack,
+                                         /webhook-waiting-telegram
               →  n8n-main                /rest/projects (Agents chat
                                          integrations)
 ```
@@ -25,14 +26,14 @@ The secondary benefit is that rate limiting, WAF rules and request-size limits c
 
 Everything [`../homelab`](../homelab) creates, minus the module's own `Ingress` pair, plus:
 
-- `Ingress/n8n-webhook` - `webhook_host`, the five webhook path prefixes plus `/rest/projects`, no catch-all
+- `Ingress/n8n-webhook` - `webhook_host`, the seven webhook path prefixes plus `/rest/projects`, no catch-all
 - `Ingress/n8n-editor` - `editor_host`, `/` to the mains, with the same webhook prefixes routed to the webhook processors ahead of it
 
 The webhook prefixes come from the module's `n8n_webhook_path_prefixes` output rather than being hardcoded, so neither `Ingress` drifts as n8n adds endpoint families.
 
 ## Why the editor host also routes the webhook prefixes
 
-The module runs the chart with `disableProductionWebhooksOnMainProcess = true`, so the main pods serve none of those five prefixes. Without those rules on the editor `Ingress`, the catch-all hands `/webhook/...` to a main pod, the request falls through to the editor's SPA handler, and the caller gets **HTTP 200 with an HTML body**: a delivery that reads as success while nothing executed.
+The module runs the chart with `disableProductionWebhooksOnMainProcess = true`, so the main pods serve none of those seven prefixes. Without those rules on the editor `Ingress`, the catch-all hands `/webhook/...` to a main pod, the request falls through to the editor's SPA handler, and the caller gets **HTTP 200 with an HTML body**: a delivery that reads as success while nothing executed.
 
 `/webhook-test` is deliberately *not* in that list: manual "listen for test event" executions run on the mains, so it stays on the catch-all.
 
