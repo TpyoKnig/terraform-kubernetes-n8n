@@ -63,9 +63,11 @@ and diffed against the chart's own `values.yaml` at the candidate tag; see
 that doc's own history for the method), a passing
 `tests/scripts/check-n8n-chart.sh` when it's a chart this module templates
 against, and, for `n8n_image_tag`, a passing
-`tests/scripts/check-webhook-routes.sh` (`task webhook-routes`): if the new
-n8n registers a production webhook route that `n8n_webhook_path_prefixes`
-does not cover, add the entry in the same pull request.
+`tests/scripts/check-webhook-routes.sh` (`task webhook-routes`), run from a
+checkout whose `n8n_image_tag` default is the new tag (it reads that default
+from `variables.tf`, not from a root-module override): if the new n8n
+registers a production webhook route that `n8n_webhook_path_prefixes` does
+not cover, add the entry in the same pull request.
 
 **Verification-required.** A provider major, the Terraform CLI floor, or a CI
 toolchain pin whose major version carries real breaking-change risk. These
