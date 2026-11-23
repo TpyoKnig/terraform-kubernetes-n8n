@@ -7804,3 +7804,64 @@ run "an_allocator_annotation_silences_the_lan_expose_warning" {
     error_message = "This run exists to prove the check stays quiet when annotations are set."
   }
 }
+
+# ── Webhook processor and worker PodDisruptionBudgets ─────────────────────────
+# The chart renders a budget for main only, and only when main runs more than
+# one replica, which this module never does. These two are module-owned. The
+# selectors must match the labels the chart puts on the pods or the budget
+# guards nothing, and mocks cannot catch a selector typo, so pin them (checked
+# against helm template of chart 1.17.0; see tests/scripts/check-n8n-chart.sh).
+run "webhook_and_worker_pdbs_default_to_max_unavailable_one" {
+  command = plan
+
+  assert {
+    condition = (
+      kubernetes_pod_disruption_budget_v1.n8n_webhook[0].spec[0].max_unavailable == "1" &&
+      kubernetes_pod_disruption_budget_v1.n8n_webhook[0].spec[0].selector[0].match_labels["app.kubernetes.io/component"] == "webhook-processor" &&
+      kubernetes_pod_disruption_budget_v1.n8n_webhook[0].spec[0].selector[0].match_labels["app.kubernetes.io/name"] == "n8n" &&
+      kubernetes_pod_disruption_budget_v1.n8n_webhook[0].spec[0].selector[0].match_labels["app.kubernetes.io/instance"] == "n8n"
+    )
+    error_message = "The webhook processor budget must allow one unavailable pod and select component=webhook-processor"
+  }
+
+  assert {
+    condition = (
+      kubernetes_pod_disruption_budget_v1.n8n_worker[0].spec[0].max_unavailable == "1" &&
+      kubernetes_pod_disruption_budget_v1.n8n_worker[0].spec[0].selector[0].match_labels["app.kubernetes.io/component"] == "worker" &&
+      kubernetes_pod_disruption_budget_v1.n8n_worker[0].spec[0].selector[0].match_labels["app.kubernetes.io/name"] == "n8n" &&
+      kubernetes_pod_disruption_budget_v1.n8n_worker[0].spec[0].selector[0].match_labels["app.kubernetes.io/instance"] == "n8n"
+    )
+    error_message = "The worker budget must allow one unavailable pod and select component=worker"
+  }
+
+  assert {
+    condition     = kubernetes_pod_disruption_budget_v1.n8n_webhook[0].metadata[0].namespace == "n8n" && kubernetes_pod_disruption_budget_v1.n8n_worker[0].metadata[0].namespace == "n8n"
+    error_message = "Both budgets must live in the same namespace as the pods they select."
+  }
+}
+
+run "webhook_pdb_can_be_disabled_independently" {
+  command = plan
+
+  variables {
+    n8n_webhook_pdb_enabled = false
+  }
+
+  assert {
+    condition     = length(kubernetes_pod_disruption_budget_v1.n8n_webhook) == 0 && length(kubernetes_pod_disruption_budget_v1.n8n_worker) == 1
+    error_message = "n8n_webhook_pdb_enabled = false must drop only the webhook processor budget"
+  }
+}
+
+run "worker_pdb_can_be_disabled_independently" {
+  command = plan
+
+  variables {
+    n8n_worker_pdb_enabled = false
+  }
+
+  assert {
+    condition     = length(kubernetes_pod_disruption_budget_v1.n8n_worker) == 0 && length(kubernetes_pod_disruption_budget_v1.n8n_webhook) == 1
+    error_message = "n8n_worker_pdb_enabled = false must drop only the worker budget"
+  }
+}

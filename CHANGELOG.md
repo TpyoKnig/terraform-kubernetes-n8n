@@ -7,6 +7,32 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- `n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default
+  `true`) create `kubernetes_pod_disruption_budget_v1` resources with
+  `maxUnavailable = 1` for the webhook processor and default worker
+  Deployments. The n8n chart (1.17.0, the pinned version) renders a
+  PodDisruptionBudget for the main pods only, and only when main runs more
+  than one replica (n8n-io/n8n-hosting#228), which this module never does, so
+  without these a voluntary node drain (a Talos node upgrade,
+  cluster-autoscaler scale-down, `kubectl drain`) could stop every webhook
+  processor, or the only worker, in the same second. Port of
+  [terraform-aws-n8n#205](https://github.com/n8n-io/terraform-aws-n8n/pull/205)
+  (and [terraform-azurerm-n8n#92](https://github.com/n8n-io/terraform-azurerm-n8n/pull/92)),
+  minus the AWS Load Balancer Controller part, which this module has no
+  equivalent of. `maxUnavailable` rather than `minAvailable`, for the same
+  reason `cnpg_pdb_enabled` gives for a single-instance CloudNativePG
+  cluster: `minAvailable = 1` on a one-replica Deployment blocks every
+  voluntary eviction and stalls drains. At the default
+  `n8n_worker_keda_min_replicas = 1` the worker budget therefore protects
+  nothing until KEDA (or the CPU HPA) runs two or more workers.
+  `n8n_worker_pools` Deployments are not covered. Existing deployments gain
+  both budgets on the next apply (two new resources, no Helm diff). Set
+  either to `false` to manage your own. See
+  [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#new-poddisruptionbudgets-for-the-webhook-processor-and-worker)
+  for the upgrade check against budgets you may already run.
+
 ## [0.4.1], The namespace rename
 
 Finishes a change `0.4.0` described but did not contain: the namespace rename

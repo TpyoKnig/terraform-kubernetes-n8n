@@ -162,7 +162,7 @@ Concretely, in this repo:
   version, because results are not comparable across versions. Findings hard-fail the
   build: every one is either fixed or annotated at its resource with an inline
   `checkov:skip=<ID>:<reason>`, and `.checkov.yaml` suppresses no check
-  repo-wide. The current baseline is **12 passed, 0 failed, 0 skipped**, with no
+  repo-wide. The current baseline is **15 passed, 0 failed, 0 skipped**, with no
   `checkov:skip` anywhere: so any annotation you add is the first, and a drop
   in the passed count means checks stopped applying, not that the module got
   safer. Scope is the Terraform framework only, and `.checkov.yaml` explains
@@ -373,7 +373,7 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   | `Chart versions` | The `*_chart_version` pins, plus n8n image tag/repository/pull secrets, Helm timeout, timezone and logging |
   | `n8n resource requests and limits` | CPU/memory requests and limits, one set per pod role, plus the V8 heap ceiling |
   | `Execution settings` | Worker concurrency, execution timeouts, pruning, execution-data storage mode |
-  | `Graceful shutdown` | Termination grace period, prestop sleep |
+  | `Graceful shutdown` | Termination grace period, prestop sleep, and the webhook processor and worker PodDisruptionBudget toggles |
   | `Task runners` | Task runner sizing, lifecycle and the import allowlists |
   | `PostgreSQL` | `postgres_backend`, the CloudNativePG sizing inputs, and the external-database references |
   | `Redis / queue` | `redis_backend`, the Valkey sizing inputs, and the external-Redis references |
