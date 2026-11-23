@@ -2631,6 +2631,61 @@ run "the_supplementary_ingress_routes_what_the_chart_does_not" {
   }
 }
 
+# The /mcp routing gate (locals.tf n8n_chart_routes_mcp) is chart-version
+# dependent: chart 1.16.0 added /mcp/ to its own webhook Ingress, and
+# n8n_chart_version accepts any older pin too. These three runs exercise the
+# boundary cubic flagged: just below 1.16.0, exactly at it, and a prerelease
+# of it, which the local treats as not-yet-verified and so, like the stable
+# pre-1.16.0 case, leaves /mcp to the supplementary Ingress rather than
+# risking it going unrouted.
+run "the_supplementary_ingress_also_covers_mcp_below_chart_1_16_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.15.9"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/mcp,/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "Below chart 1.16.0 the chart's own webhook Ingress does not route /mcp, so the supplementary Ingress must route it alongside the two HITL callbacks."
+  }
+}
+
+run "the_supplementary_ingress_excludes_mcp_at_chart_1_16_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.16.0"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "At chart 1.16.0 the chart's own webhook Ingress already routes /mcp, so the supplementary Ingress must route only the two HITL callbacks, not /mcp again."
+  }
+}
+
+run "the_supplementary_ingress_also_covers_mcp_on_a_1_16_0_prerelease" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.16.0-rc.1"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/mcp,/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "A 1.16.0 prerelease cannot be verified against the chart's /mcp fix, so the supplementary Ingress must still cover /mcp, same as a pre-1.16.0 chart."
+  }
+}
+
 run "no_supplementary_ingress_when_the_caller_owns_routing" {
   command = plan
 
