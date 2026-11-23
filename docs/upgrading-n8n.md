@@ -191,10 +191,9 @@ with "already exists" instead.
 Helm diff. `maxUnavailable` rather than `minAvailable`, so a one-replica
 Deployment can still be evicted whole: at the default
 `n8n_worker_keda_min_replicas = 1` the worker budget protects nothing until
-KEDA (or the CPU HPA) runs two or more workers. `n8n_worker_pools`
-Deployments (`app.kubernetes.io/component: worker-group`) are not covered.
-Voluntary-disruption guard only: a node can still be force-removed after a
-drain timeout without honoring either budget.
+KEDA (or the CPU HPA) runs two or more workers. Voluntary-disruption guard
+only: a node can still be force-removed after a drain timeout without
+honoring either budget.
 
 ## Before bumping
 

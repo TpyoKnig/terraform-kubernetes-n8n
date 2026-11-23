@@ -382,8 +382,9 @@ resource "helm_release" "n8n" {
 # when main runs more than one replica (n8n-io/n8n-hosting#228), which this
 # module never does (see "Main pod availability" above). The webhook
 # processor and the default worker get theirs here instead, selecting the
-# labels the chart puts on those Deployments' pods (verified against
-# `helm template` of chart 1.17.0; see tests/scripts/check-n8n-chart.sh).
+# labels the chart puts on those Deployments' pods (checked by hand against
+# `helm template` of chart 1.17.0; tests/scripts/check-n8n-chart.sh does not
+# assert these selectors).
 #
 # maxUnavailable = 1, not minAvailable: minAvailable = 1 on a one-replica
 # Deployment (the default worker floor, n8n_worker_keda_min_replicas = 1)

@@ -7810,7 +7810,7 @@ run "an_allocator_annotation_silences_the_lan_expose_warning" {
 # one replica, which this module never does. These two are module-owned. The
 # selectors must match the labels the chart puts on the pods or the budget
 # guards nothing, and mocks cannot catch a selector typo, so pin them (checked
-# against helm template of chart 1.17.0; see tests/scripts/check-n8n-chart.sh).
+# against helm template of chart 1.17.0 by hand; tests/scripts/check-n8n-chart.sh does not check these selectors).
 run "webhook_and_worker_pdbs_default_to_max_unavailable_one" {
   command = plan
 

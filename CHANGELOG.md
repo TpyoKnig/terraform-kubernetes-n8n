@@ -27,7 +27,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   voluntary eviction and stalls drains. At the default
   `n8n_worker_keda_min_replicas = 1` the worker budget therefore protects
   nothing until KEDA (or the CPU HPA) runs two or more workers.
-  `n8n_worker_pools` Deployments are not covered. Existing deployments gain
+  Existing deployments gain
   both budgets on the next apply (two new resources, no Helm diff). Set
   either to `false` to manage your own. See
   [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#new-poddisruptionbudgets-for-the-webhook-processor-and-worker)
