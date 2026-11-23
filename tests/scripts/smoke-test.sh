@@ -774,16 +774,17 @@ fi
 
 # ── Ingress routing ───────────────────────────────────────────────────────────
 # n8n runs here with disableProductionWebhooksOnMainProcess = true, which
-# disables five endpoint families on the main pods. Every one of them must be
-# routed to the webhook processors or it returns 404 in production: waiting
-# webhooks never resume, Form Trigger nodes break, MCP server triggers are
-# unreachable. Checking the Ingress object directly (rather than curling the
-# paths) keeps this deterministic: it needs no registered workflow, and it
-# distinguishes "wrong backend" from "no workflow with that path".
+# disables the webhook endpoint families on the main pods. Every one of them
+# must be routed to the webhook processors or it returns 404 in production:
+# waiting webhooks never resume, Form Trigger nodes break, MCP server triggers
+# are unreachable, and Slack/Telegram human-in-the-loop clicks go nowhere.
+# Checking the Ingress object directly (rather than curling the paths) keeps
+# this deterministic: it needs no registered workflow, and it distinguishes
+# "wrong backend" from "no workflow with that path".
 
 header "Ingress Routing"
 
-WEBHOOK_PREFIXES=(/webhook /webhook-waiting /form /form-waiting /mcp)
+WEBHOOK_PREFIXES=(/webhook /webhook-waiting /form /form-waiting /mcp /webhook-waiting-slack /webhook-waiting-telegram)
 WEBHOOK_SVC="n8n-webhook-processor"
 
 # The chart renders its own Ingresses (n8n-main and n8n-webhook-processor) and

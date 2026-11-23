@@ -1885,16 +1885,6 @@ variable "db_postgresdb_ssl_ca_pem" {
     error_message = "db_postgresdb_ssl_ca_pem must be null or a PEM-encoded CA bundle (containing -----BEGIN CERTIFICATE----- / -----END CERTIFICATE----- delimiters)."
   }
 
-  # PEM is ASCII (RFC 7468), and the size validation below counts characters
-  # while Linux limits bytes. The framing regex above does not stop non-ASCII
-  # text between the delimiters, so without this a bundle with multibyte
-  # characters could pass the size check and still exceed the environment
-  # string limit.
-  validation {
-    condition     = var.db_postgresdb_ssl_ca_pem == null ? true : can(regex("^[[:ascii:]]*$", var.db_postgresdb_ssl_ca_pem))
-    error_message = "db_postgresdb_ssl_ca_pem must contain only ASCII text. A PEM-encoded CA bundle is ASCII; check that the file was not altered or saved with a non-ASCII encoding."
-  }
-
   # The chart passes database.ssl.ca to every n8n container as the
   # environment variable DB_POSTGRESDB_SSL_CA (chart 1.16.0,
   # templates/_configmap-env.tpl). Linux caps a single environment string,
@@ -1902,14 +1892,32 @@ variable "db_postgresdb_ssl_ca_pem" {
   # is 131072 bytes with 4 KiB pages. Above that the container fails to start
   # with "argument list too long". 131072 minus "DB_POSTGRESDB_SSL_CA=" (21)
   # minus the NUL leaves 131050, the boundary measured on the AWS sibling.
-  # length() counts characters, not bytes; the ASCII validation above makes
-  # the two equal. Measures the trimmed value, which is what reaches the
-  # chart (local.postgres_ssl_ca_values). Not gated on db_postgresdb_ssl_enabled
+  # Larger pages only raise the kernel limit, so this never accepts a value
+  # that fails to start. On a node with larger pages it can reject a value
+  # that would work there.
+  #
+  # The limit is in bytes, and length() counts grapheme clusters: a multibyte
+  # character counts once, and so does a CRLF pair, so length() under-counts
+  # a bundle saved with Windows line endings. base64encode() encodes the
+  # string's UTF-8 bytes, so its length (always a multiple of 4) / 4 * 3,
+  # minus the "=" padding, is the exact byte count. It is written out in the
+  # condition and again in the message because a local derived from this
+  # variable would form a cycle with its own validation.
+  #
+  # Together with the framing rule above, this is all the module checks. It
+  # does not restrict the characters inside the bundle and does not parse the
+  # certificates; n8n does that when it connects.
+  #
+  # Measures the trimmed value, which is what reaches the chart
+  # (local.postgres_ssl_ca_values). Not gated on db_postgresdb_ssl_enabled
   # or db_postgresdb_ssl_reject_unauthorized: a bundle this large can never
   # work, so it fails now rather than in the apply that turns verification on.
   validation {
-    condition     = var.db_postgresdb_ssl_ca_pem == null ? true : length(trimspace(var.db_postgresdb_ssl_ca_pem)) <= 131050
-    error_message = "db_postgresdb_ssl_ca_pem is ${var.db_postgresdb_ssl_ca_pem == null ? 0 : length(trimspace(var.db_postgresdb_ssl_ca_pem))} bytes after trimming, but may be at most 131050: the chart passes it to each n8n container as an environment variable, and Linux refuses to start a container with a larger one."
+    condition = var.db_postgresdb_ssl_ca_pem == null ? true : (
+      length(base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))) / 4 * 3 -
+      length(regex("=*$", base64encode(trimspace(var.db_postgresdb_ssl_ca_pem)))) <= 131050
+    )
+    error_message = "db_postgresdb_ssl_ca_pem is ${var.db_postgresdb_ssl_ca_pem == null ? 0 : length(base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))) / 4 * 3 - length(regex("=*$", base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))))} bytes in UTF-8 after trimming (CRLF line endings count two bytes each), but may be at most 131050: the chart passes it to each n8n container as an environment variable, and Linux refuses to start a container with a larger one."
   }
 }
 

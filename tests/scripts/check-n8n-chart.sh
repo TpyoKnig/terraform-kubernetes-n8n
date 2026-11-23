@@ -254,16 +254,23 @@ else
   fail "expected chart $chart_version to render N8N_WEBHOOK_URL only; this module's reserved-name list and split-ingress extraEnv injection assume that rename"
 fi
 
-# ── /mcp routing: chart 1.16.0 added /mcp/ to the chart's own webhook
-# Ingress, which is why kubernetes_ingress_v1.n8n_mcp was removed from
-# n8n.tf. If a future chart version drops it again, this is the canary.
+# ── Webhook routing: the chart's own webhook Ingress routes the prefixes in
+# locals.tf n8n_chart_routed_webhook_prefixes (/mcp/ since 1.16.0), and
+# kubernetes_ingress_v1.n8n_webhook_supplementary routes the rest, today the
+# Slack and Telegram HITL callbacks. Both directions matter: a dropped prefix
+# goes unrouted, and a newly chart-routed one is routed twice. Compared
+# against local.n8n_chart_routed_webhook_prefixes itself, not a literal
+# copy of it, so a chart bump that moves the chart's routed set cannot leave
+# this check passing against a stale expectation.
 render_values "$tmp/values-ingress.json" -var=create_ingress=true -var=k8s_ingress_cluster_issuer=letsencrypt-prod
 helm template n8n "$chart_dir" -f "$tmp/values-ingress.json" --set secretRefs.existingSecret=test-core \
   --show-only templates/ingress-webhook.yaml >"$tmp/ingress-webhook.yaml"
-if grep -q '/mcp' "$tmp/ingress-webhook.yaml"; then
-  pass "chart $chart_version's own webhook Ingress still routes /mcp"
+chart_routed=$(grep -oE 'path: [^[:space:]]+' "$tmp/ingress-webhook.yaml" | sed 's/^path: //; s#/$##' | LC_ALL=C sort -u | tr '\n' ' ')
+expected_chart_routed=$(console <<<'join(" ", sort(local.n8n_chart_routed_webhook_prefixes))' | tr -d '"')
+if [[ "${chart_routed% }" == "$expected_chart_routed" ]]; then
+  pass "chart $chart_version's own webhook Ingress routes exactly local.n8n_chart_routed_webhook_prefixes"
 else
-  fail "chart $chart_version's webhook Ingress no longer routes /mcp; n8n.tf needs its supplementary Ingress back for this prefix (see locals.tf n8n_webhook_path_prefixes and its history comment)"
+  fail "chart $chart_version's webhook Ingress routes [${chart_routed% }], not local.n8n_chart_routed_webhook_prefixes [$expected_chart_routed]; update locals.tf n8n_chart_routed_webhook_prefixes so the supplementary Ingress covers the difference"
 fi
 
 # ── Extra CA bundle (n8n_extra_ca_pem): the chart's extraVolumes/

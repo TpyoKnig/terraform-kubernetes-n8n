@@ -36,6 +36,38 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#new-poddisruptionbudgets-for-the-webhook-processor-and-worker)
   for the upgrade check against budgets you may already run.
 
+### Fixed
+
+- Route n8n's Slack and Telegram human-in-the-loop callbacks,
+  `/webhook-waiting-slack` and `/webhook-waiting-telegram`, to the webhook
+  processors (ported from n8n-io/terraform-aws-n8n#212). They are sibling
+  paths of `/webhook-waiting`, not sub-paths, so neither the chart's webhook
+  `Ingress` nor a `Prefix` rule for `/webhook-waiting` matched them. The
+  clicks fell through to `/`, reached the main pods, which run with
+  production webhooks disabled, and the waiting execution never resumed.
+  `n8n_webhook_path_prefixes` now lists both, so the split-ingress examples
+  and any `create_ingress = false` caller iterating it pick them up, and the
+  module renders `kubernetes_ingress_v1.n8n_webhook_supplementary`
+  (`n8n-webhook-processor-supplementary`) for the prefixes the chart's own
+  webhook `Ingress` leaves out. The next `apply` after upgrading creates that
+  new `Ingress`; its merging with the chart's own webhook `Ingress` by host is
+  untested on a live cluster, and assumes an ingress controller that merges
+  separate `Ingress` objects per host, as ingress-nginx (the module's
+  default) does. `tests/scripts/check-n8n-chart.sh` now fails when the
+  chart's routed set changes in either direction.
+- **`db_postgresdb_ssl_ca_pem` now measures its 131,050-byte limit in UTF-8
+  bytes after trimming, not characters** (mirrors n8n-io/terraform-aws-n8n#215).
+  Terraform's `length()` counts a CRLF line break once, so a bundle saved
+  with Windows line endings could pass the plan and then fail every main,
+  worker, and webhook-processor container with `argument list too long`.
+  CRLF line endings now count two bytes per line break. The ASCII-only rule
+  that stood in for a byte count is removed: the module now checks only the
+  PEM framing and the size, so non-ASCII text inside the bundle, such as a
+  label line between certificates, is accepted. It does not parse the
+  certificates; n8n does that when it connects. Upgrade note: a CRLF bundle
+  near the limit that used to plan now fails the plan. Convert it to LF line
+  endings, trim it, or remove it.
+
 ## [0.4.1], The namespace rename
 
 Finishes a change `0.4.0` described but did not contain: the namespace rename

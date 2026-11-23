@@ -6,7 +6,9 @@ Two hostnames behind a Cloudflare Tunnel: the editor on one, production webhooks
                        n8n.example.com  ─┐   editor UI, REST API, /webhook-test
                                           │   (put a policy in front of this one)
                  n8n-hooks.example.com  ─┤   /webhook, /webhook-waiting, /form,
-                                          │   /form-waiting, /mcp
+                                          │   /form-waiting, /mcp,
+                                          │   /webhook-waiting-slack,
+                                          │   /webhook-waiting-telegram
                                    Cloudflare edge
                                           │
                                    cloudflared

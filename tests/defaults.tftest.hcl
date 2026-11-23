@@ -2583,28 +2583,119 @@ run "the_same_env_name_in_both_inputs_is_rejected" {
   expect_failures = [var.n8n_extra_env_from_secret]
 }
 
-# Chart 1.16.0 added /mcp/ to the chart's own webhook Ingress
-# (templates/ingress-webhook.yaml), closing the gap that used to leave it
-# falling through to the main pods: before that, a webhook that looked
-# delivered and never ran, because the main pods answered 200 with the
-# editor's HTML and registered no handler for it. Confirmed by diffing
-# ingress-webhook.yaml between chart 1.10.0 and 1.16.0.
-#
-# The module used to carry a derived "unrouted" subtraction and a
-# supplementary kubernetes_ingress_v1.n8n_mcp resource to cover /mcp while
-# the chart did not. Both were removed rather than left dormant: an
-# unconditionally empty dynamic "path" block fails the Kubernetes provider's
-# schema validation (an Ingress rule needs at least one path) even at
-# count = 0, so "leave it in case the chart regresses" was not available as
-# a shape once every prefix the module knows about is chart-routed.
-run "the_chart_routes_every_webhook_prefix_itself" {
+# The chart's own webhook Ingress (templates/ingress-webhook.yaml) routes
+# /webhook, /webhook-waiting, /form, /form-waiting and, since 1.16.0, /mcp.
+# It has never routed n8n's Slack and Telegram human-in-the-loop callbacks,
+# /webhook-waiting-slack and /webhook-waiting-telegram. Those are sibling
+# paths rather than sub-paths of /webhook-waiting, so a Prefix rule on the
+# latter does not match them: without the supplementary Ingress the clicks
+# fell through to "/" and the main pods, which run with production webhooks
+# disabled, answered 404.
+run "the_supplementary_ingress_routes_what_the_chart_does_not" {
   command = plan
 
+  variables {
+    n8n_additional_domains = ["n8n-alt.example.com"]
+  }
+
   assert {
-    condition = length(setsubtract(local.n8n_webhook_path_prefixes, [
-      "/webhook", "/webhook-waiting", "/form", "/form-waiting", "/mcp",
-    ])) == 0
-    error_message = "Every prefix n8n_webhook_path_prefixes advertises must be one this chart version's own webhook Ingress routes. If the chart ever drops one, this module needs its supplementary Ingress back, not a passing test."
+    condition     = alltrue([for p in ["/webhook-waiting-slack", "/webhook-waiting-telegram"] : contains(output.n8n_webhook_path_prefixes, p)])
+    error_message = "n8n_webhook_path_prefixes must advertise the Slack and Telegram HITL callbacks, or a create_ingress = false caller routes them to the main pods."
+  }
+
+  assert {
+    condition     = length(kubernetes_ingress_v1.n8n_webhook_supplementary) == 1
+    error_message = "Expected the supplementary webhook Ingress while the chart leaves prefixes unrouted."
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "Every host on the supplementary Ingress must route exactly the two HITL callback paths, no trailing slash."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule : [
+        for p in rule.http[0].path : p.backend[0].service[0].name == "n8n-webhook-processor" && p.path_type == "Prefix"
+      ]
+    ]))
+    error_message = "The HITL callbacks must reach the webhook processors with pathType Prefix."
+  }
+
+  assert {
+    condition     = join(",", sort([for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule : rule.host])) == join(",", sort(local.k8s_ingress_hosts))
+    error_message = "The supplementary Ingress must cover every host the chart's Ingresses route, additional domains included."
+  }
+}
+
+# The /mcp routing gate (locals.tf n8n_chart_routes_mcp) is chart-version
+# dependent: chart 1.16.0 added /mcp/ to its own webhook Ingress, and
+# n8n_chart_version accepts any older pin too. These three runs exercise the
+# boundary cubic flagged: just below 1.16.0, exactly at it, and a prerelease
+# of it, which the local treats as not-yet-verified and so, like the stable
+# pre-1.16.0 case, leaves /mcp to the supplementary Ingress rather than
+# risking it going unrouted.
+run "the_supplementary_ingress_also_covers_mcp_below_chart_1_16_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.15.9"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/mcp,/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "Below chart 1.16.0 the chart's own webhook Ingress does not route /mcp, so the supplementary Ingress must route it alongside the two HITL callbacks."
+  }
+}
+
+run "the_supplementary_ingress_excludes_mcp_at_chart_1_16_0" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.16.0"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "At chart 1.16.0 the chart's own webhook Ingress already routes /mcp, so the supplementary Ingress must route only the two HITL callbacks, not /mcp again."
+  }
+}
+
+run "the_supplementary_ingress_also_covers_mcp_on_a_1_16_0_prerelease" {
+  command = plan
+
+  variables {
+    n8n_chart_version = "1.16.0-rc.1"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in kubernetes_ingress_v1.n8n_webhook_supplementary[0].spec[0].rule :
+      join(",", sort([for p in rule.http[0].path : p.path])) == "/mcp,/webhook-waiting-slack,/webhook-waiting-telegram"
+    ])
+    error_message = "A 1.16.0 prerelease cannot be verified against the chart's /mcp fix, so the supplementary Ingress must still cover /mcp, same as a pre-1.16.0 chart."
+  }
+}
+
+run "no_supplementary_ingress_when_the_caller_owns_routing" {
+  command = plan
+
+  variables {
+    create_ingress = false
+  }
+
+  assert {
+    condition     = length(kubernetes_ingress_v1.n8n_webhook_supplementary) == 0
+    error_message = "create_ingress = false must leave every Ingress to the caller."
   }
 }
 
@@ -4417,8 +4508,8 @@ run "disabling_tls_still_leaves_the_chart_key_unset" {
 }
 
 # A fixed, framing-valid test CA. Not a real issuing authority; only the PEM
-# delimiters and ASCII content are exercised by the variable's own validation
-# and by these plan-time assertions.
+# delimiters are exercised by the variable's own validation and by these
+# plan-time assertions.
 run "a_ca_bundle_reaches_the_chart_without_duplicating_ssl_enabled" {
   command = plan
 
@@ -4611,16 +4702,6 @@ run "ca_pem_rejects_text_without_pem_framing" {
   expect_failures = [var.db_postgresdb_ssl_ca_pem]
 }
 
-run "ca_pem_rejects_non_ascii_content" {
-  command = plan
-
-  variables {
-    db_postgresdb_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8Añ\n-----END CERTIFICATE-----"
-  }
-
-  expect_failures = [var.db_postgresdb_ssl_ca_pem]
-}
-
 # 128 * 1024 "A"s, well past what either bundle below needs; substr trims to
 # the exact body length each test wants. Built from two nested range() calls,
 # each under range()'s own 1024-value cap, rather than one call for the whole
@@ -4645,8 +4726,50 @@ run "ca_pem_accepts_a_bundle_at_exactly_the_size_limit" {
   }
 
   assert {
-    condition     = length(trimspace(var.db_postgresdb_ssl_ca_pem)) == 131050
-    error_message = "Test setup error: the generated bundle must be exactly 131050 trimmed characters to exercise the boundary."
+    condition = (
+      length(base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))) / 4 * 3 -
+      length(regex("=*$", base64encode(trimspace(var.db_postgresdb_ssl_ca_pem)))) == 131050
+    )
+    error_message = "Test setup error: the generated bundle must be exactly 131050 bytes to exercise the boundary."
+  }
+}
+
+# length() counts grapheme clusters, so a CRLF pair counts once: a bundle
+# saved with Windows line endings can be exactly 131050 characters (the old
+# character-based limit) while actually 131051 UTF-8 bytes. The byte-based
+# rule must reject it (mirrors n8n-io/terraform-aws-n8n#215).
+run "ca_pem_rejects_a_windows_line_ending_bundle_over_the_byte_limit" {
+  command = plan
+
+  # Framing "-----BEGIN CERTIFICATE-----\r\n" + "\n-----END CERTIFICATE-----"
+  # is 55 UTF-8 bytes (length() reports 54: it counts the CRLF pair as one
+  # grapheme cluster). 131051 - 55 = 130996 bytes of body makes the whole
+  # value 131051 bytes but only 131050 characters, the same value the old
+  # character-based rule would have accepted.
+  variables {
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\r\n${substr(join("", [for i in range(128) : join("", [for j in range(1024) : "A"])]), 0, 130996)}\n-----END CERTIFICATE-----"
+  }
+
+  expect_failures = [var.db_postgresdb_ssl_ca_pem]
+}
+
+# One byte under the limit above: the same CRLF framing, trimmed to exactly
+# 131050 UTF-8 bytes, must still be accepted.
+run "ca_pem_accepts_a_windows_line_ending_bundle_at_the_byte_limit" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\r\n${substr(join("", [for i in range(128) : join("", [for j in range(1024) : "A"])]), 0, 130995)}\n-----END CERTIFICATE-----"
+  }
+
+  assert {
+    condition = (
+      length(base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))) / 4 * 3 -
+      length(regex("=*$", base64encode(trimspace(var.db_postgresdb_ssl_ca_pem)))) == 131050
+    )
+    error_message = "Test setup error: the generated bundle must be exactly 131050 bytes to exercise the byte boundary with CRLF framing."
   }
 }
 
