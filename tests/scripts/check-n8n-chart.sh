@@ -265,7 +265,7 @@ fi
 render_values "$tmp/values-ingress.json" -var=create_ingress=true -var=k8s_ingress_cluster_issuer=letsencrypt-prod
 helm template n8n "$chart_dir" -f "$tmp/values-ingress.json" --set secretRefs.existingSecret=test-core \
   --show-only templates/ingress-webhook.yaml >"$tmp/ingress-webhook.yaml"
-chart_routed=$(grep -oE 'path: /[a-z-]+' "$tmp/ingress-webhook.yaml" | sed 's/^path: //' | sort -u | tr '\n' ' ')
+chart_routed=$(grep -oE 'path: [^[:space:]]+' "$tmp/ingress-webhook.yaml" | sed 's/^path: //; s#/$##' | LC_ALL=C sort -u | tr '\n' ' ')
 expected_chart_routed=$(console <<<'join(" ", sort(local.n8n_chart_routed_webhook_prefixes))' | tr -d '"')
 if [[ "${chart_routed% }" == "$expected_chart_routed" ]]; then
   pass "chart $chart_version's own webhook Ingress routes exactly local.n8n_chart_routed_webhook_prefixes"

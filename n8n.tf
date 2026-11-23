@@ -395,6 +395,20 @@ resource "helm_release" "n8n" {
 # paths unrouted, falling through to the chart's own webhook Ingress or the
 # editor's catch-all. Verify merge-by-host behavior before using a non-nginx
 # controller with create_ingress = true.
+#
+# Reads the module's own typed Ingress inputs (k8s_ingress_class_name,
+# k8s_ingress_hosts, k8s_ingress_annotations, k8s_ingress_tls_secret), the
+# same ones the chart's webhook Ingress is built from (k8s_webhook_ingress_block
+# below). n8n_extra_helm_values is documented as a raw overlay for anything
+# without a typed input (see that variable), and a caller using it to set
+# ingress.className, ingress.hosts, ingress.tls or ingress.annotations
+# directly on the chart's Ingress bypasses those typed inputs on that side
+# only: this Ingress would not follow the override, and the two could
+# diverge. The one override this module does track through n8n_extra_helm_values
+# is ingress.enabled (local.n8n_ingress_rendered above, which also gates this
+# resource); the rest fall under the same "escape hatch, caller's to use
+# correctly" contract as every other n8n_extra_helm_values override that
+# duplicates a typed input.
 resource "kubernetes_ingress_v1" "n8n_webhook_supplementary" {
   count = var.create_ingress && local.n8n_ingress_rendered && length(local.n8n_unrouted_webhook_prefixes) > 0 ? 1 : 0
 

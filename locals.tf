@@ -49,23 +49,42 @@ locals {
   ]
 
   # The prefixes the chart's own webhook Ingress
-  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.17.0. It added
-  # /mcp/ in 1.16.0 and has never routed the two HITL callbacks. Whatever it
-  # leaves out, kubernetes_ingress_v1.n8n_webhook_supplementary (n8n.tf)
-  # routes. Re-check this list on every chart bump:
+  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.17.0. It has
+  # never routed the two HITL callbacks, so those always land in
+  # n8n_unrouted_webhook_prefixes below. /mcp/ is conditional: chart 1.16.0
+  # added it (n8n_chart_routes_mcp), and n8n_chart_version accepts any older
+  # version too, where the chart hardcoded only the first four and left /mcp
+  # unrouted (confirmed live against chart 1.10.0, see
+  # k8s_webhook_ingress_block's comment below). Whatever this list leaves
+  # out, kubernetes_ingress_v1.n8n_webhook_supplementary (n8n.tf) routes.
+  # Re-check the fixed four on every chart bump:
   # tests/scripts/check-n8n-chart.sh fails when the template disagrees.
-  n8n_chart_routed_webhook_prefixes = [
-    "/webhook",
-    "/webhook-waiting",
-    "/form",
-    "/form-waiting",
-    "/mcp",
-  ]
+  n8n_chart_routed_webhook_prefixes = concat(
+    ["/webhook", "/webhook-waiting", "/form", "/form-waiting"],
+    local.n8n_chart_routes_mcp ? ["/mcp"] : [],
+  )
+
+  # Whether the pinned chart's webhook Ingress routes /mcp/ itself (added in
+  # 1.16.0; see k8s_webhook_ingress_block's comment). Same prerelease
+  # handling as n8n_chart_renders_postgres_ssl_enabled below, and the same
+  # reasoning for which way to fail: a prerelease cannot be verified against
+  # this table, so it is treated as chart-side-unrouted (false), which makes
+  # the supplementary Ingress route /mcp too. Routing it twice is harmless;
+  # a chart that already routes it while this local says it does not would
+  # also just be a harmless duplicate rule, but a chart that does not route
+  # it while this local says it does would leave MCP Server Trigger URLs
+  # unrouted, the failure this module exists to avoid.
+  n8n_chart_routes_mcp = strcontains(split("+", var.n8n_chart_version)[0], "-") ? false : (
+    tonumber(local.n8n_chart_version_parts[0]) > 1 ? true : (
+      tonumber(local.n8n_chart_version_parts[0]) < 1 ? false : tonumber(local.n8n_chart_version_parts[1]) >= 16
+    )
+  )
 
   n8n_unrouted_webhook_prefixes = sort(setsubtract(
     local.n8n_webhook_path_prefixes,
     local.n8n_chart_routed_webhook_prefixes,
   ))
+
 
   # -- Redis connection coordinates --------------------------------------------
   # What n8n and KEDA connect to. The in-cluster Valkey path resolves through
