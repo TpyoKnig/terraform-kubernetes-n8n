@@ -207,6 +207,18 @@ tasks:
     cmds:
       - ./tests/scripts/check-n8n-chart.sh
 
+  webhook-routes:
+    desc: >-
+      Check n8n_webhook_path_prefixes against the routes n8n registers at the
+      pinned n8n_image_tag, after the script's own offline test. The offline
+      test alone runs in CI (the webhook-routes job); the live check reaches
+      raw.githubusercontent.com and is not CI-gated, the same as chart-check
+      and chart-coverage above. Requires curl. No terraform, no helm, no
+      cluster, no credentials.
+    cmds:
+      - ./tests/scripts/test-check-webhook-routes.sh
+      - ./tests/scripts/check-webhook-routes.sh
+
   version-drift:
     desc: >-
       Report every pinned version (Terraform providers, CI toolchain, the n8n
@@ -293,19 +305,23 @@ tasks:
   ci:
     desc: >-
       Run the full local loop (fmt, validate, test, lint, banners, naming,
-      inputs-reach-workload, terraform-floor, example-parity, docs,
-      markdown). Mirrors every CI job except checkov, test-opentofu and
-      test-floor: checkov is a hard-fail gate in CI but is left out here
-      because it needs a pinned checkov install that the other tasks do
-      not (run `task checkov` separately once you have it); test-opentofu
-      is covered by the separate `task opentofu` instead. test-floor runs
-      the whole suite a second time against TF_FLOOR_VERSION, a second
-      Terraform binary this task does not install; reproduce it locally by
-      pointing `terraform` on PATH at the floor binary and re-running
-      `task test`, or trust CI's own test-floor job. naming,
-      inputs-reach-workload and example-parity do have their own CI jobs,
-      run here too for one local command. Only banners and markdown are
-      local-only, not CI-gated at all.
+      inputs-reach-workload, terraform-floor, example-parity, the
+      webhook-routes unit test, docs, markdown). Mirrors every CI job except
+      checkov, test-opentofu and test-floor: checkov is a hard-fail gate in
+      CI but is left out here because it needs a pinned checkov install that
+      the other tasks do not (run `task checkov` separately once you have
+      it); test-opentofu is covered by the separate `task opentofu` instead.
+      test-floor runs the whole suite a second time against
+      TF_FLOOR_VERSION, a second Terraform binary this task does not
+      install; reproduce it locally by pointing `terraform` on PATH at the
+      floor binary and re-running `task test`, or trust CI's own test-floor
+      job. naming, inputs-reach-workload and example-parity do have their
+      own CI jobs, run here too for one local command. The webhook-routes CI
+      job only runs check-webhook-routes.sh's offline unit test (see that
+      task's own desc for why the live check is excluded), so this task
+      calls the test script directly rather than `task webhook-routes`,
+      which would also run the live, network-reaching check. Only banners
+      and markdown are local-only, not CI-gated at all.
     cmds:
       - task: fmt
       - task: validate
@@ -316,5 +332,6 @@ tasks:
       - task: inputs-reach-workload
       - task: terraform-floor
       - task: example-parity
+      - ./tests/scripts/test-check-webhook-routes.sh
       - task: docs
       - task: markdown

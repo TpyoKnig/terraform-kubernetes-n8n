@@ -173,8 +173,9 @@ Behavior that changed on this bump, verified by rendering this module's values t
 ## Bumping
 
 1. Set `n8n_image_tag`, any required `n8n_chart_version`, and, when using a custom application tag, the matching `n8n_task_runner_image_tag`.
-2. `terraform plan` and review the diff. `atomic = true` rolls back Kubernetes resources after a failed rollout, not PostgreSQL migrations.
-3. `terraform apply`. Watch the main and worker pods through the rollout:
+2. Run `tests/scripts/check-webhook-routes.sh` (`task webhook-routes`) against the new value before applying: it downloads `n8n_image_tag`'s `if (this.webhooksEnabled)` block and compares it with `n8n_webhook_path_prefixes` in `locals.tf`, both ways. It is not CI-gated, because it reaches `raw.githubusercontent.com`, so this is the one place it actually runs. If it reports a route no entry covers, add the entry in the same pull request; see [docs/versioning.md](./versioning.md#bump-tiers).
+3. `terraform plan` and review the diff. `atomic = true` rolls back Kubernetes resources after a failed rollout, not PostgreSQL migrations.
+4. `terraform apply`. Watch the main and worker pods through the rollout:
 
    ```bash
    kubectl get pods -n <namespace> -l app.kubernetes.io/component=main -w
@@ -184,7 +185,7 @@ Behavior that changed on this bump, verified by rendering this module's values t
    kubectl get pods -n <namespace> -l app.kubernetes.io/component=worker -w
    ```
 
-4. Confirm the version actually running matches what you set, on a main pod
+5. Confirm the version actually running matches what you set, on a main pod
    and on every worker pod:
 
    ```bash

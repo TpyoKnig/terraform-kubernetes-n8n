@@ -31,6 +31,11 @@ locals {
   # answers 200 with the editor HTML rather than a webhook response. The list
   # mirrors the routes n8n registers under `if (this.webhooksEnabled)` in
   # packages/cli/src/abstract-server.ts.
+  # tests/scripts/check-webhook-routes.sh (`task webhook-routes`) compares
+  # this list with that block at the version n8n_image_tag pins, and fails
+  # when a route has no entry or an entry covers no route. It is not wired
+  # into CI (it reaches raw.githubusercontent.com), so re-run it by hand
+  # whenever n8n_image_tag moves; see docs/versioning.md.
   #
   # /webhook-waiting-slack and /webhook-waiting-telegram are the Slack and
   # Telegram human-in-the-loop callbacks. They are sibling paths, not

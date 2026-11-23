@@ -131,6 +131,28 @@ jobs:
       - name: examples/homelab-* stay in step with examples/homelab
         run: ./scripts/check-example-parity.sh
 
+  # local.n8n_webhook_path_prefixes is a hand-written copy of the routes n8n
+  # turns off on the main pods, and it has been wrong before (the Slack and
+  # Telegram callback paths, #213). tests/scripts/check-webhook-routes.sh
+  # compares it with n8n's source at the version n8n_image_tag pins, but it
+  # is not run here: it downloads three files from raw.githubusercontent.com,
+  # and a flaky download would fail every PR for a reason unrelated to the
+  # PR's own content, the same reason check-n8n-chart.sh and
+  # check-helm-chart-coverage.sh (which need Helm's own registry pulls) are
+  # task-only rather than CI-gated in this module. This job runs only that
+  # script's own offline, no-network unit test, so a change to the parser
+  # itself is still caught on every pull request; re-run
+  # `task webhook-routes` by hand whenever n8n_image_tag moves (see
+  # docs/versioning.md).
+  webhook-routes:
+    name: webhook route checker unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: unit-test check-webhook-routes.sh offline
+        run: tests/scripts/test-check-webhook-routes.sh
+
   docs:
     name: terraform-docs (README in sync)
     runs-on: ubuntu-latest
