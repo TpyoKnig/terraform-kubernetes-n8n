@@ -17,7 +17,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   than one replica (n8n-io/n8n-hosting#228), which this module never does, so
   without these a voluntary node drain (a Talos node upgrade,
   cluster-autoscaler scale-down, `kubectl drain`) could stop every webhook
-  processor, or the only worker, in the same second. Port of
+  processor, or the only worker, in the same second. With
+  `n8n_webhook_hpa_min_replicas = 1` the webhook budget likewise permits
+  evicting the only processor, so it protects nothing until that floor is
+  two or more; the default of 2 already clears it. Port of
   [terraform-aws-n8n#205](https://github.com/n8n-io/terraform-aws-n8n/pull/205)
   (and [terraform-azurerm-n8n#92](https://github.com/n8n-io/terraform-azurerm-n8n/pull/92)),
   minus the AWS Load Balancer Controller part, which this module has no
