@@ -312,7 +312,11 @@ routes="$(sort -u <<<"$routes" | grep . || true)"
 
 # ── Compare ───────────────────────────────────────────────────────────────────
 # covers <entry> <route>: Kubernetes pathType Prefix, element-wise. A trailing
-# slash on the entry is ignored, as Kubernetes ignores it.
+# slash on the entry is ignored, as Kubernetes ignores it, and an entry of "/"
+# alone (the root Prefix) covers every route: "${1%/}" reduces it to "", and
+# the "$entry/"* pattern below is then the glob "/*", which bash matches
+# against any route (every route here starts with "/"). Verified with:
+#   entry="${1%/}"; [[ "/webhook" == "$entry/"* ]] with entry="" from input "/"
 covers() {
   local entry="${1%/}" route="$2"
   [[ "$route" == "$entry" || "$route" == "$entry/"* ]]

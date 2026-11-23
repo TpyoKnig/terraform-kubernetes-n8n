@@ -89,6 +89,11 @@ export abstract class StubServer {
         \`/\${this.endpointWebhookWaiting}\${SLACK_STUB_SUFFIX}\`,
         createWebhookHandlerFor(Container.get(SlackStub)),
       );
+
+      this.app.all(
+        \`/\${this.endpointWebhookWaiting}\${TELEGRAM_STUB_SUFFIX}\`,
+        createWebhookHandlerFor(Container.get(TelegramStub)),
+      );
       ${1:-}
     }
 
@@ -119,13 +124,14 @@ EOF
 write_constants() {
   cat >"$SRC/$CONSTANTS_PATH" <<'EOF'
 export const SLACK_STUB_SUFFIX = '-slack';
+export const TELEGRAM_STUB_SUFFIX = '-telegram';
 EOF
 }
 
 # write_locals <line>...: each argument becomes one line inside the list.
 write_locals() {
   if [ "$#" -eq 0 ]; then
-    set -- '"/webhook",' '"/webhook-waiting",' '"/webhook-waiting-slack",'
+    set -- '"/webhook",' '"/webhook-waiting",' '"/webhook-waiting-slack",' '"/webhook-waiting-telegram",'
   fi
   {
     echo 'locals {'
@@ -171,7 +177,7 @@ new_case match
 check_case "lists match" 0 "OK:"
 
 new_case retained
-write_locals '"/webhook",' '"/webhook-waiting",' '"/webhook-waiting-slack",' '"/legacy",'
+write_locals '"/webhook",' '"/webhook-waiting",' '"/webhook-waiting-slack",' '"/webhook-waiting-telegram",' '"/legacy",'
 RETAINED="/legacy"
 check_case "a stale entry named in RETAINED_PREFIXES is accepted and reported" 0 "  /legacy" line
 
