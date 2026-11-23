@@ -373,7 +373,7 @@ conventions](https://developer.hashicorp.com/terraform/language/modules/develop/
   | `Chart versions` | The `*_chart_version` pins, plus n8n image tag/repository/pull secrets, Helm timeout, timezone and logging |
   | `n8n resource requests and limits` | CPU/memory requests and limits, one set per pod role, plus the V8 heap ceiling |
   | `Execution settings` | Worker concurrency, execution timeouts, pruning, execution-data storage mode |
-  | `Graceful shutdown` | Termination grace period, prestop sleep |
+  | `Graceful shutdown` | Termination grace period, prestop sleep, and the webhook processor and worker PodDisruptionBudget toggles |
   | `Task runners` | Task runner sizing, lifecycle and the import allowlists |
   | `PostgreSQL` | `postgres_backend`, the CloudNativePG sizing inputs, and the external-database references |
   | `Redis / queue` | `redis_backend`, the Valkey sizing inputs, and the external-Redis references |

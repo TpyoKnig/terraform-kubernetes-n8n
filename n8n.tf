@@ -377,6 +377,73 @@ resource "helm_release" "n8n" {
   ]
 }
 
+# ── Pod disruption budgets ────────────────────────────────────────────────────
+# The chart (1.17.0, the default) renders a budget for main only, and only
+# when main runs more than one replica (n8n-io/n8n-hosting#228), which this
+# module never does (see "Main pod availability" above). The webhook
+# processor and the default worker get theirs here instead, selecting the
+# labels the chart puts on those Deployments' pods (checked by hand against
+# `helm template` of chart 1.17.0; tests/scripts/check-n8n-chart.sh does not
+# assert these selectors).
+#
+# maxUnavailable = 1, not minAvailable: minAvailable = 1 on a one-replica
+# Deployment (the default worker floor, n8n_worker_keda_min_replicas = 1)
+# blocks every voluntary eviction and stalls drains, the same trap
+# cnpg_pdb_enabled documents for a single-instance CloudNativePG cluster.
+# A maxUnavailable = 1 budget still lets a one-replica Deployment be evicted
+# whole, so the worker budget protects nothing until the worker runs two or
+# more replicas.
+#
+# The webhook processor Deployment always exists in this module (queue mode
+# is always on, so the chart's webhookProcessor.replicaCount renders
+# unconditionally); there is no toggle that removes it, so no extra gate is
+# needed beyond n8n_webhook_pdb_enabled itself.
+#
+# The selector references helm_release.n8n.name, which orders each budget
+# after the release on create and before it on destroy.
+resource "kubernetes_pod_disruption_budget_v1" "n8n_webhook" {
+  count = var.n8n_webhook_pdb_enabled ? 1 : 0
+
+  metadata {
+    name      = "n8n-webhook-processor"
+    namespace = local.namespace_name
+  }
+
+  spec {
+    max_unavailable = "1"
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/name"      = "n8n"
+        "app.kubernetes.io/component" = "webhook-processor"
+        "app.kubernetes.io/instance"  = helm_release.n8n.name
+      }
+    }
+  }
+}
+
+resource "kubernetes_pod_disruption_budget_v1" "n8n_worker" {
+  count = var.n8n_worker_pdb_enabled ? 1 : 0
+
+  metadata {
+    name      = "n8n-worker"
+    namespace = local.namespace_name
+  }
+
+  spec {
+    max_unavailable = "1"
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/name"      = "n8n"
+        "app.kubernetes.io/component" = "worker"
+        "app.kubernetes.io/instance"  = helm_release.n8n.name
+      }
+    }
+  }
+}
+
+
 # ── Supplementary webhook Ingress ─────────────────────────────────────────────
 # Routes the webhook prefixes the chart's own webhook Ingress does not
 # (local.n8n_unrouted_webhook_prefixes): today the Slack and Telegram

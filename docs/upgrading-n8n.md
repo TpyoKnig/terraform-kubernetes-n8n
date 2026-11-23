@@ -164,6 +164,37 @@ Behavior that changed on this bump, verified by rendering this module's values t
 - **`N8N_WEBHOOK_URL` replaces `WEBHOOK_URL`** as the chart-rendered env var name (n8n deprecated the old one as of n8n 2.35.0). Only relevant if you read it off a running pod directly; the `n8n_webhook_url` output and every workflow-facing behavior are unchanged.
 - **Worker readiness and liveness probes now check real health, not just process existence.** Chart 1.17.0 flips `redis.healthCheck.enabled`'s own default to `true` (n8n-io/n8n-hosting#233), which this module does not override, so the worker's readiness probe moves from an always-passing `pgrep -f 'n8n worker'` exec check to an `httpGet` probe against `/healthz/readiness` (gated on the worker's own DB and Redis connection), the liveness probe moves to `httpGet` `/healthz`, and a new startup probe (up to 300s, `failureThreshold: 30` at `periodSeconds: 10`) holds off liveness while database migrations run. **Effect on the next apply:** every worker pod rolls once as its probes and the new `QUEUE_HEALTH_CHECK_ACTIVE` env var change. A worker that was previously marked Ready the instant its process started now waits for its own DB/Redis connection first, which is the intended behavior but means a cold worker can take slightly longer to receive its first job after a rollout or scale-up.
 
+## New PodDisruptionBudgets for the webhook processor and worker
+
+`n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default `true`)
+now create `kubernetes_pod_disruption_budget_v1.n8n_webhook` and
+`kubernetes_pod_disruption_budget_v1.n8n_worker`, each with
+`maxUnavailable = 1`. The n8n chart renders a budget for the main pods only,
+and only when main runs more than one replica, which this module never does,
+so before this change a voluntary node drain (a Talos node upgrade,
+cluster-autoscaler scale-down, `kubectl drain`) could stop every webhook
+processor, or the only worker, in the same second.
+
+**Before upgrading**, run `kubectl get pdb -n <namespace> -o yaml` and
+compare each budget's `spec.selector` with the labels on your webhook
+processor and worker pods (`app.kubernetes.io/name: n8n`,
+`app.kubernetes.io/instance: n8n`, `app.kubernetes.io/component:
+webhook-processor` or `worker`). If a budget you already run selects them,
+set the matching `n8n_webhook_pdb_enabled` or `n8n_worker_pdb_enabled` to
+`false` before applying: once a second budget selects the same pod, the
+Eviction API rejects every eviction of it even if both budgets would allow a
+disruption, so drains and scale-downs stall or fail. A budget you own named
+`n8n-webhook-processor` or `n8n-worker` in the namespace makes the apply fail
+with "already exists" instead.
+
+**Effect on an existing deployment:** two new resources on the next apply, no
+Helm diff. `maxUnavailable` rather than `minAvailable`, so a one-replica
+Deployment can still be evicted whole: at the default
+`n8n_worker_keda_min_replicas = 1` the worker budget protects nothing until
+KEDA (or the CPU HPA) runs two or more workers. Voluntary-disruption guard
+only: a node can still be force-removed after a drain timeout without
+honoring either budget.
+
 ## Before bumping
 
 1. Read the breaking-changes doc for every major version you're crossing, not just the target: [n8n v2.0 breaking changes](https://docs.n8n.io/2-0-breaking-changes/), [n8n v3.0 breaking changes](https://docs.n8n.io/changelog/v30-breaking-changes) (scheduled October 2026). Jumping from, say, 1.x straight to a 3.x tag means both apply.
