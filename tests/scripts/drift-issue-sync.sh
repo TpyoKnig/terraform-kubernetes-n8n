@@ -37,6 +37,11 @@
 set -uo pipefail
 
 SUMMARY_RE='^check-version-drift\.sh: ([0-9]+) pin\(s\) behind upstream, ([0-9]+) error\(s\)$'
+# check-version-drift.sh's own closing line (see its last echo), printed
+# after the summary on every real run. report_complete tolerates exactly
+# this line, and only this line, following the summary; anything else
+# there (a crash, a reformatted script) still aborts.
+TRAILER='See docs/versioning.md for the bump policy and what this report cannot see.'
 
 # findings <file>: sorted, unique DRIFT:/ERROR: lines; nothing for a missing file.
 findings() {
@@ -44,15 +49,23 @@ findings() {
   tr -d '\r' <"$1" | { grep -E '^(DRIFT|ERROR):' || true; } | LC_ALL=C sort -u
 }
 
-# report_complete <file>: the last non-blank line is the summary, and its
-# counts match the DRIFT:/ERROR: lines actually present.
+# report_complete <file>: the last line matching SUMMARY_RE is the summary,
+# every line after it is blank or exactly check-version-drift.sh's own
+# closing line, and the summary's counts match the DRIFT:/ERROR: lines
+# actually present.
 report_complete() {
-  local line drift errors
-  [[ -f "$1" ]] || return 1
-  line="$(tr -d '\r' <"$1" | sed '/^[[:space:]]*$/d' | tail -n 1)"
-  [[ "$line" =~ $SUMMARY_RE ]] || return 1
-  drift="$(tr -d '\r' <"$1" | grep -cE '^DRIFT:')"
-  errors="$(tr -d '\r' <"$1" | grep -cE '^ERROR:')"
+  local file="$1" content lineno summary_line drift errors after
+  [[ -f "$file" ]] || return 1
+  content="$(tr -d '\r' <"$file")"
+  lineno="$(printf '%s\n' "$content" | grep -nE "$SUMMARY_RE" | tail -n 1 | cut -d: -f1)"
+  [[ -n "$lineno" ]] || return 1
+  summary_line="$(printf '%s\n' "$content" | sed -n "${lineno}p")"
+  [[ "$summary_line" =~ $SUMMARY_RE ]] || return 1
+  after="$(printf '%s\n' "$content" | tail -n "+$((lineno + 1))" | \
+    sed -e '/^[[:space:]]*$/d' -e "\\%^${TRAILER}\$%d")"
+  [[ -z "$after" ]] || return 1
+  drift="$(printf '%s\n' "$content" | grep -cE '^DRIFT:')"
+  errors="$(printf '%s\n' "$content" | grep -cE '^ERROR:')"
   [[ "${BASH_REMATCH[1]}" == "$drift" && "${BASH_REMATCH[2]}" == "$errors" ]]
 }
 
@@ -182,6 +195,28 @@ check-version-drift.sh: 1 pin(s) behind upstream, 0 error(s)'
   fixture trailing.md 'DRIFT: cli/terraform: pinned 1.17.0, latest v1.17.2
 check-version-drift.sh: 1 pin(s) behind upstream, 0 error(s)
 bash: line 9: unexpected EOF'
+  # check-version-drift.sh's real output shape: a blank line, then its own
+  # closing "See docs/versioning.md ..." line, after the summary (the P0
+  # this test guards: report_complete must not treat that trailer as
+  # unexpected trailing output and abort on every real run).
+  fixture real.md '## Version drift report
+
+DRIFT: cli/terraform: pinned 1.17.0, latest v1.17.2
+OK:    provider/kubernetes: "~> 3.3" admits latest 3.5.0
+DRIFT: chart/n8n (1.17.0 from oci://ghcr.io/n8n-io/n8n-helm-chart/n8n): pinned 1.17.0, latest 1.20.0
+
+check-version-drift.sh: 2 pin(s) behind upstream, 0 error(s)
+
+See docs/versioning.md for the bump policy and what this report cannot see.'
+  # The trailer is tolerated only when it is the last thing in the file;
+  # real output does not continue after it, and neither may a fixture that
+  # claims to be complete.
+  fixture trailer-plus-garbage.md 'DRIFT: cli/terraform: pinned 1.17.0, latest v1.17.2
+
+check-version-drift.sh: 1 pin(s) behind upstream, 0 error(s)
+
+See docs/versioning.md for the bump policy and what this report cannot see.
+unexpected trailing output'
 
   expect_action "first report with drift creates the issue" drift.md missing.md none create
   expect_action "clean with no issue does nothing" clean.md missing.md none noop
@@ -204,6 +239,9 @@ bash: line 9: unexpected EOF'
   expect_action "a truncated report never creates an issue" truncated.md missing.md none abort
   expect_action "summary counts must match the lines" mismatch.md drift.md open abort
   expect_action "a missing report aborts" missing.md drift.md open abort
+  expect_action "a real report with the docs trailer after the summary creates the issue" real.md missing.md none create
+  expect_action "a real report with the docs trailer and unchanged findings only updates" real.md drift.md open update
+  expect_action "output after the trailer still aborts" trailer-plus-garbage.md drift.md open abort
 
   expect_changes "new version listed as new" drift.md newer.md 'latest v1.17.3' has
   expect_changes "old version listed as resolved" drift.md newer.md 'Resolved:' has

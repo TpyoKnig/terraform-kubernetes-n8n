@@ -25,15 +25,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Changed
 
 - `.github/workflows/version-drift.yml` (contributor tooling) keeps one
-  tracking issue, identified by a `version-drift` label plus its exact
-  title, so another issue carrying the label is never touched. It comments
-  only when the set of `DRIFT:`/`ERROR:` lines changes (it used to edit the
-  body silently every week with no comment at all), closes the issue when a
-  report is clean, and reopens it when the findings change while it is
-  closed instead of opening a duplicate. Closing the issue by hand while the
-  findings stay the same is respected: later reports only refresh the body.
-  The decision lives in `tests/scripts/drift-issue-sync.sh`, whose offline
-  self-test runs via `task version-drift`.
+  tracking issue, identified by its exact title; a `version-drift` label is
+  added to it when missing, so other issues are never mistaken for the
+  tracker. It comments only when the set of `DRIFT:`/`ERROR:` lines changes
+  (it used to edit the body silently every week with no comment at all),
+  closes the issue when a report is clean, and reopens it when the findings
+  change while it is closed instead of opening a duplicate. Closing the
+  issue by hand while the findings stay the same is respected: later
+  reports only refresh the body. The decision lives in
+  `tests/scripts/drift-issue-sync.sh`, whose offline self-test runs via
+  `task version-drift`.
 
 ## [0.4.1], The namespace rename
 

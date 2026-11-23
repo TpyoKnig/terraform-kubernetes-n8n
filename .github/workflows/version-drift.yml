@@ -60,6 +60,7 @@ jobs:
       # makes that decision (its own offline self-test runs via `task
       # version-drift`); this step only calls gh.
       - name: sync tracking issue
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -114,7 +115,13 @@ jobs:
               echo "::error::the report is incomplete (its last line is not a valid summary, or the counts disagree with its lines); leaving the tracking issue unchanged"
               exit 1
               ;;
-            noop) exit 0 ;;
+            # noop means no state change: no issue exists yet (nothing to
+            # create for a clean report), or a closed issue is already
+            # clean. An existing closed issue still needs its label and
+            # body refreshed, so only skip entirely when there is no issue.
+            noop)
+              [[ -n "$number" ]] || exit 0
+              ;;
             create | update | comment | reopen | close | close-quiet) ;;
             *)
               echo "::error::unexpected action '${action}' from drift-issue-sync.sh"
@@ -132,7 +139,7 @@ jobs:
             create)
               gh issue create --title "$title" --label "$label" --body-file report.md
               ;;
-            update)
+            update | noop)
               gh issue edit "$number" --body-file report.md
               ;;
             comment | reopen)

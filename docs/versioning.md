@@ -147,24 +147,28 @@ release, or a deliberately floating tag tracking upstream on its own), or
 `ERROR` (the upstream lookup failed, or the script cannot evaluate the pin's
 form), closing with a one-line summary count of pins behind upstream and
 errors. The script exits 0 even when a lookup fails (it still exits 1 if
-`curl`, `jq` or `python3` is missing): `.github/workflows/version-drift.yml`'s
-only consumer of this output is an unguarded step with no `if: always()`
-that syncs it to one tracking issue titled "Version drift report
-(automated)" and labelled `version-drift` (the open or most recently closed
-issue matching both; an unlabelled issue with the exact title is adopted and
-labelled, and any other `version-drift` issue is left untouched). A complete
-report always replaces the body. A comment listing new and resolved findings
-is posted only when the set of `DRIFT:`/`ERROR:` lines changes, since an
-issue body edit notifies nobody. The issue closes when a report has neither,
-and reopens when the findings change while it is closed; closing it by hand
-with unchanged findings is respected; later reports only refresh the body
-until the findings change. An incomplete report (a crash, or exit 1 for a
-missing tool) writes nothing to the issue, not even the label, and fails the
-run instead. A report with `ERROR:` lines is still synced, and the run then
-fails, so a failed lookup is visible both in the issue and as a red run. The
-decision lives in `tests/scripts/drift-issue-sync.sh`, whose offline
-self-test runs via `task version-drift`; the workflow step itself only calls
-`gh`.
+`curl`, `jq` or `python3` is missing, which is the only failure
+`.github/workflows/version-drift.yml`'s sync step treats as fatal: it has no
+`if: always()`, so the step is skipped and the tracking issue is left
+unchanged). It syncs the report to one tracking issue identified
+by its exact title, "Version drift report (automated)"; a `version-drift`
+label is added to it when missing, so another issue is never mistaken for
+the tracker (the most recently closed matching issue, by `closedAt`, is
+picked when none is open). A complete report replaces the body, except a
+clean report that finds no tracking issue at all, which creates nothing. A
+comment listing new and resolved findings is posted only when the set of
+`DRIFT:`/`ERROR:` lines changes, since an issue body edit notifies nobody.
+The issue closes when a report has neither, and reopens when the findings
+change while it is closed; closing it by hand with unchanged findings is
+respected, so later reports only refresh the body until the findings
+change. An incomplete report (a crash, or exit 1 for a missing tool) writes
+nothing to the issue, not even the label, and fails the run instead. A
+report with `ERROR:` lines is still synced, but those lines do not fail the
+run on their own: there is no step after the sync that inspects them, so a
+failed lookup is visible in the issue and the job summary, not as a red
+run. The decision lives in `tests/scripts/drift-issue-sync.sh`, whose
+offline self-test runs via `task version-drift`; the workflow step itself
+only calls `gh`.
 
 It cannot see, and does not attempt to check, the one thing with no public
 API at the granularity that matters here:
