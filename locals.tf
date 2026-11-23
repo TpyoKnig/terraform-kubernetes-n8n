@@ -26,25 +26,42 @@ locals {
 
   # Path prefixes that must reach the webhook processors rather than the main
   # pods. The main pods run with production webhooks disabled, so every one of
-  # these 404s if it reaches them. All five are routed by the chart's own
-  # webhook Ingress (templates/ingress-webhook.yaml) as of chart 1.16.0, which
-  # added /mcp/ to the four it already covered; see k8s_webhook_ingress_block
-  # below for the history. There used to be a derived
-  # "unrouted" subtraction and a supplementary kubernetes_ingress_v1.n8n_mcp
-  # resource in n8n.tf to cover /mcp while the chart did not; both were
-  # removed when /mcp landed, rather than left dormant, because an
-  # unconditionally empty dynamic "path" block fails the Kubernetes provider's
-  # schema validation (Ingress requires at least one path per rule) even at
-  # count = 0. If the chart ever drops a prefix again, re-add the subtraction
-  # and the Ingress rather than resurrecting the dead code from source
-  # control.
+  # these 404s if it reaches them. The list mirrors the routes n8n registers
+  # under `if (this.webhooksEnabled)` in packages/cli/src/abstract-server.ts.
+  #
+  # /webhook-waiting-slack and /webhook-waiting-telegram are the Slack and
+  # Telegram human-in-the-loop callbacks. They are sibling paths, not
+  # sub-paths of /webhook-waiting: a Prefix rule matches whole path elements,
+  # so /webhook-waiting never covers them, and without their own entries the
+  # button clicks fell through to "/" and the main pods 404'd them.
   n8n_webhook_path_prefixes = [
     "/webhook",
     "/webhook-waiting",
     "/form",
     "/form-waiting",
     "/mcp",
+    "/webhook-waiting-slack",
+    "/webhook-waiting-telegram",
   ]
+
+  # The prefixes the chart's own webhook Ingress
+  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.17.0. It added
+  # /mcp/ in 1.16.0 and has never routed the two HITL callbacks. Whatever it
+  # leaves out, kubernetes_ingress_v1.n8n_webhook_supplementary (n8n.tf)
+  # routes. Re-check this list on every chart bump:
+  # tests/scripts/check-n8n-chart.sh fails when the template disagrees.
+  n8n_chart_routed_webhook_prefixes = [
+    "/webhook",
+    "/webhook-waiting",
+    "/form",
+    "/form-waiting",
+    "/mcp",
+  ]
+
+  n8n_unrouted_webhook_prefixes = sort(setsubtract(
+    local.n8n_webhook_path_prefixes,
+    local.n8n_chart_routed_webhook_prefixes,
+  ))
 
   # -- Redis connection coordinates --------------------------------------------
   # What n8n and KEDA connect to. The in-cluster Valkey path resolves through
@@ -412,10 +429,11 @@ locals {
   # exist.
   # N8N_ENDPOINT_ is here because the module hardcodes the path segments n8n
   # serves and then publishes them. n8n_webhook_path_prefixes lists /webhook,
-  # /webhook-waiting, /form, /form-waiting and /mcp, the examples route exactly
-  # those five on the webhook Ingress, and n8n_oauth_callback_url spells /rest
-  # into the redirect URI. Every one of those segments is an N8N_ENDPOINT_
-  # variable: REST, WEBHOOK, WEBHOOK_WAIT, FORM, FORM_WAIT, MCP.
+  # /webhook-waiting (and its -slack and -telegram siblings), /form,
+  # /form-waiting and /mcp, the examples route exactly those on the webhook
+  # Ingress, and n8n_oauth_callback_url spells /rest into the redirect URI.
+  # Every one of those segments is an N8N_ENDPOINT_ variable: REST, WEBHOOK,
+  # WEBHOOK_WAIT, FORM, FORM_WAIT, MCP.
   #
   # Change one through n8n_extra_env and nothing here follows. The Ingress goes
   # on routing the old segment, the outputs go on advertising it, and n8n
@@ -2058,9 +2076,9 @@ locals {
   # answering because the main pods have no handler registered for it. That
   # was the silent failure docs/troubleshooting.md used to document, and MCP
   # Server Trigger nodes hit it on the module's default path. Chart 1.16.0
-  # added /mcp/ to this same template, so all five prefixes are chart-routed
-  # now; see n8n_webhook_path_prefixes and the now-removed supplementary
-  # Ingress this module used to render to cover the gap.
+  # added /mcp/ to this same template. It still omits the Slack and Telegram
+  # HITL callbacks; see n8n_chart_routed_webhook_prefixes and the
+  # supplementary Ingress in n8n.tf that routes what the chart leaves out.
   #
   # Gated on create_ingress alongside the main Ingress: ungated, a caller
   # bringing their own routing still got a chart-owned webhook Ingress with an

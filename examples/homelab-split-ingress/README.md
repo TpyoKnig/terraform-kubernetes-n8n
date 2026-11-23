@@ -5,7 +5,8 @@ Two hostnames instead of one, on the same Kubernetes-native backend as [`../home
 ```
 editor_host   →  n8n-main                editor UI, REST API, /webhook-test
 webhook_host  →  n8n-webhook-processor   /webhook, /webhook-waiting, /form,
-                                         /form-waiting, /mcp
+                                         /form-waiting, /mcp, the Slack and
+                                         Telegram HITL callbacks
               →  n8n-main                /rest/projects (Agents chat
                                          integrations)
 ```

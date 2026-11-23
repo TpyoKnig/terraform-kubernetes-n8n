@@ -82,13 +82,13 @@ Or wait for the negative cache to age out (typically 5 to 15 minutes). To avoid 
 
 ### Symptom
 
-A production webhook, Form Trigger, Wait-node resumption, or MCP Server Trigger URL returns `200` and a chunk of HTML instead of running the workflow. Nothing appears in the executions list. The caller logs a success, so the failure is silent on both ends.
+A production webhook, Form Trigger, Wait-node resumption, or MCP Server Trigger URL returns `200` and a chunk of HTML instead of running the workflow. Nothing appears in the executions list. The caller logs a success, so the failure is silent on both ends. A Slack or Telegram human-in-the-loop button click that never resumes the waiting execution is the same failure.
 
-Most often seen on `/webhook-waiting`, `/form`, `/form-waiting`, and `/mcp`, while plain `/webhook` works.
+Most often seen on `/webhook-waiting`, `/form`, `/form-waiting`, `/mcp`, `/webhook-waiting-slack` and `/webhook-waiting-telegram`, while plain `/webhook` works.
 
 ### Cause
 
-The request reached the **main** pods rather than the webhook processors. This module runs the chart with `disableProductionWebhooksOnMainProcess = true`, which disables five endpoint families on the mains: `/webhook`, `/webhook-waiting`, `/form`, `/form-waiting`, and `/mcp`. When one of those paths hits a main pod, no handler is registered, so the request falls through to the editor's single-page-app handler, which answers `200` with the editor HTML.
+The request reached the **main** pods rather than the webhook processors. This module runs the chart with `disableProductionWebhooksOnMainProcess = true`, which disables seven endpoint families on the mains: `/webhook`, `/webhook-waiting`, `/form`, `/form-waiting`, `/mcp`, `/webhook-waiting-slack` and `/webhook-waiting-telegram`. The last two are sibling paths of `/webhook-waiting`, not sub-paths, so a `Prefix` rule for `/webhook-waiting` does not route them. When one of those paths hits a main pod, no handler is registered, so the request falls through to the editor's single-page-app handler, which answers `200` with the editor HTML.
 
 How you end up here:
 

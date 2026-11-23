@@ -7,6 +7,22 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Route n8n's Slack and Telegram human-in-the-loop callbacks,
+  `/webhook-waiting-slack` and `/webhook-waiting-telegram`, to the webhook
+  processors (ported from n8n-io/terraform-aws-n8n#212). They are sibling
+  paths of `/webhook-waiting`, not sub-paths, so neither the chart's webhook
+  `Ingress` nor a `Prefix` rule for `/webhook-waiting` matched them. The
+  clicks fell through to `/`, reached the main pods, which run with
+  production webhooks disabled, and the waiting execution never resumed.
+  `n8n_webhook_path_prefixes` now lists both, so the split-ingress examples
+  and any `create_ingress = false` caller iterating it pick them up, and the
+  module renders `kubernetes_ingress_v1.n8n_webhook_supplementary`
+  (`n8n-webhook-processor-supplementary`) for the prefixes the chart's own
+  webhook `Ingress` leaves out. `tests/scripts/check-n8n-chart.sh` now fails
+  when the chart's routed set changes in either direction.
+
 ## [0.4.1], The namespace rename
 
 Finishes a change `0.4.0` described but did not contain: the namespace rename

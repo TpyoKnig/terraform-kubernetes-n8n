@@ -377,7 +377,65 @@ resource "helm_release" "n8n" {
   ]
 }
 
+# ── Supplementary webhook Ingress ─────────────────────────────────────────────
+# Routes the webhook prefixes the chart's own webhook Ingress does not
+# (local.n8n_unrouted_webhook_prefixes): today the Slack and Telegram
+# human-in-the-loop callbacks. Same hosts, class, annotations and TLS Secret as
+# the chart's Ingresses, so cert-manager sees one certificate request and the
+# ingress controller merges the paths by host. Paths carry no trailing slash:
+# n8n registers both callbacks as exact paths, and a Prefix rule on the bare
+# path matches it and anything below it.
+resource "kubernetes_ingress_v1" "n8n_webhook_supplementary" {
+  count = var.create_ingress && length(local.n8n_unrouted_webhook_prefixes) > 0 ? 1 : 0
 
+  metadata {
+    name        = "n8n-webhook-processor-supplementary"
+    namespace   = local.namespace_name
+    annotations = local.k8s_ingress_annotations
+    labels = {
+      "app.kubernetes.io/name"       = "n8n"
+      "app.kubernetes.io/component"  = "webhook-processor"
+      "app.kubernetes.io/managed-by" = "Terraform"
+    }
+  }
+
+  spec {
+    ingress_class_name = var.k8s_ingress_class_name
+
+    dynamic "rule" {
+      for_each = local.k8s_ingress_hosts
+      content {
+        host = rule.value
+        http {
+          dynamic "path" {
+            for_each = local.n8n_unrouted_webhook_prefixes
+            content {
+              path      = path.value
+              path_type = "Prefix"
+              backend {
+                service {
+                  name = local.n8n_webhook_service_name
+                  port {
+                    number = local.n8n_service_port
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    tls {
+      hosts       = local.k8s_ingress_hosts
+      secret_name = local.k8s_ingress_tls_secret
+    }
+  }
+
+  # The backend Service is the chart's; routing to it before it exists makes
+  # some controllers log a missing-endpoints error until the release lands.
+  depends_on = [helm_release.n8n]
+}
 
 
 # ── OpenTelemetry diagnostic check ─────────────────────────────────────────
