@@ -149,11 +149,22 @@ form), closing with a one-line summary count of pins behind upstream and
 errors. The script exits 0 even when a lookup fails (it still exits 1 if
 `curl`, `jq` or `python3` is missing): `.github/workflows/version-drift.yml`'s
 only consumer of this output is an unguarded step with no `if: always()`
-that syncs it to a single tracking issue, and a non-zero exit here would make
-GitHub Actions skip that step entirely, silently stopping the tracking issue
-from ever reflecting a run that hit a lookup failure. Every `ERROR` is
-already visible in the synced report text, so a report, not a gate, is still
-the right contract here.
+that syncs it to one tracking issue titled "Version drift report
+(automated)" and labelled `version-drift` (the open or most recently closed
+issue matching both; an unlabelled issue with the exact title is adopted and
+labelled, and any other `version-drift` issue is left untouched). A complete
+report always replaces the body. A comment listing new and resolved findings
+is posted only when the set of `DRIFT:`/`ERROR:` lines changes, since an
+issue body edit notifies nobody. The issue closes when a report has neither,
+and reopens when the findings change while it is closed; closing it by hand
+with unchanged findings is respected; later reports only refresh the body
+until the findings change. An incomplete report (a crash, or exit 1 for a
+missing tool) writes nothing to the issue, not even the label, and fails the
+run instead. A report with `ERROR:` lines is still synced, and the run then
+fails, so a failed lookup is visible both in the issue and as a red run. The
+decision lives in `tests/scripts/drift-issue-sync.sh`, whose offline
+self-test runs via `task version-drift`; the workflow step itself only calls
+`gh`.
 
 It cannot see, and does not attempt to check, the one thing with no public
 API at the granularity that matters here:

@@ -214,9 +214,13 @@ tasks:
       image) that has fallen behind upstream. Requires curl, jq and python3.
       No terraform, no cloud credentials, no cluster. Report-only: never
       bumps anything and always exits 0 unless a required tool is missing.
-      See docs/versioning.md.
+      Also runs tests/scripts/drift-issue-sync.sh's offline self-test, the
+      decision .github/workflows/version-drift.yml's tracking-issue sync
+      makes (label, comment on change, close when clean). See
+      docs/versioning.md.
     cmds:
       - ./tests/scripts/check-version-drift.sh
+      - DRIFT_SYNC_SELF_TEST=1 ./tests/scripts/drift-issue-sync.sh
 
   terraform-floor:
     desc: >-

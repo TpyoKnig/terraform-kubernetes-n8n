@@ -45,18 +45,118 @@ jobs:
       # not something CI should auto-bump or gate on. But a report that
       # only ever posts to a scheduled run's job summary is invisible
       # unless someone remembers to open the Actions tab, which defeats
-      # the point of automating this at all. Sync it to a single tracking
-      # issue instead, so a stale pin shows up in the same place every
-      # other piece of repo work does, and a successful scheduled run
-      # still surfaces its own drift.
+      # the point of automating this at all. Sync it to one tracking issue
+      # labelled version-drift instead, so a stale pin shows up in the same
+      # place every other piece of repo work does, and a successful
+      # scheduled run still surfaces its own drift.
+      #
+      # The body is always replaced with the latest report. A comment
+      # listing new and resolved findings is posted only when the set of
+      # DRIFT:/ERROR: lines changes (an issue body edit notifies nobody), a
+      # clean report closes the issue, and findings that return while it is
+      # closed reopen it instead of opening a duplicate. Closing the issue
+      # by hand while the findings stay the same is respected: later
+      # reports only refresh the body. tests/scripts/drift-issue-sync.sh
+      # makes that decision (its own offline self-test runs via `task
+      # version-drift`); this step only calls gh.
       - name: sync tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          label="version-drift"
           title="Version drift report (automated)"
-          existing="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
-          if [[ -n "$existing" ]]; then
-            gh issue edit "$existing" --body-file report.md
-          else
-            gh issue create --title "$title" --body-file report.md
+
+          # tracker <json>: the exact-title match closed last (closedAt),
+          # then the highest number; open issues have no closedAt.
+          tracker() {
+            jq -r --arg t "$title" 'map(select(.title == $t)) | sort_by([.closedAt // "", .number]) | last | .number // empty'
+          }
+          # labelled <json> <number>: that issue already carries the label.
+          labelled() {
+            jq -e --argjson n "$2" --arg l "$label" 'any(.[]; .number == $n and any(.labels[]; .name == $l))' <<<"$1" >/dev/null
+          }
+          fields=number,title,closedAt,labels
+          # Open labelled tracker first. Then an open unlabelled one (opened
+          # before the label existed), which gets the label. Then the most
+          # recently closed one, labelled or not, so drift coming back
+          # reopens it instead of opening a duplicate.
+          state=open
+          needs_label=""
+          number="$(gh issue list --label "$label" --state open --limit 100 --json "$fields" | tracker)"
+          if [[ -z "$number" ]]; then
+            number="$(gh issue list --state open --search "\"$title\" in:title" --limit 100 --json "$fields" | tracker)"
+            [[ -z "$number" ]] || needs_label=1
           fi
+          if [[ -z "$number" ]]; then
+            state=closed
+            closed="$({
+              gh issue list --label "$label" --state closed --limit 100 --json "$fields"
+              gh issue list --state closed --search "\"$title\" in:title" --limit 100 --json "$fields"
+            } | jq -s 'add')"
+            number="$(tracker <<<"$closed")"
+            if [[ -n "$number" ]] && ! labelled "$closed" "$number"; then
+              needs_label=1
+            fi
+          fi
+          if [[ -n "$number" ]]; then
+            gh issue view "$number" --json body --jq '.body' >previous.md
+          else
+            state=none
+            : >previous.md
+          fi
+
+          action="$(tests/scripts/drift-issue-sync.sh action report.md previous.md "$state")"
+          echo "tracking issue: ${number:-none} (${state}); action: ${action}"
+
+          case "$action" in
+            abort)
+              echo "::error::the report is incomplete (its last line is not a valid summary, or the counts disagree with its lines); leaving the tracking issue unchanged"
+              exit 1
+              ;;
+            noop) exit 0 ;;
+            create | update | comment | reopen | close | close-quiet) ;;
+            *)
+              echo "::error::unexpected action '${action}' from drift-issue-sync.sh"
+              exit 1
+              ;;
+          esac
+
+          gh label create "$label" --force --color D93F0B \
+            --description "Automated weekly version drift report (tests/scripts/check-version-drift.sh)"
+          if [[ -n "$needs_label" ]]; then
+            gh issue edit "$number" --add-label "$label"
+          fi
+
+          case "$action" in
+            create)
+              gh issue create --title "$title" --label "$label" --body-file report.md
+              ;;
+            update)
+              gh issue edit "$number" --body-file report.md
+              ;;
+            comment | reopen)
+              gh issue edit "$number" --body-file report.md
+              header="Findings changed in [workflow run](${RUN_URL})."
+              if [[ "$action" == "reopen" ]]; then
+                gh issue reopen "$number"
+                header="Reopening: findings changed in [workflow run](${RUN_URL})."
+              fi
+              {
+                echo "$header"
+                echo
+                tests/scripts/drift-issue-sync.sh changes previous.md report.md
+              } >comment.md
+              gh issue comment "$number" --body-file comment.md
+              ;;
+            close)
+              gh issue edit "$number" --body-file report.md
+              gh issue close "$number" --comment "No drift and no errors in [workflow run](${RUN_URL}). Closing; the next report with findings reopens this issue."
+              ;;
+            close-quiet)
+              # Already clean (for example reopened by hand): no finding
+              # changed, so close without a comment.
+              gh issue edit "$number" --body-file report.md
+              gh issue close "$number"
+              ;;
+          esac
