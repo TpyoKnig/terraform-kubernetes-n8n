@@ -12,7 +12,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - `n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default
   `true`) create `kubernetes_pod_disruption_budget_v1` resources with
   `maxUnavailable = 1` for the webhook processor and default worker
-  Deployments. The n8n chart (1.17.0, the pinned version) renders a
+  Deployments. The n8n chart (1.20.0, the pinned version) renders a
   PodDisruptionBudget for the main pods only, and only when main runs more
   than one replica (n8n-io/n8n-hosting#228), which this module never does, so
   without these a voluntary node drain (a Talos node upgrade,

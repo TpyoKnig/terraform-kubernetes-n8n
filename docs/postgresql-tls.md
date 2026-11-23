@@ -127,7 +127,7 @@ affects this connection.
 n8n Helm chart's `database.ssl.ca` value (`local.postgres_ssl_ca_values` in
 `locals.tf`), which the chart renders as the `DB_POSTGRESDB_SSL_CA`
 environment variable on the main, worker, and webhook-processor pods
-(chart 1.14.0 through at least 1.17.0). This is the one case where this module
+(chart 1.14.0 through at least 1.20.0). This is the one case where this module
 sets `database.ssl` at all: `DB_POSTGRESDB_SSL_ENABLED` and
 `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` are otherwise expressed through
 `config.extraEnv`, never through the chart's own `database.ssl.enabled` /

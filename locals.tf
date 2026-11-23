@@ -57,7 +57,7 @@ locals {
   ]
 
   # The prefixes the chart's own webhook Ingress
-  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.17.0. It has
+  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.20.0. It has
   # never routed the two HITL callbacks, so those always land in
   # n8n_unrouted_webhook_prefixes below. /mcp/ is conditional: chart 1.16.0
   # added it (n8n_chart_routes_mcp), and n8n_chart_version accepts any older
