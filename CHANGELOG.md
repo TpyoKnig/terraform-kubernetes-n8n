@@ -101,6 +101,11 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   report (issue #66): `TF_VERSION` `1.17.0` -> `1.17.2`, `TFLINT_VERSION`
   `v0.64.0` -> `v0.66.0`. Both are patch-safe: no plan-time diff, no new
   tflint findings.
+- `terraform-docs` CI pin (`TERRAFORM_DOCS_VERSION`) bumped `v0.24.0` ->
+  `v0.25.1` to match the brew default, with the matching mention in
+  `AGENTS.md` updated (issue #66). `terraform-docs --output-check .` renders
+  every README (root, all examples, both submodules) identically at the new
+  version, so no generated file changed.
 
 ## [0.4.1], The namespace rename
 

@@ -166,7 +166,7 @@ jobs:
       # trap the floating checkov version fell into (see CHECKOV_VERSION above).
       # It happened to be harmless here, because the two versions render this
       # repo's tables identically, but that was luck rather than design.
-      TERRAFORM_DOCS_VERSION: v0.24.0
+      TERRAFORM_DOCS_VERSION: v0.25.1
     steps:
       - uses: actions/checkout@v7
 
