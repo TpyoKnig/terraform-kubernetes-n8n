@@ -106,6 +106,11 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `AGENTS.md` updated (issue #66). `terraform-docs --output-check .` renders
   every README (root, all examples, both submodules) identically at the new
   version, so no generated file changed.
+- `CHECKOV_VERSION` bumped `3.3.30` -> `3.4.7` (issue #66). Re-scanned with
+  checkov 3.4.7 installed in a scratch venv: still 15 passed / 0 failed /
+  0 skipped, identical to the 3.3.30 baseline, so no new findings to
+  triage. `.checkov.yaml`'s own re-verification comment and pass count are
+  refreshed to match.
 
 ## [0.4.1], The namespace rename
 

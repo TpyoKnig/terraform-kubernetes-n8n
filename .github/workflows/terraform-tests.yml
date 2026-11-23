@@ -77,7 +77,7 @@ env:
   # refuses to run against a different local version, which makes this line the
   # single source of truth for both. Bumping it is a deliberate change: expect a
   # new release to report findings that need triaging in the same commit.
-  CHECKOV_VERSION: "3.3.30"
+  CHECKOV_VERSION: "3.4.7"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   # Shared provider plugin cache across the validate/test/tflint matrices.
