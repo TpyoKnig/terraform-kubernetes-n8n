@@ -4508,8 +4508,8 @@ run "disabling_tls_still_leaves_the_chart_key_unset" {
 }
 
 # A fixed, framing-valid test CA. Not a real issuing authority; only the PEM
-# delimiters and ASCII content are exercised by the variable's own validation
-# and by these plan-time assertions.
+# delimiters are exercised by the variable's own validation and by these
+# plan-time assertions.
 run "a_ca_bundle_reaches_the_chart_without_duplicating_ssl_enabled" {
   command = plan
 
@@ -4702,16 +4702,6 @@ run "ca_pem_rejects_text_without_pem_framing" {
   expect_failures = [var.db_postgresdb_ssl_ca_pem]
 }
 
-run "ca_pem_rejects_non_ascii_content" {
-  command = plan
-
-  variables {
-    db_postgresdb_ssl_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8Añ\n-----END CERTIFICATE-----"
-  }
-
-  expect_failures = [var.db_postgresdb_ssl_ca_pem]
-}
-
 # 128 * 1024 "A"s, well past what either bundle below needs; substr trims to
 # the exact body length each test wants. Built from two nested range() calls,
 # each under range()'s own 1024-value cap, rather than one call for the whole
@@ -4736,8 +4726,50 @@ run "ca_pem_accepts_a_bundle_at_exactly_the_size_limit" {
   }
 
   assert {
-    condition     = length(trimspace(var.db_postgresdb_ssl_ca_pem)) == 131050
-    error_message = "Test setup error: the generated bundle must be exactly 131050 trimmed characters to exercise the boundary."
+    condition = (
+      length(base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))) / 4 * 3 -
+      length(regex("=*$", base64encode(trimspace(var.db_postgresdb_ssl_ca_pem)))) == 131050
+    )
+    error_message = "Test setup error: the generated bundle must be exactly 131050 bytes to exercise the boundary."
+  }
+}
+
+# length() counts grapheme clusters, so a CRLF pair counts once: a bundle
+# saved with Windows line endings can be exactly 131050 characters (the old
+# character-based limit) while actually 131051 UTF-8 bytes. The byte-based
+# rule must reject it (mirrors n8n-io/terraform-aws-n8n#215).
+run "ca_pem_rejects_a_windows_line_ending_bundle_over_the_byte_limit" {
+  command = plan
+
+  # Framing "-----BEGIN CERTIFICATE-----\r\n" + "\n-----END CERTIFICATE-----"
+  # is 55 UTF-8 bytes (length() reports 54: it counts the CRLF pair as one
+  # grapheme cluster). 131051 - 55 = 130996 bytes of body makes the whole
+  # value 131051 bytes but only 131050 characters, the same value the old
+  # character-based rule would have accepted.
+  variables {
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\r\n${substr(join("", [for i in range(128) : join("", [for j in range(1024) : "A"])]), 0, 130996)}\n-----END CERTIFICATE-----"
+  }
+
+  expect_failures = [var.db_postgresdb_ssl_ca_pem]
+}
+
+# One byte under the limit above: the same CRLF framing, trimmed to exactly
+# 131050 UTF-8 bytes, must still be accepted.
+run "ca_pem_accepts_a_windows_line_ending_bundle_at_the_byte_limit" {
+  command = plan
+
+  variables {
+    db_postgresdb_ssl_reject_unauthorized = true
+    db_postgresdb_ssl_ca_pem              = "-----BEGIN CERTIFICATE-----\r\n${substr(join("", [for i in range(128) : join("", [for j in range(1024) : "A"])]), 0, 130995)}\n-----END CERTIFICATE-----"
+  }
+
+  assert {
+    condition = (
+      length(base64encode(trimspace(var.db_postgresdb_ssl_ca_pem))) / 4 * 3 -
+      length(regex("=*$", base64encode(trimspace(var.db_postgresdb_ssl_ca_pem)))) == 131050
+    )
+    error_message = "Test setup error: the generated bundle must be exactly 131050 bytes to exercise the byte boundary with CRLF framing."
   }
 }
 

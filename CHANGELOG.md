@@ -26,6 +26,18 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   separate `Ingress` objects per host, as ingress-nginx (the module's
   default) does. `tests/scripts/check-n8n-chart.sh` now fails when the
   chart's routed set changes in either direction.
+- **`db_postgresdb_ssl_ca_pem` now measures its 131,050-byte limit in UTF-8
+  bytes after trimming, not characters** (mirrors n8n-io/terraform-aws-n8n#215).
+  Terraform's `length()` counts a CRLF line break once, so a bundle saved
+  with Windows line endings could pass the plan and then fail every main,
+  worker, and webhook-processor container with `argument list too long`.
+  CRLF line endings now count two bytes per line break. The ASCII-only rule
+  that stood in for a byte count is removed: the module now checks only the
+  PEM framing and the size, so non-ASCII text inside the bundle, such as a
+  label line between certificates, is accepted. It does not parse the
+  certificates; n8n does that when it connects. Upgrade note: a CRLF bundle
+  near the limit that used to plan now fails the plan. Convert it to LF line
+  endings, trim it, or remove it.
 
 ## [0.4.1], The namespace rename
 

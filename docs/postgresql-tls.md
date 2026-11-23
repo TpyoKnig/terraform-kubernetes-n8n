@@ -157,12 +157,16 @@ Helm-only change with no separate object to delete first, and the chart's
 A CA certificate is public, so `db_postgresdb_ssl_ca_pem` is not marked
 sensitive; it is still stored in Terraform state and in the Helm release. The
 module checks only that the value has PEM certificate framing
-(`-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----`), that it is pure
-ASCII, and that it is at most 131050 characters after trimming (the chart
-passes it to each container as an environment variable, and Linux refuses to
-start a container whose environment string exceeds `MAX_ARG_STRLEN`, 128 KiB);
-it does not parse the certificate itself, and a bundle with more than one
-certificate is accepted.
+(`-----BEGIN CERTIFICATE-----` / `-----END CERTIFICATE-----`) and that it is
+at most 131050 UTF-8 bytes after trimming (the chart passes it to each
+container as an environment variable, and Linux refuses to start a container
+whose environment string exceeds `MAX_ARG_STRLEN`, 128 KiB). CRLF line
+endings count two bytes per line break, so a bundle saved with Windows line
+endings is about one byte per line larger than its LF form; convert it to LF
+if it is close to the limit. The module does not parse the certificate
+itself, so non-ASCII text inside the bundle, such as a label line between
+certificates, is accepted, and a bundle with more than one certificate is
+accepted.
 
 ## Plan-time warnings
 
