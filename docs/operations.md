@@ -712,7 +712,7 @@ you would treat any sandbox escape hatch.
 ## Upgrading
 
 [docs/upgrading-n8n.md](./upgrading-n8n.md) covers the `n8n_image_tag` and
-`n8n_chart_version` procedure. Two notes specific to this module:
+`n8n_chart_version` procedure. Three notes specific to this module:
 
 - **CNPG major-version upgrades** are the operator's business, not
   Terraform's. Changing `cnpg_postgres_image_tag` across a major version

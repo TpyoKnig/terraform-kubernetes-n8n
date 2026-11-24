@@ -148,9 +148,11 @@ rather than being recreated under a new name.
 **Effect on an existing deployment:** the Valkey Deployment rolls once,
 same as every chart bump (`deploymentStrategy = "Recreate"`, so a brief
 queue outage; see "Valkey restarts during the upgrade" above). PVC
-`<release>-valkey` is kept, not recreated: the chart's own container names
-change to `valkey` / `init` / `metrics` (previously `<fullname>` /
-`<fullname>-init`), and a readiness probe is now enabled by default
+`<release>-valkey` is kept, not recreated: the two renamed containers go
+from `<fullname>` / `<fullname>-init` to `valkey` / `init`, and this
+module's deployment, which does not enable metrics, gains no new `metrics`
+container (the chart only names the container that way while
+`metrics.enabled = true`). A readiness probe is now enabled by default
 (`readinessProbe.enabled: true`), taking a pod out of the Service once it
 stops answering `PONG`. Neither needs a module change. This exact migration
 was run against a live homelab deployment adopted into Terraform state
