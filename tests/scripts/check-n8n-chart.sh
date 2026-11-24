@@ -96,12 +96,12 @@ chart_dir="$tmp/n8n"
 app_version=$(sed -n 's/^appVersion:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}.*/\1/p' "$chart_dir/Chart.yaml" | head -1)
 echo "Chart $chart_version, appVersion $app_version" >&2
 
-# The chart's appVersion (2.44.5) is a number several comments and docs cite
+# The chart's appVersion (2.48.5) is a number several comments and docs cite
 # as "what an unset n8n_image_tag resolves to". n8n_image_tag's own default
 # is pinned separately and may sit above or below it. A chart bump that moves
 # appVersion needs those citations reviewed, not auto-updated.
-[[ "$app_version" == "2.44.5" ]] ||
-  fail "chart $chart_version ships appVersion=$app_version, expected 2.44.5; review every comment/doc citing 2.44.5"
+[[ "$app_version" == "2.48.5" ]] ||
+  fail "chart $chart_version ships appVersion=$app_version, expected 2.48.5; review every comment/doc citing 2.48.5"
 
 # ── PDB: chart 1.16.0 gates templates/pdb.yaml on main running more than one
 # replica (n8n-io/n8n-hosting#228). This module always sets replicaCount = 1
@@ -219,7 +219,7 @@ fi
 
 # ── Image tag: before chart 1.12.0, an unset image.tag rendered the floating
 # `stable`; from 1.12.0 on it resolves to the chart's own appVersion instead.
-# n8n_image_tag defaults to this module's own pin (2.44.5), not null, so this
+# n8n_image_tag defaults to this module's own pin (2.48.8), not null, so this
 # scenario explicitly hands the choice back to the chart. A tfvars file,
 # not -var: the CLI's -var flag parses "null" as the literal string "null"
 # for a string-typed variable, not HCL null, so it never actually unsets the

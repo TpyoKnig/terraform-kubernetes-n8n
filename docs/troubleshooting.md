@@ -424,7 +424,7 @@ original worker keeps running at its configured `--concurrency`.
 
 `n8n_execution_concurrency_limit` is set above `-1` (or was left at this
 module's old default of `100` before the default changed, see CHANGELOG).
-n8n 2.44.5's `worker.ts` reads `N8N_CONCURRENCY_PRODUCTION_LIMIT` before the
+n8n 2.48.8's `worker.ts` reads `N8N_CONCURRENCY_PRODUCTION_LIMIT` before the
 worker's own `--concurrency` flag, and uses the flag only when that env var
 is `-1`. Any other value overrides `n8n_worker_concurrency` with that same
 number on every worker independently, not as a shared pool-wide cap: each

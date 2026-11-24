@@ -58,7 +58,7 @@ env:
   # newer-than-1.12 pin passed it silently. `tests/scripts/check-terraform-floor.sh`
   # fails the job if TF_FLOOR_VERSION and every versions.tf's
   # required_version ever drift apart at major.minor granularity.
-  TF_VERSION: "1.17.0"
+  TF_VERSION: "1.17.2"
   TF_FLOOR_VERSION: "1.11.4"
   # OpenTofu is a second supported consumer of this module (published to
   # both the Terraform and OpenTofu registries), tracked here as its own
@@ -66,7 +66,7 @@ env:
   # and "latest stable tofu" and "latest stable terraform" are not the same
   # release. test-opentofu below is the only job that reads this.
   TOFU_VERSION: "1.13.2"
-  TFLINT_VERSION: "v0.64.0"
+  TFLINT_VERSION: "v0.66.0"
   # NOTE: the tflint job resolves its config with `git rev-parse --show-toplevel`
   # rather than an env var here. `${{ github.workspace }}` is empty on the
   # self-hosted runner this repo also builds on, TFLINT_CONFIG_FILE resolved to
@@ -77,7 +77,7 @@ env:
   # refuses to run against a different local version, which makes this line the
   # single source of truth for both. Bumping it is a deliberate change: expect a
   # new release to report findings that need triaging in the same commit.
-  CHECKOV_VERSION: "3.3.30"
+  CHECKOV_VERSION: "3.4.7"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   # Shared provider plugin cache across the validate/test/tflint matrices.
@@ -166,7 +166,7 @@ jobs:
       # trap the floating checkov version fell into (see CHECKOV_VERSION above).
       # It happened to be harmless here, because the two versions render this
       # repo's tables identically, but that was luck rather than design.
-      TERRAFORM_DOCS_VERSION: v0.24.0
+      TERRAFORM_DOCS_VERSION: v0.25.1
     steps:
       - uses: actions/checkout@v7
 

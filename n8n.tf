@@ -378,12 +378,12 @@ resource "helm_release" "n8n" {
 }
 
 # ── Pod disruption budgets ────────────────────────────────────────────────────
-# The chart (1.17.0, the default) renders a budget for main only, and only
+# The chart (1.20.0, the default) renders a budget for main only, and only
 # when main runs more than one replica (n8n-io/n8n-hosting#228), which this
 # module never does (see "Main pod availability" above). The webhook
 # processor and the default worker get theirs here instead, selecting the
 # labels the chart puts on those Deployments' pods (checked by hand against
-# `helm template` of chart 1.17.0; tests/scripts/check-n8n-chart.sh does not
+# `helm template` of chart 1.20.0; tests/scripts/check-n8n-chart.sh does not
 # assert these selectors).
 #
 # maxUnavailable = 1, not minAvailable: minAvailable = 1 on a one-replica

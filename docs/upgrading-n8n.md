@@ -62,13 +62,13 @@ already at the unindexed `kubernetes_namespace.n8n` needs no `state mv`.
 
 | Variable | Controls | Default |
 | --- | --- | --- |
-| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.17.0"`, pinned |
-| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.44.5"`, pinned |
+| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.20.0"`, pinned |
+| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.48.8"`, pinned |
 | `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning the application image tag |
 
 Bumping the image tag alone gets you a new n8n version without changing the chart's templates or value schema. Bumping the chart version can also change what values the chart accepts, so treat it as the larger-blast-radius change of the two.
 
-The image tag is pinned rather than left to the chart, and setting `n8n_image_tag = null` hands it back. Do that only if you have a reason to: before chart 1.12.0 the chart's own default was the floating `stable` tag, resolved per node at pull time under `IfNotPresent`, so a node holding a cached layer could keep serving whatever it pulled whenever that was. From chart 1.12.0 on, an unset tag resolves to the pinned chart's own appVersion instead (2.44.5 for chart 1.17.0) - a fixed version, but still not one this module's own CHANGELOG controls, so a chart bump with the tag left null moves the running n8n version silently along with it.
+The image tag is pinned rather than left to the chart, and setting `n8n_image_tag = null` hands it back. Do that only if you have a reason to: before chart 1.12.0 the chart's own default was the floating `stable` tag, resolved per node at pull time under `IfNotPresent`, so a node holding a cached layer could keep serving whatever it pulled whenever that was. From chart 1.12.0 on, an unset tag resolves to the pinned chart's own appVersion instead (2.48.5 for chart 1.20.0) - a fixed version, but still not one this module's own CHANGELOG controls, so a chart bump with the tag left null moves the running n8n version silently along with it.
 
 ### Before bumping the runners image
 
@@ -132,6 +132,34 @@ worker had already claimed when the pods went down is different: n8n sets
 Bull's `maxStalledCount` to 0, so a claimed job that is interrupted is not
 retried.
 
+## Valkey chart `0.12.0` -> `1.0.0` (this module's current pin)
+
+1.0.0 renames the keys this module sets on `helm_release.valkey`:
+`dataStorage.enabled` / `.requestedSize` / `.className` move to
+`persistence.enabled` / `.size` / `.storageClass`, and `valkeyConfig` (used
+only when `valkey_append_only_enabled = true`) moves to `extraConfig`. The
+chart refuses to render while the old keys are set, so this is not optional:
+`redis_valkey.tf` now emits the 1.0.0 names. Verified by rendering both
+chart versions' values through the real chart with `helm template`: the PVC
+name, the Deployment name, its label selector, and the Service name are all
+unchanged, so an existing PVC is kept and the release upgrades in place
+rather than being recreated under a new name.
+
+**Effect on an existing deployment:** the Valkey Deployment rolls once,
+same as every chart bump (`deploymentStrategy = "Recreate"`, so a brief
+queue outage; see "Valkey restarts during the upgrade" above). PVC
+`<release>-valkey` is kept, not recreated: the two renamed containers go
+from `<fullname>` / `<fullname>-init` to `valkey` / `init`, and this
+module's deployment, which does not enable metrics, gains no new `metrics`
+container (the chart only names the container that way while
+`metrics.enabled = true`). A readiness probe is now enabled by default
+(`readinessProbe.enabled: true`), taking a pod out of the Service once it
+stops answering `PONG`. Neither needs a module change. This exact migration
+was run against a live homelab deployment adopted into Terraform state
+(production `n8n-redis` release): `dataStorage` moved to `persistence` with
+the same PVC (`n8n-redis-valkey`) kept, confirming the chart's own claim
+that PVC names do not depend on the rename.
+
 ## `n8n_execution_concurrency_limit` default `100` -> `-1`
 
 Not a chart or image bump, but it changes behavior on the next apply same as
@@ -152,7 +180,7 @@ ceiling, `replicas x n8n_worker_concurrency`. Set
 `n8n_execution_concurrency_limit = 100` to keep the previous behavior. See
 [`docs/operations.md` → Worker autoscaling](./operations.md#how-worker-concurrency-and-scale-out-interact).
 
-## Chart 1.10.0 -> 1.17.0 (this module's current pin)
+## Chart 1.10.0 -> 1.17.0
 
 Behavior that changed on this bump, verified by rendering this module's values through both chart versions (`tests/scripts/check-n8n-chart.sh`):
 
@@ -195,11 +223,57 @@ KEDA (or the CPU HPA) runs two or more workers. Voluntary-disruption guard
 only: a node can still be force-removed after a drain timeout without
 honoring either budget.
 
+## Chart 1.17.0 -> 1.20.0 (this module's current pin)
+
+Diffed the two versions' `values.yaml`, `values.schema.json` and `templates/`
+directly (`tests/scripts/chart-values-diff.sh 1.20.0`, run from the previous
+commit, before the pin below moved to `1.20.0`; the script compares the
+candidate version against whatever `n8n_chart_version` currently defaults
+to, so running it after the pin moves would compare `1.20.0` against
+itself). Only two real changes, both additive:
+
+- **`keda.worker.advanced` and `keda.webhookProcessor.advanced` are now real
+  values paths**, rendered straight into the matching `ScaledObject`'s
+  `spec.advanced` (`templates/scaledobject-worker.yaml`,
+  `templates/scaledobject-webhook-processor.yaml`). Chart 1.17.0 exposed no
+  such path; see the comment on `local.k8s_values_keda` in `locals.tf`. This
+  module does not set either key yet, so behavior is unchanged: the worker's
+  scale-down stabilization window is still Kubernetes' own HPA default
+  (~300s). A caller-facing input for it is future work, not required by this
+  bump.
+- **`config.deploymentArtifact` is a new telemetry-only key**, rendered as
+  `N8N_DEPLOYMENT_ARTIFACT` and defaulting to `helm-chart/<chart version>`
+  when unset. This module does not set it; no effect on a running
+  deployment beyond the new env var's value.
+
+Everything this module actually relies on is unchanged: the chart's
+appVersion moves from `2.44.5` to `2.48.5` (`n8n_image_tag`'s own default
+moves further, to `2.48.8`; see "Version inputs" above), the five webhook
+path prefixes (`/webhook`, `/webhook-waiting`, `/form`, `/form-waiting`,
+`/mcp`) routed by the chart's own Ingress are the same five,
+`templates/pdb.yaml`'s main-replica-count gate is untouched, and every
+`tests/scripts/check-n8n-chart.sh` scenario (worker probes, task-runner
+sidecar placement, worker replica omission, the null-tag appVersion
+fallback, `N8N_WEBHOOK_URL`, `/mcp` routing, the CA-bundle mount, Postgres
+TLS env, heap size, credentials-overwrite, DNS config, worker concurrency,
+pruning cadence) passes unchanged against chart 1.20.0.
+
+n8n itself moves from `2.44.5` to `2.48.8`. The only behavior change across
+that span worth calling out here is 2.45.0's durable scheduler, on by
+default since that release: "every N seconds"/"every N minutes" schedules
+now fire relative to when the workflow was published rather than on clock
+boundaries, and the `N8N_ENV_FEAT_SKIP_DURABLE_SCHEDULER` escape hatch is
+gone. Nothing about webhook routing changed in any of 2.45.0 through
+2.48.8 (checked `packages/cli/src/abstract-server.ts` at both ends of the
+range: the same path list enables production webhooks), so
+`local.n8n_webhook_path_prefixes` needs no change.
+
 ## Before bumping
 
 1. Read the breaking-changes doc for every major version you're crossing, not just the target: [n8n v2.0 breaking changes](https://docs.n8n.io/2-0-breaking-changes/), [n8n v3.0 breaking changes](https://docs.n8n.io/changelog/v30-breaking-changes) (scheduled October 2026). Jumping from, say, 1.x straight to a 3.x tag means both apply.
-2. Check whether the target n8n version needs a newer chart version. If the chart's own `values.yaml` schema changed (new keys under `queueMode`, `taskRunners`, etc.), you need `n8n_chart_version` bumped too, not just `n8n_image_tag`. Compare `helm show values oci://ghcr.io/n8n-io/n8n-helm-chart/n8n --version <candidate>` against the version currently pinned.
-3. Take and verify a database backup - `kubectl cnpg backup`, a `pg_dump` against the rw Service, or whatever your external Postgres offers. Helm cannot roll back database migrations.
+2. **An unpinned caller moves to this module's new `n8n_image_tag` default on its next apply, which can be a downgrade.** If your running deployment already set `n8n_image_tag` ahead of this module's own default (deliberately, or because an earlier module version pinned higher and you have not re-pinned since), dropping the override hands the version choice back to whatever this module ships, which is not guaranteed to be newer than what you are running. Before relying on the default, check the version every main and worker pod is actually running (see step 5 under "Bumping" below) against this module's `n8n_image_tag` default in `variables.tf`. If any pod is ahead, either pin `n8n_image_tag` explicitly to the version you intend to run, or treat the drop as a real downgrade: reconcile every pod to the higher schema version first (a mixed main/worker fleet on different n8n versions already risks inconsistent migration state), and take a verified pre-upgrade database backup before applying, the same as any other version change. Helm's `atomic` rolls back Kubernetes resources, never PostgreSQL migrations that already ran.
+3. Check whether the target n8n version needs a newer chart version. If the chart's own `values.yaml` schema changed (new keys under `queueMode`, `taskRunners`, etc.), you need `n8n_chart_version` bumped too, not just `n8n_image_tag`. Compare `helm show values oci://ghcr.io/n8n-io/n8n-helm-chart/n8n --version <candidate>` against the version currently pinned.
+4. Take and verify a database backup - `kubectl cnpg backup`, a `pg_dump` against the rw Service, or whatever your external Postgres offers. Helm cannot roll back database migrations.
 
 ## Bumping
 

@@ -138,12 +138,12 @@ resource "helm_release" "valkey" {
           }
         }
 
-        dataStorage = merge(
+        persistence = merge(
           {
-            enabled       = true
-            requestedSize = var.valkey_storage_size
+            enabled = true
+            size    = var.valkey_storage_size
           },
-          length(var.valkey_storage_class) > 0 ? { className = var.valkey_storage_class } : {},
+          length(var.valkey_storage_class) > 0 ? { storageClass = var.valkey_storage_class } : {},
         )
 
         # Standalone by default (replica.enabled defaults to false in the chart).
@@ -177,7 +177,7 @@ resource "helm_release" "valkey" {
       # var.valkey_append_only_enabled for the full story; false (the
       # default) renders the chart's empty default and stays snapshot-only.
       var.valkey_append_only_enabled ? {
-        valkeyConfig = "appendonly yes\nappendfsync everysec\n"
+        extraConfig = "appendonly yes\nappendfsync everysec\n"
       } : {},
 
       # Restarts the server when the generated password rotates, so the new
@@ -187,9 +187,8 @@ resource "helm_release" "valkey" {
       # the old ACL until an unrelated restart. The n8n release carries the
       # same checksum (local.k8s_values_pod_annotations), which is what makes
       # rotation one apply instead of a split-brain armed for the next restart
-      # on either side. Top-level podAnnotations is documented in valkey-helm
-      # 0.12.0, the pinned default. The hash, never the password: annotations
-      # are world-readable to anyone who can get the pod.
+      # on either side. Top-level podAnnotations is documented in valkey
+      # 1.0.0, the pinned default. The hash, never the password: annotations
       #
       # Opt-in (var.valkey_password_rotation_roll_enabled, default false), not
       # unconditional like deploymentStrategy above: introducing this key into

@@ -57,7 +57,7 @@ locals {
   ]
 
   # The prefixes the chart's own webhook Ingress
-  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.17.0. It has
+  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.20.0. It has
   # never routed the two HITL callbacks, so those always land in
   # n8n_unrouted_webhook_prefixes below. /mcp/ is conditional: chart 1.16.0
   # added it (n8n_chart_routes_mcp), and n8n_chart_version accepts any older
@@ -337,7 +337,7 @@ locals {
     "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES",
     # Chart-rendered env var name moved from WEBHOOK_URL to N8N_WEBHOOK_URL at
     # chart 1.16.0 (n8n deprecated WEBHOOK_URL as of n8n 2.35.0, an alias of
-    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.44.5) is
+    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.48.8) is
     # past that deprecation either way. Reserved under the new name, since
     # that is what both the chart's single-host path and this module's own
     # split-ingress injection below now render.
@@ -2215,10 +2215,12 @@ locals {
   # scale-down delay a caller actually observes is Kubernetes' own default HPA
   # scaleDown stabilization window, 300s, which KEDA's ScaledObject inherits
   # for every scale-down step above the floor; measured live at ~298s. Chart
-  # 1.17.0 exposes no values path to the ScaledObject's spec.advanced, so that
-  # window cannot be shortened from this module (confirmed: keda.worker.advanced
-  # renders no spec.advanced key through `helm template`), so it is left at the
-  # default.
+  # 1.20.0 added a real values path to the ScaledObject's spec.advanced
+  # (keda.worker.advanced, verified: `helm template` renders whatever is set
+  # there straight into spec.advanced), so the window could now be shortened
+  # with `advanced.horizontalPodAutoscalerConfig.behavior.scaleDown`. This
+  # module does not set it yet: leaving the default is a deliberate choice,
+  # not a chart limitation anymore, pending a caller-facing input for it.
   k8s_values_keda = var.k8s_keda_installed ? {
     keda = {
       enabled = true

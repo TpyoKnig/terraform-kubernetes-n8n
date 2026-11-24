@@ -12,7 +12,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - `n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default
   `true`) create `kubernetes_pod_disruption_budget_v1` resources with
   `maxUnavailable = 1` for the webhook processor and default worker
-  Deployments. The n8n chart (1.17.0, the pinned version) renders a
+  Deployments. The n8n chart (1.20.0, the pinned version) renders a
   PodDisruptionBudget for the main pods only, and only when main runs more
   than one replica (n8n-io/n8n-hosting#228), which this module never does, so
   without these a voluntary node drain (a Talos node upgrade,
@@ -97,6 +97,56 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   reports only refresh the body. The decision lives in
   `tests/scripts/drift-issue-sync.sh`, whose offline self-test runs via
   `task version-drift`.
+- CI toolchain pins bumped to close out part of the weekly version-drift
+  report (issue #66): `TF_VERSION` `1.17.0` -> `1.17.2`, `TFLINT_VERSION`
+  `v0.64.0` -> `v0.66.0`. Both are patch-safe: no plan-time diff, no new
+  tflint findings.
+- `terraform-docs` CI pin (`TERRAFORM_DOCS_VERSION`) bumped `v0.24.0` ->
+  `v0.25.1` to match the brew default, with the matching mention in
+  `AGENTS.md` updated (issue #66). `terraform-docs --output-check .` renders
+  every README (root, all examples, both submodules) identically at the new
+  version, so no generated file changed.
+- `CHECKOV_VERSION` bumped `3.3.30` -> `3.4.7` (issue #66). Re-scanned with
+  checkov 3.4.7 installed in a scratch venv: still 15 passed / 0 failed /
+  0 skipped, identical to the 3.3.30 baseline, so no new findings to
+  triage. `.checkov.yaml`'s own re-verification comment and pass count are
+  refreshed to match.
+- **`n8n_chart_version` default bumped `1.17.0` -> `1.20.0`, `n8n_image_tag`
+  default bumped `2.44.5` -> `2.48.8`** (issue #66). An unpinned caller's
+  next apply rolls every n8n pod: a Helm upgrade for the chart plus a new
+  application image. Diffed both versions' `values.yaml`,
+  `values.schema.json` and `templates/` directly: the only real chart
+  changes are additive, `keda.worker.advanced` /
+  `keda.webhookProcessor.advanced` (a new `spec.advanced` passthrough this
+  module does not set) and a telemetry-only `config.deploymentArtifact`
+  key. The chart's appVersion moves `2.44.5` -> `2.48.5`; this module's own
+  `n8n_image_tag` pin goes one step further, to `2.48.8`. The five webhook
+  path prefixes this module routes, the main-PDB chart gate, every worker
+  probe and the task-runner sidecar placement are all unchanged, verified
+  by `tests/scripts/check-n8n-chart.sh` and
+  `tests/scripts/check-helm-chart-coverage.sh` against chart 1.20.0; n8n's
+  own `packages/cli/src/abstract-server.ts` registers the identical set of
+  webhook routes at `2.44.5` and `2.48.8`. n8n 2.45.0 turned the durable
+  scheduler on by default, which changes when interval-based schedules
+  fire (see `docs/upgrading-n8n.md`), but nothing about chart values,
+  webhook routing or task-runner behavior. See `docs/helm-chart-coverage.md`
+  and `docs/upgrading-n8n.md` for the full bump writeups.
+- **`valkey_chart_version` default bumped `0.12.0` -> `1.0.0`** (issue #66).
+  An unpinned caller's next apply rolls the Valkey Deployment once
+  (`deploymentStrategy = "Recreate"`, a brief queue outage; see
+  `docs/upgrading-n8n.md`). 1.0.0 renames the keys this module sets:
+  `dataStorage.enabled` / `.requestedSize` / `.className` to
+  `persistence.enabled` / `.size` / `.storageClass`, and `valkeyConfig` to
+  `extraConfig`; the chart refuses to render the old keys, so
+  `redis_valkey.tf` now emits the new names. Verified with `helm template`
+  against both chart versions: the PVC name, Deployment name, its label
+  selector, and Service name are unchanged, so an existing PVC is kept
+  across the upgrade. The chart's own container names change to `valkey` /
+  `init` / `metrics`, and a readiness probe is now enabled by default;
+  neither needs a module change. This migration was already run against a
+  live homelab deployment Terraform adopted (the `n8n-redis` release),
+  which confirms the PVC survives the rename in practice, not only in
+  `helm template`. See `docs/upgrading-n8n.md` for the full writeup.
 
 ## [0.4.1], The namespace rename
 

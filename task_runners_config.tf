@@ -12,7 +12,7 @@
 # box, so this ConfigMap supplies a config permitting stdlib and, optionally,
 # external packages via var.n8n_python_external_allow.
 #
-# Chart 1.17.0 is what n8n_chart_version pins and what this file is written
+# Chart 1.20.0 is what n8n_chart_version pins and what this file is written
 # against: it declares taskRunners.customConfig (values.yaml:144-149) and mounts
 # the named ConfigMap at /etc/n8n-task-runners.json (deployment-main.yaml).
 #

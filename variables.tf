@@ -440,7 +440,7 @@ variable "valkey_chart_repository" {
 variable "n8n_chart_version" {
   description = "n8n Helm chart version to deploy. Must be an exact version, not a constraint: the Helm provider resolves this literally."
   type        = string
-  default     = "1.17.0"
+  default     = "1.20.0"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", var.n8n_chart_version))
@@ -451,7 +451,7 @@ variable "n8n_chart_version" {
 variable "n8n_image_tag" {
   description = "n8n application image tag to deploy. Defaults to a concrete published version, which the module bumps deliberately with a CHANGELOG entry, on the same policy as the chart version pins above. Set it to null to hand the decision back to the chart, whose own default is empty, which resolves to the pinned chart's own appVersion (the n8n version that chart release was built and tested against) rather than to a floating tag. Before chart 1.12.0 the chart's own default was the floating `stable` tag, which resolved to whatever n8n version was latest at the moment a node pulled the image, and because the chart hardcodes an IfNotPresent pull policy, a node that already held a cached layer kept running the version it pulled whenever that was: the running version followed each node's pull history rather than the configuration. Handing the choice back to the chart today no longer has that failure mode, but it does mean an upgrade of n8n_chart_version alone, with this input left null, silently moves the running n8n version along with it. Nothing about either path is visible in a plan, which is why the module pins rather than defers. Pin a different version here to upgrade on your own schedule; see docs/upgrading-n8n.md for the order that upgrade has to follow, and <https://docs.n8n.io/2-0-breaking-changes/> for the n8n 2.x migration guide."
   type        = string
-  default     = "2.44.5"
+  default     = "2.48.8"
 
   validation {
     condition     = var.n8n_image_tag == null ? true : can(regex("^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$", var.n8n_image_tag))
@@ -631,14 +631,27 @@ variable "n8n_diagnostics_enabled" {
 }
 
 variable "valkey_chart_version" {
-  description = "Version of the valkey-io/valkey-helm chart to install. Only used when redis_backend = \"valkey\"."
+  description = "Version of the valkey-io/valkey-helm chart to install. Only used when redis_backend = \"valkey\". 1.0.0 and later require Valkey 9.0 or later (image.tag); this module leaves image.tag unset, so the chart's own default applies."
   type        = string
-  default     = "0.12.0"
+  default     = "1.0.0"
   nullable    = false
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", var.valkey_chart_version))
-    error_message = "valkey_chart_version must be an exact SemVer 2 version such as \"0.12.0\", the same rule n8n_chart_version enforces. Helm resolves chart versions literally here, so a range or a leading \"v\" is not accepted."
+    error_message = "valkey_chart_version must be an exact SemVer 2 version such as \"1.0.0\", the same rule n8n_chart_version enforces. Helm resolves chart versions literally here, so a range or a leading \"v\" is not accepted."
+  }
+
+  validation {
+    # helm_release.valkey (redis_valkey.tf) renders persistence/extraConfig,
+    # the 1.0.0 key shapes; it does not branch on the version pinned here. A
+    # 0.x chart requires dataStorage/valkeyConfig instead and refuses the
+    # 1.0.0 shape outright, so pinning below 1.0.0 would silently stop
+    # persistence and append-only settings from reaching the chart rather
+    # than failing loudly. Rejected at plan time instead: bump the pin to
+    # 1.0.0 or later. There is no escape hatch to render the 0.x shape; open
+    # an issue if you need one.
+    condition     = can(regex("^([0-9]+)\\.", var.valkey_chart_version)) ? tonumber(regex("^([0-9]+)\\.", var.valkey_chart_version)[0]) >= 1 : true
+    error_message = "valkey_chart_version must be 1.0.0 or later: redis_valkey.tf renders the 1.0.0 values shape (persistence/extraConfig), which a 0.x chart refuses to render, silently dropping valkey_storage_size/valkey_storage_class/valkey_append_only_enabled instead of failing the apply."
   }
 }
 
@@ -861,7 +874,7 @@ variable "n8n_node_max_old_space_size_mb" {
 # ── Execution settings ────────────────────────────────────────────────────────
 
 variable "n8n_worker_concurrency" {
-  description = "Number of jobs each worker pod can process simultaneously, passed as the worker process's --concurrency flag. Only takes effect while n8n_execution_concurrency_limit is -1: n8n 2.44.5's worker.ts reads N8N_CONCURRENCY_PRODUCTION_LIMIT first and falls back to this flag only when that value is -1, so any other value overrides this input on every worker regardless of replica count."
+  description = "Number of jobs each worker pod can process simultaneously, passed as the worker process's --concurrency flag. Only takes effect while n8n_execution_concurrency_limit is -1: n8n 2.48.8's worker.ts reads N8N_CONCURRENCY_PRODUCTION_LIMIT first and falls back to this flag only when that value is -1, so any other value overrides this input on every worker regardless of replica count."
   type        = number
   default     = 10
 
@@ -904,7 +917,7 @@ variable "n8n_execution_timeout_max" {
 }
 
 variable "n8n_execution_concurrency_limit" {
-  description = "Maximum concurrent production executions per worker process, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker independently (n8n 2.44.5 worker.ts, see docs/operations.md's \"How worker concurrency and scale-out interact\" section): it is still a per-worker ceiling, not a shared pool-wide one, so total in-flight production executions across the pool becomes replicas x n8n_execution_concurrency_limit, scaling with however many replicas KEDA adds, the same way n8n_worker_concurrency itself scales. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
+  description = "Maximum concurrent production executions per worker process, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker independently (n8n 2.48.8 worker.ts, see docs/operations.md's \"How worker concurrency and scale-out interact\" section): it is still a per-worker ceiling, not a shared pool-wide one, so total in-flight production executions across the pool becomes replicas x n8n_execution_concurrency_limit, scaling with however many replicas KEDA adds, the same way n8n_worker_concurrency itself scales. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
   type        = number
   default     = -1
 
@@ -1107,14 +1120,14 @@ variable "n8n_prestop_sleep" {
 }
 
 variable "n8n_webhook_pdb_enabled" {
-  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the webhook processor Deployment, so a voluntary node drain (a Talos node upgrade, cluster-autoscaler scale-down, kubectl drain) evicts at most one webhook processor at a time. The n8n chart (1.17.0, the default) renders a budget for the main pods only, and only when main runs more than one replica (n8n-io/n8n-hosting#228), which this module never does, so without this every webhook processor could be stopped in the same second. maxUnavailable rather than minAvailable: minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains, the trap cnpg_pdb_enabled documents for a single-instance CloudNativePG cluster. With n8n_webhook_hpa_min_replicas = 1 the budget permits evicting the only replica and protects nothing; it earns its keep once the Deployment runs two or more. Set to false to manage your own budget, or if a budget you already run already selects these pods (two budgets selecting the same pod make the Eviction API refuse it even when both would allow a disruption). A budget you own named n8n-webhook-processor in this namespace makes the apply fail with \"already exists\". Voluntary-disruption guard only: Talos can still proceed by force after a drain timeout without honoring it."
+  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the webhook processor Deployment, so a voluntary node drain (a Talos node upgrade, cluster-autoscaler scale-down, kubectl drain) evicts at most one webhook processor at a time. The n8n chart (1.20.0, the default) renders a budget for the main pods only, and only when main runs more than one replica (n8n-io/n8n-hosting#228), which this module never does, so without this every webhook processor could be stopped in the same second. maxUnavailable rather than minAvailable: minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains, the trap cnpg_pdb_enabled documents for a single-instance CloudNativePG cluster. With n8n_webhook_hpa_min_replicas = 1 the budget permits evicting the only replica and protects nothing; it earns its keep once the Deployment runs two or more. Set to false to manage your own budget, or if a budget you already run already selects these pods (two budgets selecting the same pod make the Eviction API refuse it even when both would allow a disruption). A budget you own named n8n-webhook-processor in this namespace makes the apply fail with \"already exists\". Voluntary-disruption guard only: Talos can still proceed by force after a drain timeout without honoring it."
   type        = bool
   default     = true
   nullable    = false
 }
 
 variable "n8n_worker_pdb_enabled" {
-  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the default worker Deployment, so a voluntary node drain evicts at most one worker at a time. The n8n chart (1.17.0, the default) renders a budget for the main pods only, and only when main runs more than one replica (n8n-io/n8n-hosting#228), which this module never does. maxUnavailable rather than minAvailable, for the same reason cnpg_pdb_enabled gives for a single-instance CloudNativePG cluster: minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains. At the default n8n_worker_keda_min_replicas = 1 this budget therefore protects nothing until KEDA (or the CPU HPA) runs two or more workers; raising that floor is what makes it effective, at the cost of one more pod. Evicted workers still depend on n8n_termination_grace_period for in-flight executions. Set to false to manage your own budget, or if a budget you already run already selects these pods. A budget you own named n8n-worker in this namespace makes the apply fail with \"already exists\"."
+  description = "When true (the default), the module creates a PodDisruptionBudget with maxUnavailable = 1 for the default worker Deployment, so a voluntary node drain evicts at most one worker at a time. The n8n chart (1.20.0, the default) renders a budget for the main pods only, and only when main runs more than one replica (n8n-io/n8n-hosting#228), which this module never does. maxUnavailable rather than minAvailable, for the same reason cnpg_pdb_enabled gives for a single-instance CloudNativePG cluster: minAvailable = 1 on a one-replica Deployment blocks every voluntary eviction and stalls drains. At the default n8n_worker_keda_min_replicas = 1 this budget therefore protects nothing until KEDA (or the CPU HPA) runs two or more workers; raising that floor is what makes it effective, at the cost of one more pod. Evicted workers still depend on n8n_termination_grace_period for in-flight executions. Set to false to manage your own budget, or if a budget you already run already selects these pods. A budget you own named n8n-worker in this namespace makes the apply fail with \"already exists\"."
   type        = bool
   default     = true
   nullable    = false
