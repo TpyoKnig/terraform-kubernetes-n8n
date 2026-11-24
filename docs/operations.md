@@ -81,7 +81,7 @@ with however many workers KEDA has running. It takes effect only while
 `n8n_execution_concurrency_limit` stays at its default of `-1`; any other
 value renders `N8N_CONCURRENCY_PRODUCTION_LIMIT` and overrides
 `n8n_worker_concurrency` with that number on every worker independently (n8n
-2.44.5's `worker.ts`), so it is still a per-worker ceiling, not a shared
+2.48.8's `worker.ts`), so it is still a per-worker ceiling, not a shared
 pool-wide one, and total capacity becomes `replicas x
 n8n_execution_concurrency_limit` instead.
 
@@ -720,14 +720,18 @@ you would treat any sandbox escape hatch.
   first.
 - **`cnpg_postgres_image_tag`'s default (`18-minimal-trixie`) floats**, by
   design: `ghcr.io/cloudnative-pg/postgresql` republishes it against the
-  newest `18.x` minor on every image build. CNPG rolls the single Postgres
-  instance whenever the tag's underlying digest changes, so a deployment
-  pinned to this module's default moves Postgres minor versions, with
-  downtime (`cnpg_instances = 1`), on whatever schedule upstream republishes
-  the tag, not on this module's own release cadence. Pin an exact tag
-  yourself (e.g. `18.7-minimal-trixie`) if you need to control when that
-  roll happens; this module deliberately does not do that for you (see
-  `docs/versioning.md`).
+  newest `18.x` minor on every image build. Republishing the digest alone
+  does not roll anything: the `Cluster` CR's `imageName` string is
+  unchanged, so Terraform reports no diff and CNPG reconciles nothing.
+  The newer minor is picked up only the next time the instance pod is
+  otherwise recreated (a node drain, a failover, a `kubectl delete pod`),
+  since the kubelet re-pulls the tag then and gets whatever digest it
+  currently resolves to under `IfNotPresent`, or when you deliberately
+  change `cnpg_postgres_image_tag` yourself and apply. Pin an exact tag
+  (e.g. `18.7-minimal-trixie`) if you need every instance recreation to
+  use the same Postgres build instead of whatever the floating tag
+  resolves to at that moment; this module deliberately does not do that
+  for you (see `docs/versioning.md`).
 - **The `gavinbunney/kubectl` provider** is what the CNPG `Cluster` CR is
   applied through. Configure it alongside `kubernetes` and `helm` in your root
   module, see `examples/homelab/providers.tf`. It is used rather than

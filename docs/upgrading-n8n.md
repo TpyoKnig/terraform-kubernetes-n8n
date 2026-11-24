@@ -224,8 +224,11 @@ honoring either budget.
 ## Chart 1.17.0 -> 1.20.0 (this module's current pin)
 
 Diffed the two versions' `values.yaml`, `values.schema.json` and `templates/`
-directly (`tests/scripts/chart-values-diff.sh 1.20.0`, a `helm pull` of both
-tags). Only two real changes, both additive:
+directly (`tests/scripts/chart-values-diff.sh 1.20.0`, run from the previous
+commit, before the pin below moved to `1.20.0`; the script compares the
+candidate version against whatever `n8n_chart_version` currently defaults
+to, so running it after the pin moves would compare `1.20.0` against
+itself). Only two real changes, both additive:
 
 - **`keda.worker.advanced` and `keda.webhookProcessor.advanced` are now real
   values paths**, rendered straight into the matching `ScaledObject`'s
@@ -266,8 +269,9 @@ range: the same path list enables production webhooks), so
 ## Before bumping
 
 1. Read the breaking-changes doc for every major version you're crossing, not just the target: [n8n v2.0 breaking changes](https://docs.n8n.io/2-0-breaking-changes/), [n8n v3.0 breaking changes](https://docs.n8n.io/changelog/v30-breaking-changes) (scheduled October 2026). Jumping from, say, 1.x straight to a 3.x tag means both apply.
-2. Check whether the target n8n version needs a newer chart version. If the chart's own `values.yaml` schema changed (new keys under `queueMode`, `taskRunners`, etc.), you need `n8n_chart_version` bumped too, not just `n8n_image_tag`. Compare `helm show values oci://ghcr.io/n8n-io/n8n-helm-chart/n8n --version <candidate>` against the version currently pinned.
-3. Take and verify a database backup - `kubectl cnpg backup`, a `pg_dump` against the rw Service, or whatever your external Postgres offers. Helm cannot roll back database migrations.
+2. **An unpinned caller moves to this module's new `n8n_image_tag` default on its next apply, which can be a downgrade.** If your running deployment already set `n8n_image_tag` ahead of this module's own default (deliberately, or because an earlier module version pinned higher and you have not re-pinned since), dropping the override hands the version choice back to whatever this module ships, which is not guaranteed to be newer than what you are running. Before relying on the default, check the version every main and worker pod is actually running (see step 5 under "Bumping" below) against this module's `n8n_image_tag` default in `variables.tf`. If any pod is ahead, either pin `n8n_image_tag` explicitly to the version you intend to run, or treat the drop as a real downgrade: reconcile every pod to the higher schema version first (a mixed main/worker fleet on different n8n versions already risks inconsistent migration state), and take a verified pre-upgrade database backup before applying, the same as any other version change. Helm's `atomic` rolls back Kubernetes resources, never PostgreSQL migrations that already ran.
+3. Check whether the target n8n version needs a newer chart version. If the chart's own `values.yaml` schema changed (new keys under `queueMode`, `taskRunners`, etc.), you need `n8n_chart_version` bumped too, not just `n8n_image_tag`. Compare `helm show values oci://ghcr.io/n8n-io/n8n-helm-chart/n8n --version <candidate>` against the version currently pinned.
+4. Take and verify a database backup - `kubectl cnpg backup`, a `pg_dump` against the rw Service, or whatever your external Postgres offers. Helm cannot roll back database migrations.
 
 ## Bumping
 

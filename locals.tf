@@ -337,7 +337,7 @@ locals {
     "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES",
     # Chart-rendered env var name moved from WEBHOOK_URL to N8N_WEBHOOK_URL at
     # chart 1.16.0 (n8n deprecated WEBHOOK_URL as of n8n 2.35.0, an alias of
-    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.44.5) is
+    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.48.8) is
     # past that deprecation either way. Reserved under the new name, since
     # that is what both the chart's single-host path and this module's own
     # split-ingress injection below now render.

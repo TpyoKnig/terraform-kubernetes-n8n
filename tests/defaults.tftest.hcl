@@ -3729,6 +3729,20 @@ run "valkey_chart_version_rejects_a_range" {
   expect_failures = [var.valkey_chart_version]
 }
 
+# redis_valkey.tf renders only the 1.0.0 values shape (persistence/
+# extraConfig); a 0.x chart refuses that shape outright, so a pin below
+# 1.0.0 must fail the plan rather than silently dropping
+# valkey_storage_size/valkey_storage_class/valkey_append_only_enabled.
+run "valkey_chart_version_rejects_a_pre_1_0_release" {
+  command = plan
+
+  variables {
+    valkey_chart_version = "0.12.0"
+  }
+
+  expect_failures = [var.valkey_chart_version]
+}
+
 # ── The namespace gets long enough to finish deleting ─────────────────────────
 # Deleting this namespace waits on a CNPG Cluster tearing down and PVCs whose
 # provisioner has to detach real volumes, which ran past the 2m this used to
@@ -6969,9 +6983,9 @@ run "the_valkey_deployment_recreates_rather_than_rolling" {
   assert {
     condition = alltrue([
       for r in helm_release.valkey :
-      !can(yamldecode(r.values[0]).valkeyConfig)
+      !can(yamldecode(r.values[0]).extraConfig)
     ])
-    error_message = "valkey_append_only_enabled defaults to false, so the default plan must render no valkeyConfig at all, which is the chart's own default, not an empty string that would still mount a config file."
+    error_message = "valkey_append_only_enabled defaults to false, so the default plan must render no extraConfig at all, which is the chart's own default, not an empty string that would still mount a config file."
   }
 
   assert {

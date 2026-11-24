@@ -17,7 +17,7 @@
 # module's output is a Helm release, and checkov's Kubernetes checks read
 # rendered manifests, not `helm_release` values. Scanning the workload would
 # mean rendering the chart first, a live-cluster step this gate deliberately
-# does not take, since it must run on a laptop with no credentials. What the 14
+# does not take, since it must run on a laptop with no credentials. What the 16
 # checks do cover is the Terraform this module actually writes: the Secrets,
 # Services and the CNPG manifest. `tests/scripts/smoke-test.sh` is where the
 # deployed workload gets inspected.
@@ -28,8 +28,8 @@
 # nothing in one for checkov to assess.
 #
 # Be honest about what this buys today: nothing measurable. Re-verified against
-# checkov 3.4.7 on 2026-11-23, this tree scans 15 passed / 0 failed / 0 skipped
-# with the skip-path and 15 / 0 / 0 without it, and neither run emits a parser
+# checkov 3.4.7 on 2026-11-23, this tree scans 16 passed / 0 failed / 0 skipped
+# with the skip-path and 16 / 0 / 0 without it, and neither run emits a parser
 # error. It is kept as a cheap guard so a future checkov that does try to parse
 # a .tftest.hcl cannot put an unexplained error line into a gate that is
 # supposed to report clean. Drop it if that never happens and the dead config

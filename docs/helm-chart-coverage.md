@@ -117,8 +117,8 @@ three inputs that work together:
 
 ```hcl
 n8n_image_repository       = "ghcr.io/you/n8n-with-nodes"
-n8n_image_tag              = "2.44.5-mynodes"
-n8n_task_runner_image_tag  = "2.44.5"            # the n8n version underneath
+n8n_image_tag              = "2.48.8-mynodes"
+n8n_task_runner_image_tag  = "2.48.8"            # the n8n version underneath
 n8n_custom_extensions_path = "/opt/n8n-nodes"    # where n8n scans, N8N_CUSTOM_EXTENSIONS
 ```
 

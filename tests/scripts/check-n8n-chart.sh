@@ -219,7 +219,7 @@ fi
 
 # ── Image tag: before chart 1.12.0, an unset image.tag rendered the floating
 # `stable`; from 1.12.0 on it resolves to the chart's own appVersion instead.
-# n8n_image_tag defaults to this module's own pin (2.44.5), not null, so this
+# n8n_image_tag defaults to this module's own pin (2.48.8), not null, so this
 # scenario explicitly hands the choice back to the chart. A tfvars file,
 # not -var: the CLI's -var flag parses "null" as the literal string "null"
 # for a string-typed variable, not HCL null, so it never actually unsets the

@@ -638,7 +638,20 @@ variable "valkey_chart_version" {
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", var.valkey_chart_version))
-    error_message = "valkey_chart_version must be an exact SemVer 2 version such as \"0.12.0\", the same rule n8n_chart_version enforces. Helm resolves chart versions literally here, so a range or a leading \"v\" is not accepted."
+    error_message = "valkey_chart_version must be an exact SemVer 2 version such as \"1.0.0\", the same rule n8n_chart_version enforces. Helm resolves chart versions literally here, so a range or a leading \"v\" is not accepted."
+  }
+
+  validation {
+    # helm_release.valkey (redis_valkey.tf) renders persistence/extraConfig,
+    # the 1.0.0 key shapes; it does not branch on the version pinned here. A
+    # 0.x chart requires dataStorage/valkeyConfig instead and refuses the
+    # 1.0.0 shape outright, so pinning below 1.0.0 would silently stop
+    # persistence and append-only settings from reaching the chart rather
+    # than failing loudly. Rejected at plan time instead: bump the pin to
+    # 1.0.0 or later. There is no escape hatch to render the 0.x shape; open
+    # an issue if you need one.
+    condition     = can(regex("^([0-9]+)\\.", var.valkey_chart_version)) ? tonumber(regex("^([0-9]+)\\.", var.valkey_chart_version)[0]) >= 1 : true
+    error_message = "valkey_chart_version must be 1.0.0 or later: redis_valkey.tf renders the 1.0.0 values shape (persistence/extraConfig), which a 0.x chart refuses to render, silently dropping valkey_storage_size/valkey_storage_class/valkey_append_only_enabled instead of failing the apply."
   }
 }
 
@@ -861,7 +874,7 @@ variable "n8n_node_max_old_space_size_mb" {
 # ── Execution settings ────────────────────────────────────────────────────────
 
 variable "n8n_worker_concurrency" {
-  description = "Number of jobs each worker pod can process simultaneously, passed as the worker process's --concurrency flag. Only takes effect while n8n_execution_concurrency_limit is -1: n8n 2.44.5's worker.ts reads N8N_CONCURRENCY_PRODUCTION_LIMIT first and falls back to this flag only when that value is -1, so any other value overrides this input on every worker regardless of replica count."
+  description = "Number of jobs each worker pod can process simultaneously, passed as the worker process's --concurrency flag. Only takes effect while n8n_execution_concurrency_limit is -1: n8n 2.48.8's worker.ts reads N8N_CONCURRENCY_PRODUCTION_LIMIT first and falls back to this flag only when that value is -1, so any other value overrides this input on every worker regardless of replica count."
   type        = number
   default     = 10
 
@@ -904,7 +917,7 @@ variable "n8n_execution_timeout_max" {
 }
 
 variable "n8n_execution_concurrency_limit" {
-  description = "Maximum concurrent production executions per worker process, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker independently (n8n 2.44.5 worker.ts, see docs/operations.md's \"How worker concurrency and scale-out interact\" section): it is still a per-worker ceiling, not a shared pool-wide one, so total in-flight production executions across the pool becomes replicas x n8n_execution_concurrency_limit, scaling with however many replicas KEDA adds, the same way n8n_worker_concurrency itself scales. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
+  description = "Maximum concurrent production executions per worker process, rendered as N8N_CONCURRENCY_PRODUCTION_LIMIT. -1 (the default) leaves this unset, so each worker is bounded only by n8n_worker_concurrency, which is what lets KEDA's queue-depth scaling actually distribute a burst across new worker replicas instead of leaving them idle behind one worker already saturated. Any other value overrides n8n_worker_concurrency on every worker independently (n8n 2.48.8 worker.ts, see docs/operations.md's \"How worker concurrency and scale-out interact\" section): it is still a per-worker ceiling, not a shared pool-wide one, so total in-flight production executions across the pool becomes replicas x n8n_execution_concurrency_limit, scaling with however many replicas KEDA adds, the same way n8n_worker_concurrency itself scales. The chart also renders this env var on the main pod; this module's queue-mode topology does not execute production workflows there, so a non-default value has no verified effect on main."
   type        = number
   default     = -1
 
