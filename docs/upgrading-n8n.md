@@ -62,13 +62,13 @@ already at the unindexed `kubernetes_namespace.n8n` needs no `state mv`.
 
 | Variable | Controls | Default |
 | --- | --- | --- |
-| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.20.0"`, pinned |
-| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.48.8"`, pinned |
+| `n8n_chart_version` | The [n8n Helm chart](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n) version, which determines the chart's templates, defaults, and which values it accepts. | `"1.21.0"`, pinned |
+| `n8n_image_tag` | The n8n application image tag actually running inside the pods. | `"2.49.6"`, pinned |
 | `n8n_task_runner_image_tag` | Task runner image tag; keep aligned with the underlying n8n version when using a custom application tag. | `null`, meaning the application image tag |
 
 Bumping the image tag alone gets you a new n8n version without changing the chart's templates or value schema. Bumping the chart version can also change what values the chart accepts, so treat it as the larger-blast-radius change of the two.
 
-The image tag is pinned rather than left to the chart, and setting `n8n_image_tag = null` hands it back. Do that only if you have a reason to: before chart 1.12.0 the chart's own default was the floating `stable` tag, resolved per node at pull time under `IfNotPresent`, so a node holding a cached layer could keep serving whatever it pulled whenever that was. From chart 1.12.0 on, an unset tag resolves to the pinned chart's own appVersion instead (2.48.5 for chart 1.20.0) - a fixed version, but still not one this module's own CHANGELOG controls, so a chart bump with the tag left null moves the running n8n version silently along with it.
+The image tag is pinned rather than left to the chart, and setting `n8n_image_tag = null` hands it back. Do that only if you have a reason to: before chart 1.12.0 the chart's own default was the floating `stable` tag, resolved per node at pull time under `IfNotPresent`, so a node holding a cached layer could keep serving whatever it pulled whenever that was. From chart 1.12.0 on, an unset tag resolves to the pinned chart's own appVersion instead (2.49.6 for chart 1.21.0) - a fixed version, but still not one this module's own CHANGELOG controls, so a chart bump with the tag left null moves the running n8n version silently along with it.
 
 ### Before bumping the runners image
 
@@ -223,7 +223,7 @@ KEDA (or the CPU HPA) runs two or more workers. Voluntary-disruption guard
 only: a node can still be force-removed after a drain timeout without
 honoring either budget.
 
-## Chart 1.17.0 -> 1.20.0 (this module's current pin)
+## Chart 1.17.0 -> 1.20.0
 
 Diffed the two versions' `values.yaml`, `values.schema.json` and `templates/`
 directly (`tests/scripts/chart-values-diff.sh 1.20.0`, run from the previous
@@ -267,6 +267,34 @@ gone. Nothing about webhook routing changed in any of 2.45.0 through
 2.48.8 (checked `packages/cli/src/abstract-server.ts` at both ends of the
 range: the same path list enables production webhooks), so
 `local.n8n_webhook_path_prefixes` needs no change.
+
+## Chart 1.20.0 -> 1.21.0 (this module's current pin)
+
+Diffed the two versions' `values.yaml`, `values.schema.json` and
+`templates/` directly (`tests/scripts/chart-values-diff.sh 1.21.0`, run
+from the previous commit, before the pin below moved to `1.21.0`): no
+differences at all. The only thing the chart release changes is its own
+`Chart.yaml` (`version: 1.21.0`, `appVersion: 2.49.6`, and the two image
+tags under `annotations.artifacthub.io/images`); every template file is
+byte-identical to `1.20.0`.
+
+The chart's appVersion moves from `2.48.5` to `2.49.6`; `n8n_image_tag`'s
+own default moves to match, to `2.49.6` (see "Version inputs" above). The
+five webhook path prefixes routed by the chart's own Ingress are
+unchanged, `templates/pdb.yaml`'s main-replica-count gate is untouched,
+and every `tests/scripts/check-n8n-chart.sh` scenario passes unchanged
+against chart 1.21.0, which is expected given the template diff above.
+
+n8n itself moves from `2.48.8` to `2.49.6` (n8n@2.49.0 through n8n@2.49.6).
+Read through every intervening release's notes: no webhook routing,
+task-runner, or worker-concurrency change in any of them.
+`tests/scripts/check-webhook-routes.sh` confirms
+`local.n8n_webhook_path_prefixes` still covers exactly the routes n8n
+2.49.6 registers, and `packages/cli/src/commands/worker.ts` reads
+`N8N_CONCURRENCY_PRODUCTION_LIMIT` before `--concurrency` identically at
+2.48.8 and 2.49.6, so `n8n_worker_concurrency` /
+`n8n_execution_concurrency_limit`'s interaction (see
+`docs/operations.md`) is unaffected.
 
 ## Before bumping
 

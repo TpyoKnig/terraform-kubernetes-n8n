@@ -271,12 +271,36 @@ if [[ -z "$PY_JSON" ]]; then
   warn "  Tried: python3, python, py"
 fi
 
-if ! kubectl cluster-info &>/dev/null; then
-  echo -e "${RED}ERROR: kubectl cannot reach the cluster. Check your kubeconfig / credentials.${RESET}" >&2
+# `kubectl cluster-info` lists kube-system Services to build the printed
+# summary, a cluster-scoped read a namespace-scoped identity does not
+# have, even though every check below this point only touches
+# namespace-scoped resources. That made this preflight fail with a
+# Forbidden error on a healthy, reachable deployment. `auth can-i` targets
+# the SelfSubjectAccessReview API instead: every cluster grants that by
+# default (the `system:basic-user` ClusterRoleBinding), though custom
+# RBAC can remove it, so this can still be Forbidden on a cluster that
+# has done so despite the identity otherwise having pod access. A "no"
+# and a transport failure (bad kubeconfig, unreachable API server) both
+# still exit non-zero here:
+# stdout and stderr are discarded below, so the two are not told apart,
+# and the printed message hedges between them rather than claiming one.
+if ! kubectl auth can-i get pods -n "$NAMESPACE" &>/dev/null; then
+  echo -e "${RED}ERROR: kubectl cannot reach the cluster, or the current identity has no access to namespace '$NAMESPACE'. Check your kubeconfig / credentials.${RESET}" >&2
   exit 1
 fi
-pass "kubectl cluster connectivity"
+pass "kubectl cluster connectivity (namespace '$NAMESPACE')"
 
+# Namespace is itself a cluster-scoped resource type (unlike Pods, which
+# live inside one), so a plain `get` on it is not covered by the
+# namespace-scoped check above. Narrower than the removed `cluster-info`
+# call: it needs only a `get` grant naming this one namespace, which a
+# ClusterRoleBinding can carry without granting access to any other
+# namespace or to any other cluster-scoped type (a RoleBinding cannot
+# grant access to a cluster-scoped type at all, regardless of
+# resourceNames). Left as-is: it is the only reliable existence check
+# (listing pods in a namespace that does not exist returns an empty list,
+# not an error, and `auth can-i` evaluates policy without checking
+# whether the namespace named in it actually exists).
 if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
   fail "Namespace '$NAMESPACE' does not exist"
   exit 1
@@ -691,14 +715,38 @@ fi  # end queue-mode checks
 
 header "Cluster Storage"
 
-default_sc=$(kubectl get storageclass \
+# A plain `var=$(cmd)` with the script's `set -e` would exit the whole
+# script the moment `kubectl get storageclass` is Forbidden; the `if`
+# form below keeps the failure local so it can be reported instead.
+# stderr goes to its own file rather than `2>&1`: a successful call that
+# also prints a benign stderr warning (e.g. a deprecation notice) would
+# otherwise land inside $default_sc_output and be reported as part of
+# the default class's name.
+default_sc_stderr_file="$(mktemp)"
+if default_sc_output=$(kubectl get storageclass \
   -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' \
-  2>/dev/null || echo "")
+  2>"$default_sc_stderr_file"); then
+  default_sc_status=0
+else
+  default_sc_status=$?
+  default_sc_output="$(cat "$default_sc_stderr_file")"
+fi
+rm -f "$default_sc_stderr_file"
 
 # The module installs no CSI driver and no StorageClass, both are caller
-# prerequisites. Assert only that a class exists for the PVCs to bind against.
-if [[ -n "$default_sc" ]]; then
-  pass "Default StorageClass is '$default_sc'"
+# prerequisites. Assert only that a class exists for the PVCs to bind
+# against. StorageClass is cluster-scoped, so a namespace-scoped
+# ServiceAccount (see the Preflight comment above) typically cannot list
+# it: that is a permission gap, not evidence of a missing default class,
+# so it is reported as skipped rather than warned.
+if [[ $default_sc_status -ne 0 ]]; then
+  if [[ "$default_sc_output" == *"Forbidden"* ]]; then
+    skip "Default StorageClass (no permission to list StorageClasses cluster-wide)"
+  else
+    warn "Could not determine default StorageClass: $default_sc_output"
+  fi
+elif [[ -n "$default_sc_output" ]]; then
+  pass "Default StorageClass is '$default_sc_output'"
 else
   warn "No default StorageClass - CNPG and Valkey PVCs will stay Pending unless cnpg_storage_class / valkey_storage_class name one explicitly"
 fi
