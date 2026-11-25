@@ -271,11 +271,21 @@ if [[ -z "$PY_JSON" ]]; then
   warn "  Tried: python3, python, py"
 fi
 
-if ! kubectl cluster-info &>/dev/null; then
-  echo -e "${RED}ERROR: kubectl cannot reach the cluster. Check your kubeconfig / credentials.${RESET}" >&2
+# `kubectl cluster-info` lists kube-system Services to build the printed
+# summary, a cluster-scoped read a namespace-scoped ServiceAccount (the
+# identity every caller is expected to run this module and this script
+# with, per AGENTS.md's ownership boundary) does not have. That made this
+# preflight fail with a Forbidden error on a healthy, reachable
+# deployment. `auth can-i` targets the SelfSubjectAccessReview API
+# instead, which every authenticated identity may call regardless of
+# RBAC, so "no" here means genuinely reachable-but-unauthorized rather
+# than unreachable; a transport failure (bad kubeconfig, unreachable API
+# server) still exits non-zero.
+if ! kubectl auth can-i get pods -n "$NAMESPACE" &>/dev/null; then
+  echo -e "${RED}ERROR: kubectl cannot reach the cluster, or the current identity has no access to namespace '$NAMESPACE'. Check your kubeconfig / credentials.${RESET}" >&2
   exit 1
 fi
-pass "kubectl cluster connectivity"
+pass "kubectl cluster connectivity (namespace '$NAMESPACE')"
 
 if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
   fail "Namespace '$NAMESPACE' does not exist"
@@ -691,14 +701,31 @@ fi  # end queue-mode checks
 
 header "Cluster Storage"
 
-default_sc=$(kubectl get storageclass \
+# A plain `var=$(cmd)` with the script's `set -e` would exit the whole
+# script the moment `kubectl get storageclass` is Forbidden; the `if`
+# form below keeps the failure local so it can be reported instead.
+if default_sc_output=$(kubectl get storageclass \
   -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' \
-  2>/dev/null || echo "")
+  2>&1); then
+  default_sc_status=0
+else
+  default_sc_status=$?
+fi
 
 # The module installs no CSI driver and no StorageClass, both are caller
-# prerequisites. Assert only that a class exists for the PVCs to bind against.
-if [[ -n "$default_sc" ]]; then
-  pass "Default StorageClass is '$default_sc'"
+# prerequisites. Assert only that a class exists for the PVCs to bind
+# against. StorageClass is cluster-scoped, so a namespace-scoped
+# ServiceAccount (see the Preflight comment above) typically cannot list
+# it: that is a permission gap, not evidence of a missing default class,
+# so it is reported as skipped rather than warned.
+if [[ $default_sc_status -ne 0 ]]; then
+  if [[ "$default_sc_output" == *"Forbidden"* ]]; then
+    skip "Default StorageClass (no permission to list StorageClasses cluster-wide)"
+  else
+    warn "Could not determine default StorageClass: $default_sc_output"
+  fi
+elif [[ -n "$default_sc_output" ]]; then
+  pass "Default StorageClass is '$default_sc_output'"
 else
   warn "No default StorageClass - CNPG and Valkey PVCs will stay Pending unless cnpg_storage_class / valkey_storage_class name one explicitly"
 fi

@@ -83,6 +83,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   certificates; n8n does that when it connects. Upgrade note: a CRLF bundle
   near the limit that used to plan now fails the plan. Convert it to LF line
   endings, trim it, or remove it.
+- `tests/scripts/smoke-test.sh`'s preflight no longer requires cluster-admin.
+  `kubectl cluster-info` lists kube-system Services to build its printed
+  summary, a cluster-scoped read a namespace-scoped ServiceAccount (the
+  identity this module's own ownership boundary expects every caller to run
+  with) does not have, so the preflight failed with a Forbidden error on a
+  healthy, reachable deployment. It now checks `kubectl auth can-i get pods
+  -n "$NAMESPACE"` instead, which only needs namespace-scoped access and
+  still distinguishes an unreachable cluster from an authenticated identity
+  with no access. The "No default StorageClass" check under the same
+  constraint (`StorageClass` is cluster-scoped) now reports skipped rather
+  than a false warning when listing it is Forbidden, instead of silently
+  treating "could not list" the same as "none is default". Verified against
+  a live namespace-scoped deployment: 0 failures, 0 warnings, 2 skipped
+  (the StorageClass permission gap and the optional load test).
 
 ### Changed
 
