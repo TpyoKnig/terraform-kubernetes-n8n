@@ -7,13 +7,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.5.1], Live-validation follow-ups
+
+Documentation only: no input, output, resource or default changes, so
+upgrading from 0.5.0 produces an empty plan.
+
 ### Changed
 
 - `examples/homelab-ai-assistant` README now installs the sandbox from its
   published OCI chart (`oci://ghcr.io/n8n-io/n8n-sandbox-service/n8n-sandbox-service`,
   pinned `0.19.0`) instead of cloning the upstream repository. It used to
   say the chart had no published repository, which stopped being true.
-  Verified live against module 0.5.0 on Talos.
+  Verified live against module 0.5.0 on Talos. `docs/ai-assistant.md`
+  carried the same stale claim and is corrected too.
 - The 0.5.0 notes below said merging the supplementary webhook `Ingress`
   with the chart's own by host was untested on a live cluster. It has since
   been verified on Talos with ingress-nginx: all seven webhook prefixes,
@@ -2239,7 +2245,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.5.1...HEAD
+[0.5.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.5.1
 [0.5.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.5.0
 [0.4.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.1
 [0.4.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.0

@@ -164,8 +164,9 @@ validation, TLS wiring and upgrade path beat maintaining a fork.
 `examples/homelab-ai-assistant` works the full path end to end: the namespace's
 required Pod Security Admission level, the cert-manager self-signed CA chain
 `tls.mode: certManager` needs, and the exact `helm upgrade --install` this
-example doesn't run for you (the chart is not published to a Helm repository
-yet, so nothing in this repository can pin a version against it declaratively).
+example doesn't run for you, from the chart's published OCI artifact
+(`oci://ghcr.io/n8n-io/n8n-sandbox-service/n8n-sandbox-service`, pinned to
+0.19.0, the version verified live against module 0.5.0).
 
 Whichever way it runs, the sandbox needs to be reachable from the n8n pods at
 `N8N_SANDBOX_SERVICE_URL`. If the namespaces enforce `NetworkPolicy`, that path
