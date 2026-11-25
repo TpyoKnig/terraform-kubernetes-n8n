@@ -19,13 +19,18 @@ causes (see "Valkey restarts during the upgrade" in
 `n8n_chart_version` / `n8n_image_tag` move `1.17.0` / `2.44.5` -> `1.21.0` /
 `2.49.6`, rolling every n8n pod for a Helm upgrade plus a new application
 image. Two new `PodDisruptionBudget`s, `n8n_webhook_pdb_enabled` and
-`n8n_worker_pdb_enabled` (both on by default), protect the webhook
-processor and worker Deployments from a voluntary node drain stopping
-every replica at once, which the chart's own budget never covered since it
-only guards `main`. A new `kubernetes_ingress_v1.n8n_webhook_supplementary`
-now routes the Slack and Telegram human-in-the-loop callback paths the
-chart's own webhook `Ingress` was missing, fixing waiting executions that
-never resumed. Before upgrading, read `docs/upgrading-n8n.md`'s "New
+`n8n_worker_pdb_enabled` (both on by default), cap concurrent voluntary
+evictions at 1 for the webhook processor and worker Deployments, which
+the chart's own budget never covered since it only guards `main`;
+protection is real at the default webhook floor of 2 replicas but needs
+the worker's own floor (`n8n_worker_keda_min_replicas`, default `1`)
+raised to 2 or more before the worker budget protects anything. A new
+`kubernetes_ingress_v1.n8n_webhook_supplementary` routes the Slack and
+Telegram human-in-the-loop callback paths the chart's own webhook
+`Ingress` was missing, fixing waiting executions that never resumed,
+on an ingress controller that merges separate `Ingress` objects by
+host, as ingress-nginx (the module's default) does. Before upgrading,
+read `docs/upgrading-n8n.md`'s "New
 PodDisruptionBudgets" and "Valkey chart `0.12.0` -> `1.0.0`" sections if
 you run your own PDBs or set the Valkey values this module renders
 yourself; an unpinned caller otherwise takes all of this on the next
