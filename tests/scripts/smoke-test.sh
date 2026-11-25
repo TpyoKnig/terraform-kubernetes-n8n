@@ -272,21 +272,32 @@ if [[ -z "$PY_JSON" ]]; then
 fi
 
 # `kubectl cluster-info` lists kube-system Services to build the printed
-# summary, a cluster-scoped read a namespace-scoped ServiceAccount (the
-# identity every caller is expected to run this module and this script
-# with, per AGENTS.md's ownership boundary) does not have. That made this
-# preflight fail with a Forbidden error on a healthy, reachable
-# deployment. `auth can-i` targets the SelfSubjectAccessReview API
-# instead, which every authenticated identity may call regardless of
-# RBAC, so "no" here means genuinely reachable-but-unauthorized rather
-# than unreachable; a transport failure (bad kubeconfig, unreachable API
-# server) still exits non-zero.
+# summary, a cluster-scoped read a namespace-scoped identity does not
+# have, even though every check below this point only touches
+# namespace-scoped resources. That made this preflight fail with a
+# Forbidden error on a healthy, reachable deployment. `auth can-i` targets
+# the SelfSubjectAccessReview API instead, which every authenticated
+# identity may call regardless of RBAC. A "no" and a transport failure
+# (bad kubeconfig, unreachable API server) both still exit non-zero here:
+# stdout and stderr are discarded below, so the two are not told apart,
+# and the printed message hedges between them rather than claiming one.
 if ! kubectl auth can-i get pods -n "$NAMESPACE" &>/dev/null; then
   echo -e "${RED}ERROR: kubectl cannot reach the cluster, or the current identity has no access to namespace '$NAMESPACE'. Check your kubeconfig / credentials.${RESET}" >&2
   exit 1
 fi
 pass "kubectl cluster connectivity (namespace '$NAMESPACE')"
 
+# Namespace is itself a cluster-scoped resource type (unlike Pods, which
+# live inside one), so a plain `get` on it is not covered by the
+# namespace-scoped check above. Narrower than the removed `cluster-info`
+# call: it needs only a `get` grant naming this one namespace, which a
+# ClusterRoleBinding can carry without granting access to any other
+# namespace or to any other cluster-scoped type (a RoleBinding cannot
+# grant access to a cluster-scoped type at all, regardless of
+# resourceNames). Left as-is: it is the only reliable existence check
+# (listing pods in a namespace that does not exist returns an empty list,
+# not an error, and `auth can-i` evaluates policy without checking
+# whether the namespace named in it actually exists).
 if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
   fail "Namespace '$NAMESPACE' does not exist"
   exit 1

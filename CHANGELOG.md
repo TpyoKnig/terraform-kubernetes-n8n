@@ -83,20 +83,31 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   certificates; n8n does that when it connects. Upgrade note: a CRLF bundle
   near the limit that used to plan now fails the plan. Convert it to LF line
   endings, trim it, or remove it.
-- `tests/scripts/smoke-test.sh`'s preflight no longer requires cluster-admin.
-  `kubectl cluster-info` lists kube-system Services to build its printed
-  summary, a cluster-scoped read a namespace-scoped ServiceAccount (the
-  identity this module's own ownership boundary expects every caller to run
-  with) does not have, so the preflight failed with a Forbidden error on a
-  healthy, reachable deployment. It now checks `kubectl auth can-i get pods
-  -n "$NAMESPACE"` instead, which only needs namespace-scoped access and
-  still distinguishes an unreachable cluster from an authenticated identity
-  with no access. The "No default StorageClass" check under the same
-  constraint (`StorageClass` is cluster-scoped) now reports skipped rather
-  than a false warning when listing it is Forbidden, instead of silently
-  treating "could not list" the same as "none is default". Verified against
-  a live namespace-scoped deployment: 0 failures, 0 warnings, 2 skipped
-  (the StorageClass permission gap and the optional load test).
+- `tests/scripts/smoke-test.sh`'s preflight no longer requires cluster-admin
+  to confirm connectivity. `kubectl cluster-info` lists kube-system
+  Services to build its printed summary, a cluster-scoped read a
+  namespace-scoped identity does not have, so the preflight failed with a
+  Forbidden error on a healthy, reachable deployment even though every
+  later check in the script only touches namespace-scoped resources. It
+  now checks `kubectl auth can-i get pods -n "$NAMESPACE"` instead, which
+  targets the SelfSubjectAccessReview API every authenticated identity may
+  call regardless of RBAC; a "no" and a transport failure both still exit
+  non-zero and print the same combined hint (stdout/stderr are discarded,
+  so the two are not told apart), which is no worse than before. The
+  following "Namespace exists" check still runs `kubectl get namespace
+  "$NAMESPACE"` unchanged: Namespace is itself a cluster-scoped resource
+  type, so this needs the identity to carry a `get` grant naming that one
+  namespace specifically (a ClusterRoleBinding, since a RoleBinding cannot
+  grant access to a cluster-scoped type at all), narrower than but still
+  distinct from the namespace-only access the rest of the script needs.
+  The "No default StorageClass" check hits the same cluster-scoped-type
+  constraint as the removed `cluster-info` call (`StorageClass` has no
+  per-name grant to narrow to) and now reports skipped rather than a false
+  warning when listing it is Forbidden, instead of silently treating
+  "could not list" the same as "none is default". Verified against a live
+  deployment whose identity carries exactly that narrower RBAC shape: 0
+  failures, 0 warnings, 2 skipped (the StorageClass permission gap and the
+  optional load test).
 
 ### Changed
 
@@ -164,12 +175,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - **`n8n_chart_version` default bumped `1.20.0` -> `1.21.0`, `n8n_image_tag`
   default bumped `2.48.8` -> `2.49.6`.** An unpinned caller's next apply
   rolls every n8n pod: a Helm upgrade for the chart plus a new application
-  image. Diffed both versions' `values.yaml`, `values.schema.json` and
-  `templates/` directly (`tests/scripts/chart-values-diff.sh 1.21.0`): no
-  differences at all, the chart release only bumps its own `Chart.yaml`
-  (`appVersion` and the two image tags under
-  `annotations.artifacthub.io/images`). `tests/scripts/check-n8n-chart.sh`
-  and `tests/scripts/check-helm-chart-coverage.sh` both pass unchanged
+  image. Diffed both versions directly: `values.yaml` with
+  `tests/scripts/chart-values-diff.sh 1.21.0`, run against the `1.20.0`
+  pin before this bump (the script diffs the current `variables.tf` pin
+  against its argument, so it reports nothing once the default already
+  reads `1.21.0`); `templates/` and `values.schema.json` with a manual
+  `helm pull --untar` of both versions and `diff -rq`. No differences at
+  all: the chart release only bumps its own `Chart.yaml` (`appVersion`
+  and the two image tags under `annotations.artifacthub.io/images`).
+  `tests/scripts/check-n8n-chart.sh` and
+  `tests/scripts/check-helm-chart-coverage.sh` both pass unchanged
   against chart 1.21.0. n8n itself moves `2.48.8` -> `2.49.6`
   (n8n@2.49.0 through n8n@2.49.6): read every intervening release's notes,
   no webhook routing, task-runner, or worker-concurrency change in any of

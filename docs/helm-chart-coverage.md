@@ -14,10 +14,16 @@ Everything below was measured, not recalled: the values tree was rendered with
 `terraform console` and diffed against the chart's own `values.yaml` at tag
 `v1.21.0`. Chart 1.21.0 only bumps `appVersion` and the pinned n8n image tag
 from 1.20.0; `values.yaml`, `values.schema.json` and every template are
-byte-identical between the two (`tests/scripts/chart-values-diff.sh 1.21.0`),
-so this file's coverage rows carry over unchanged. An earlier draft of this
-file was written from a render taken at defaults, which reported every
-null-defaulted input as unexposed and was wrong about four of them.
+byte-identical between the two. Confirmed two ways: `values.yaml` with
+`tests/scripts/chart-values-diff.sh 1.21.0`, run against the `1.20.0` pin
+before this file's default moved (the script diffs the *current*
+`variables.tf` pin against its argument, so running it again now that the
+default already reads `1.21.0` reports nothing to compare); `templates/`
+and `values.schema.json` with a manual `helm pull --untar` of both
+versions and `diff -rq`. So this file's coverage rows carry over
+unchanged. An earlier draft of this file was written from a render taken
+at defaults, which reported every null-defaulted input as unexposed and
+was wrong about four of them.
 
 ## What is pinned, and what floats
 
