@@ -7,6 +7,30 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.5.0], The drain-safety round
+
+Two breaking changes to the n8n chart stack, both verified live:
+`valkey_chart_version`'s default moves `0.12.0` -> `1.0.0`, which renames
+the Helm values this module sets (`dataStorage.*` -> `persistence.*`,
+`valkeyConfig` -> `extraConfig`) and restarts the Valkey pod once on the
+next apply, the same brief queue outage any chart-driven Valkey restart
+causes (see "Valkey restarts during the upgrade" in
+`docs/upgrading-n8n.md` for the measured order of magnitude); and
+`n8n_chart_version` / `n8n_image_tag` move `1.17.0` / `2.44.5` -> `1.21.0` /
+`2.49.6`, rolling every n8n pod for a Helm upgrade plus a new application
+image. Two new `PodDisruptionBudget`s, `n8n_webhook_pdb_enabled` and
+`n8n_worker_pdb_enabled` (both on by default), protect the webhook
+processor and worker Deployments from a voluntary node drain stopping
+every replica at once, which the chart's own budget never covered since it
+only guards `main`. A new `kubernetes_ingress_v1.n8n_webhook_supplementary`
+now routes the Slack and Telegram human-in-the-loop callback paths the
+chart's own webhook `Ingress` was missing, fixing waiting executions that
+never resumed. Before upgrading, read `docs/upgrading-n8n.md`'s "New
+PodDisruptionBudgets" and "Valkey chart `0.12.0` -> `1.0.0`" sections if
+you run your own PDBs or set the Valkey values this module renders
+yourself; an unpinned caller otherwise takes all of this on the next
+`apply` with no action required.
+
 ### Added
 
 - `n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default
@@ -2192,7 +2216,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.1...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.5.0
 [0.4.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.1
 [0.4.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.0
 [0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
