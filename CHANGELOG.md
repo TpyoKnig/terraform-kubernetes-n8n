@@ -18,7 +18,8 @@ upgrading from 0.5.0 produces an empty plan.
   published OCI chart (`oci://ghcr.io/n8n-io/n8n-sandbox-service/n8n-sandbox-service`,
   pinned `0.19.0`) instead of cloning the upstream repository. It used to
   say the chart had no published repository, which stopped being true.
-  Verified live against module 0.5.0 on Talos.
+  Verified live against module 0.5.0 on Talos. `docs/ai-assistant.md`
+  carried the same stale claim and is corrected too.
 - The 0.5.0 notes below said merging the supplementary webhook `Ingress`
   with the chart's own by host was untested on a live cluster. It has since
   been verified on Talos with ingress-nginx: all seven webhook prefixes,
