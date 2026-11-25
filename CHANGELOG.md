@@ -29,9 +29,10 @@ the worker's own floor (`n8n_worker_keda_min_replicas`, default `1`)
 raised to 2 or more before the worker budget protects anything. A new
 `kubernetes_ingress_v1.n8n_webhook_supplementary` routes the Slack and
 Telegram human-in-the-loop callback paths the chart's own webhook
-`Ingress` was missing, fixing waiting executions that never resumed,
-on an ingress controller that merges separate `Ingress` objects by
-host, as ingress-nginx (the module's default) does. The n8n image bump
+`Ingress` was missing, so waiting executions should resume instead of
+falling through to main; merging the two `Ingress` objects by host is
+untested on a live cluster and assumes a controller that merges them,
+as ingress-nginx (the module's default) does. The n8n image bump
 is still governed by [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#before-bumping):
 an existing deployment several versions behind this pin should read the
 breaking-changes docs for every major version crossed and back up first
