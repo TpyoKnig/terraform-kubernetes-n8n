@@ -7,12 +7,46 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.5.0], The drain-safety round
+
+Two breaking changes to the n8n chart stack, both verified live:
+`valkey_chart_version`'s default moves `0.12.0` -> `1.0.0`, which renames
+the Helm values this module sets (`dataStorage.*` -> `persistence.*`,
+`valkeyConfig` -> `extraConfig`) and restarts the Valkey pod once on the
+next apply, the same brief queue outage any chart-driven Valkey restart
+causes (see "Valkey restarts during the upgrade" in
+`docs/upgrading-n8n.md` for the measured order of magnitude); and
+`n8n_chart_version` / `n8n_image_tag` move `1.17.0` / `2.44.5` -> `1.21.0` /
+`2.49.6`, rolling every n8n pod for a Helm upgrade plus a new application
+image, applied in place against a live Talos deployment with all pods
+Ready and a production webhook executed by a worker afterward.
+Two new `PodDisruptionBudget`s, `n8n_webhook_pdb_enabled` and
+`n8n_worker_pdb_enabled` (both on by default), cap concurrent voluntary
+evictions at 1 for the webhook processor and worker Deployments, which
+the chart's own budget never covered since it only guards `main`;
+protection is real at the default webhook floor of 2 replicas but needs
+the worker's own floor (`n8n_worker_keda_min_replicas`, default `1`)
+raised to 2 or more before the worker budget protects anything. A new
+`kubernetes_ingress_v1.n8n_webhook_supplementary` routes the Slack and
+Telegram human-in-the-loop callback paths the chart's own webhook
+`Ingress` was missing, so waiting executions should resume instead of
+falling through to main; merging the two `Ingress` objects by host is
+untested on a live cluster and assumes a controller that merges them,
+as ingress-nginx (the module's default) does. The n8n image bump
+is still governed by [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#before-bumping):
+an existing deployment several versions behind this pin should read the
+breaking-changes docs for every major version crossed and back up first
+before applying, the same as any n8n version bump. Before upgrading,
+also read `docs/upgrading-n8n.md`'s "New PodDisruptionBudgets" and
+"Valkey chart `0.12.0` -> `1.0.0`" sections if you run your own PDBs or
+set the Valkey values this module renders yourself.
+
 ### Added
 
 - `n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default
   `true`) create `kubernetes_pod_disruption_budget_v1` resources with
   `maxUnavailable = 1` for the webhook processor and default worker
-  Deployments. The n8n chart (1.20.0, the pinned version) renders a
+  Deployments. The n8n chart (1.21.0, the pinned version) renders a
   PodDisruptionBudget for the main pods only, and only when main runs more
   than one replica (n8n-io/n8n-hosting#228), which this module never does, so
   without these a voluntary node drain (a Talos node upgrade,
@@ -2192,7 +2226,8 @@ and DNS as caller prerequisites.
 - `docs/operations.md`, `docs/troubleshooting.md`, `docs/post-deployment.md`,
   `docs/upgrading-n8n.md`.
 
-[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.4.1...HEAD
+[Unreleased]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.5.0
 [0.4.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.1
 [0.4.0]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.4.0
 [0.3.1]: https://github.com/TpyoKnig/terraform-kubernetes-n8n/releases/tag/0.3.1
