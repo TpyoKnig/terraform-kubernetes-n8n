@@ -123,7 +123,7 @@ That's the whole required surface: a hostname and how to serve it. Everything el
 
 ```hcl
 module "n8n" {
-  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.5.0"
+  source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.5.1"
 
   n8n_domain = "n8n.example.com"
   # ...
@@ -252,11 +252,11 @@ No sizing-tier examples on purpose. On this platform the tiers differ by a handf
 
 ## Stability and versioning
 
-`0.5.0` is the current release. `valkey_chart_version` moves `0.12.0` -> `1.0.0` (renamed Helm values, `dataStorage.*` -> `persistence.*`, `valkeyConfig` -> `extraConfig`; the Valkey pod restarts once) and `n8n_chart_version` / `n8n_image_tag` move `1.17.0` / `2.44.5` -> `1.21.0` / `2.49.6` (every n8n pod rolls); two new `PodDisruptionBudget`s cap concurrent voluntary evictions at 1 for the webhook processor and worker Deployments, protection that is real at the default webhook floor of 2 replicas but needs the worker's own floor raised to 2 or more before it protects anything, and a new `kubernetes_ingress_v1.n8n_webhook_supplementary` Ingress routes the Slack and Telegram human-in-the-loop callback paths the chart's own webhook `Ingress` was missing, on an ingress controller that merges separate `Ingress` objects by host, as ingress-nginx (the module's default) does. See `docs/upgrading-n8n.md` before upgrading. `0.4.1` added the `kubernetes_namespace_v1` rename behind `moved` blocks that `0.4.0` described but did not contain, and raised the `hashicorp/kubernetes` floor to `3.3`. `0.4.0`'s migration notes (chart `1.10.0` -> `1.17.0`, database migrations, the Kubernetes provider's `~> 3.0` line, `n8n_execution_concurrency_limit` defaulting to `-1`) still apply when coming from `0.3.x`. Older tags stay where they are and keep working as exact pins.
+`0.5.1` is the current release: documentation only on top of `0.5.0` (the AI Assistant example installs the sandbox from its published OCI chart), so upgrading from `0.5.0` is an empty plan. In `0.5.0`, `valkey_chart_version` moves `0.12.0` -> `1.0.0` (renamed Helm values, `dataStorage.*` -> `persistence.*`, `valkeyConfig` -> `extraConfig`; the Valkey pod restarts once) and `n8n_chart_version` / `n8n_image_tag` move `1.17.0` / `2.44.5` -> `1.21.0` / `2.49.6` (every n8n pod rolls); two new `PodDisruptionBudget`s cap concurrent voluntary evictions at 1 for the webhook processor and worker Deployments, protection that is real at the default webhook floor of 2 replicas but needs the worker's own floor raised to 2 or more before it protects anything, and a new `kubernetes_ingress_v1.n8n_webhook_supplementary` Ingress routes the Slack and Telegram human-in-the-loop callback paths the chart's own webhook `Ingress` was missing, on an ingress controller that merges separate `Ingress` objects by host, as ingress-nginx (the module's default) does. See `docs/upgrading-n8n.md` before upgrading. `0.4.1` added the `kubernetes_namespace_v1` rename behind `moved` blocks that `0.4.0` described but did not contain, and raised the `hashicorp/kubernetes` floor to `3.3`. `0.4.0`'s migration notes (chart `1.10.0` -> `1.17.0`, database migrations, the Kubernetes provider's `~> 3.0` line, `n8n_execution_concurrency_limit` defaulting to `-1`) still apply when coming from `0.3.x`. Older tags stay where they are and keep working as exact pins.
 
 Still pre-1.0, so a minor bump may break the input surface. `~> 0.5.0` is the constraint the usage example uses; it takes patches and holds the minor (`~> 0.5` would also accept `0.6.0` and any later `0.x` release, but not `1.0.0`). `1.0.0` is a promise to make once the variables stop moving, not a milestone to hit on a date.
 
-Straight from git works too, on Terraform and OpenTofu alike: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.5.0"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
+Straight from git works too, on Terraform and OpenTofu alike: `source = "git::https://github.com/TpyoKnig/terraform-kubernetes-n8n.git?ref=0.5.1"`. See [Usage](#usage). Whichever source you use, tracking the default branch instead of a tag means an apply can pick up a breaking change you didn't choose.
 
 ## Support
 
