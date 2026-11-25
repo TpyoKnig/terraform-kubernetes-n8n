@@ -161,6 +161,22 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   live homelab deployment Terraform adopted (the `n8n-redis` release),
   which confirms the PVC survives the rename in practice, not only in
   `helm template`. See `docs/upgrading-n8n.md` for the full writeup.
+- **`n8n_chart_version` default bumped `1.20.0` -> `1.21.0`, `n8n_image_tag`
+  default bumped `2.48.8` -> `2.49.6`.** An unpinned caller's next apply
+  rolls every n8n pod: a Helm upgrade for the chart plus a new application
+  image. Diffed both versions' `values.yaml`, `values.schema.json` and
+  `templates/` directly (`tests/scripts/chart-values-diff.sh 1.21.0`): no
+  differences at all, the chart release only bumps its own `Chart.yaml`
+  (`appVersion` and the two image tags under
+  `annotations.artifacthub.io/images`). `tests/scripts/check-n8n-chart.sh`
+  and `tests/scripts/check-helm-chart-coverage.sh` both pass unchanged
+  against chart 1.21.0. n8n itself moves `2.48.8` -> `2.49.6`
+  (n8n@2.49.0 through n8n@2.49.6): read every intervening release's notes,
+  no webhook routing, task-runner, or worker-concurrency change in any of
+  them, confirmed by `tests/scripts/check-webhook-routes.sh` and a diff of
+  `packages/cli/src/commands/worker.ts` at both ends of the range. See
+  `docs/helm-chart-coverage.md` and `docs/upgrading-n8n.md` for the full
+  writeup.
 
 ## [0.4.1], The namespace rename
 

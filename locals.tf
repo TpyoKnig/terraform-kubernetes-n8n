@@ -57,7 +57,7 @@ locals {
   ]
 
   # The prefixes the chart's own webhook Ingress
-  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.20.0. It has
+  # (templates/ingress-webhook.yaml) hardcodes, as of chart 1.21.0. It has
   # never routed the two HITL callbacks, so those always land in
   # n8n_unrouted_webhook_prefixes below. /mcp/ is conditional: chart 1.16.0
   # added it (n8n_chart_routes_mcp), and n8n_chart_version accepts any older
@@ -337,7 +337,7 @@ locals {
     "N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES",
     # Chart-rendered env var name moved from WEBHOOK_URL to N8N_WEBHOOK_URL at
     # chart 1.16.0 (n8n deprecated WEBHOOK_URL as of n8n 2.35.0, an alias of
-    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.48.8) is
+    # N8N_WEBHOOK_URL since 2.30.0); n8n_image_tag's pinned default (2.49.6) is
     # past that deprecation either way. Reserved under the new name, since
     # that is what both the chart's single-host path and this module's own
     # split-ingress injection below now render.

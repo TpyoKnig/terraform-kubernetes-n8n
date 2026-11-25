@@ -5,24 +5,27 @@ what it leaves alone. Written so you can tell before you start whether the knob
 you need is a typed input, a chart default, or something you have to reach
 through the escape hatch.
 
-Measured against chart **1.20.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
+Measured against chart **1.21.0** (`oci://ghcr.io/n8n-io/n8n-helm-chart/n8n`,
 source at [n8n-io/n8n-hosting](https://github.com/n8n-io/n8n-hosting/tree/main/charts/n8n)),
 which is the version `n8n_chart_version` pins by default. The chart offers 48
 top-level keys. This module writes 25 of them.
 
 Everything below was measured, not recalled: the values tree was rendered with
 `terraform console` and diffed against the chart's own `values.yaml` at tag
-`v1.20.0`. An earlier draft of this file was written from a render taken at
-defaults, which reported every null-defaulted input as unexposed and was wrong
-about four of them.
+`v1.21.0`. Chart 1.21.0 only bumps `appVersion` and the pinned n8n image tag
+from 1.20.0; `values.yaml`, `values.schema.json` and every template are
+byte-identical between the two (`tests/scripts/chart-values-diff.sh 1.21.0`),
+so this file's coverage rows carry over unchanged. An earlier draft of this
+file was written from a render taken at defaults, which reported every
+null-defaulted input as unexposed and was wrong about four of them.
 
 ## What is pinned, and what floats
 
 | | Input | Default | Pinned? |
 | --- | --- | --- | --- |
-| Chart version | `n8n_chart_version` | `1.20.0` | Yes, and it must be an exact version. The Helm provider resolves it literally, not as a constraint. |
+| Chart version | `n8n_chart_version` | `1.21.0` | Yes, and it must be an exact version. The Helm provider resolves it literally, not as a constraint. |
 | Chart repository | `n8n_chart_repository` | `oci://ghcr.io/n8n-io/n8n-helm-chart` | Yes. Repoint it at a private mirror if the cluster has no egress to ghcr.io. |
-| n8n application version | `n8n_image_tag` | `"2.48.8"` | Yes. Bumping it is a module change with a CHANGELOG entry, on the same policy as the two rows above. Set it to null to hand the choice back to the chart, which ships with an empty tag that resolves to the chart's own appVersion (2.48.5 for 1.20.0; `appVersion: stable` before chart 1.12.0). |
+| n8n application version | `n8n_image_tag` | `"2.49.6"` | Yes. Bumping it is a module change with a CHANGELOG entry, on the same policy as the two rows above. Set it to null to hand the choice back to the chart, which ships with an empty tag that resolves to the chart's own appVersion (2.49.6 for 1.21.0; `appVersion: stable` before chart 1.12.0). |
 
 **Out of the box this module pins the chart and the application**, so the
 deployment is reproducible and an upgrade is a one-line diff your CI can raise,
@@ -30,8 +33,8 @@ review and roll back, which is the whole point. The module is validated against
 the version it defaults to:
 
 ```hcl
-n8n_chart_version = "1.20.0"    # the chart
-n8n_image_tag     = "2.48.8"    # the application, and the module's default
+n8n_chart_version = "1.21.0"    # the chart
+n8n_image_tag     = "2.49.6"    # the application, and the module's default
 ```
 
 Pin a different version whenever you want to move on your own schedule;
@@ -117,8 +120,8 @@ three inputs that work together:
 
 ```hcl
 n8n_image_repository       = "ghcr.io/you/n8n-with-nodes"
-n8n_image_tag              = "2.48.8-mynodes"
-n8n_task_runner_image_tag  = "2.48.8"            # the n8n version underneath
+n8n_image_tag              = "2.49.6-mynodes"
+n8n_task_runner_image_tag  = "2.49.6"            # the n8n version underneath
 n8n_custom_extensions_path = "/opt/n8n-nodes"    # where n8n scans, N8N_CUSTOM_EXTENSIONS
 ```
 
@@ -127,7 +130,7 @@ you find them in a CrashLoopBackOff. A custom repository with no explicit tag is
 rejected, because a custom repository almost never publishes one called
 `stable`. A custom image with task runners on and no runner tag is rejected,
 because the chart would otherwise resolve the runner tag from the application
-tag, and `n8nio/runners` has never published `2.48.8-mynodes`. A
+tag, and `n8nio/runners` has never published `2.49.6-mynodes`. A
 `n8n_custom_extensions_path` that no volume mount or custom image provides is
 rejected too.
 

@@ -81,7 +81,7 @@ with however many workers KEDA has running. It takes effect only while
 `n8n_execution_concurrency_limit` stays at its default of `-1`; any other
 value renders `N8N_CONCURRENCY_PRODUCTION_LIMIT` and overrides
 `n8n_worker_concurrency` with that number on every worker independently (n8n
-2.48.8's `worker.ts`), so it is still a per-worker ceiling, not a shared
+2.49.6's `worker.ts`), so it is still a per-worker ceiling, not a shared
 pool-wide one, and total capacity becomes `replicas x
 n8n_execution_concurrency_limit` instead.
 
