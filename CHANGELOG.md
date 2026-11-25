@@ -91,27 +91,29 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   deployment even though every later check in the script only touches
   the deployment's own namespace. It now checks `kubectl auth can-i get
   pods -n "$NAMESPACE"` instead, which targets the SelfSubjectAccessReview
-  API every authenticated identity may call regardless of RBAC; a "no"
-  and a transport failure both still exit non-zero and print the same
-  combined hint (stdout/stderr are discarded, so the two are not told
-  apart), which is no worse than before. The following "Namespace
-  exists" check still runs `kubectl get namespace "$NAMESPACE"`
-  unchanged: Namespace is a genuinely cluster-scoped resource type (no
-  namespace of its own to be "in"), so this needs the identity to carry
-  a `get` grant naming that one namespace specifically (only a
-  ClusterRoleBinding can grant access to a cluster-scoped type at all),
-  a narrower ask than cluster-info's but still a cluster-scoped one. The
-  "No default StorageClass" check hits a stricter version of the same
-  cluster-scoped-type gap: it lists every StorageClass with no name
-  filter, and `list` has no resource name to check a `resourceNames`
-  restriction against, so it needs a plain cluster-wide `list` grant on
-  the type with no way to narrow it. It now reports skipped rather than
-  a false warning when that list is Forbidden, instead of silently
-  treating "could not list" the same as "none is default". Verified
-  against a live deployment whose identity carries exactly that
-  narrower RBAC shape (`get` on its own Namespace, nothing on
-  StorageClasses or kube-system): 0 failures, 0 warnings, 2 skipped (the
-  StorageClass permission gap and the optional load test).
+  API: every cluster grants that by default (the `system:basic-user`
+  ClusterRoleBinding), though custom RBAC can remove it, so this
+  preflight can still be Forbidden on a cluster that has done so despite
+  the identity otherwise having pod access. A "no" and a transport
+  failure both still exit non-zero and print the same combined hint
+  (stdout/stderr are discarded, so the two are not told apart), which is
+  no worse than before. The following "Namespace exists" check still
+  runs `kubectl get namespace "$NAMESPACE"` unchanged: Namespace is a
+  genuinely cluster-scoped resource type (no namespace of its own to be
+  "in"), so this needs the identity to carry a `get` grant naming that
+  one namespace specifically (only a ClusterRoleBinding can grant access
+  to a cluster-scoped type at all), a narrower ask than cluster-info's
+  but still a cluster-scoped one. The "No default StorageClass" check
+  hits a stricter version of the same cluster-scoped-type gap: it lists
+  every StorageClass with no name filter, and `list` has no resource
+  name to check a `resourceNames` restriction against, so it needs a
+  plain cluster-wide `list` grant on the type with no way to narrow it.
+  It now reports skipped rather than a false warning when that list is
+  Forbidden, instead of silently treating "could not list" the same as
+  "none is default". Verified against a live deployment whose identity
+  carries exactly that narrower RBAC shape (`get` on its own Namespace,
+  nothing on StorageClasses or kube-system): 0 failures, 0 warnings, 2
+  skipped (the StorageClass permission gap and the optional load test).
 
 ### Changed
 
@@ -140,26 +142,41 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   0 skipped, identical to the 3.3.30 baseline, so no new findings to
   triage. `.checkov.yaml`'s own re-verification comment and pass count are
   refreshed to match.
-- **`n8n_chart_version` default bumped `1.17.0` -> `1.20.0`, `n8n_image_tag`
-  default bumped `2.44.5` -> `2.48.8`** (issue #66). An unpinned caller's
+- **`n8n_chart_version` default bumped `1.17.0` -> `1.21.0`, `n8n_image_tag`
+  default bumped `2.44.5` -> `2.49.6`** (issue #66). An unpinned caller's
   next apply rolls every n8n pod: a Helm upgrade for the chart plus a new
-  application image. Diffed both versions' `values.yaml`,
-  `values.schema.json` and `templates/` directly: the only real chart
-  changes are additive, `keda.worker.advanced` /
+  application image. Diffed every version's `values.yaml`,
+  `values.schema.json` and `templates/` directly: `1.17.0` -> `1.20.0`'s
+  only real chart changes are additive, `keda.worker.advanced` /
   `keda.webhookProcessor.advanced` (a new `spec.advanced` passthrough this
   module does not set) and a telemetry-only `config.deploymentArtifact`
-  key. The chart's appVersion moves `2.44.5` -> `2.48.5`; this module's own
-  `n8n_image_tag` pin goes one step further, to `2.48.8`. The five webhook
-  path prefixes this module routes, the main-PDB chart gate, every worker
-  probe and the task-runner sidecar placement are all unchanged, verified
-  by `tests/scripts/check-n8n-chart.sh` and
-  `tests/scripts/check-helm-chart-coverage.sh` against chart 1.20.0; n8n's
-  own `packages/cli/src/abstract-server.ts` registers the identical set of
-  webhook routes at `2.44.5` and `2.48.8`. n8n 2.45.0 turned the durable
-  scheduler on by default, which changes when interval-based schedules
-  fire (see `docs/upgrading-n8n.md`), but nothing about chart values,
-  webhook routing or task-runner behavior. See `docs/helm-chart-coverage.md`
-  and `docs/upgrading-n8n.md` for the full bump writeups.
+  key, verified with `tests/scripts/chart-values-diff.sh 1.20.0` (run
+  from the prior commit, before that pin moved); `1.20.0` -> `1.21.0`
+  changes nothing at all in `values.yaml`, `values.schema.json` or any
+  template, only `Chart.yaml`'s own `appVersion` and image tags, verified
+  the same way (`tests/scripts/chart-values-diff.sh 1.21.0`, run against
+  the `1.20.0` pin before this bump; that script only compares
+  `values.yaml`, so `templates/` and `values.schema.json` for this leg
+  were a manual `helm pull --untar` of both versions and `diff -rq`).
+  The chart's appVersion moves `2.44.5` ->
+  `2.48.5` -> `2.49.6` across the two bumps; this module's own
+  `n8n_image_tag` pin goes one step further at each stop, landing on
+  `2.49.6`. The five webhook path prefixes this module routes, the
+  main-PDB chart gate, every worker probe and the task-runner sidecar
+  placement are all unchanged across the full span, verified by
+  `tests/scripts/check-n8n-chart.sh` (its expected `appVersion` literal
+  bumped to `2.49.6` to match, with no change to what it asserts) and
+  `tests/scripts/check-helm-chart-coverage.sh` against chart `1.21.0`;
+  n8n's own `packages/cli/src/abstract-server.ts` registers the identical
+  set of webhook routes at `2.44.5` and `2.49.6`, confirmed by
+  `tests/scripts/check-webhook-routes.sh`, and
+  `packages/cli/src/commands/worker.ts`'s concurrency logic is unchanged
+  between `2.48.8` and `2.49.6`. n8n 2.45.0 turned the durable scheduler
+  on by default, which changes when interval-based schedules fire (see
+  `docs/upgrading-n8n.md`), but nothing about chart values, webhook
+  routing, task-runner, or worker-concurrency behavior across any of the
+  releases in this span. See `docs/helm-chart-coverage.md` and
+  `docs/upgrading-n8n.md` for the full bump writeups.
 - **`valkey_chart_version` default bumped `0.12.0` -> `1.0.0`** (issue #66).
   An unpinned caller's next apply rolls the Valkey Deployment once
   (`deploymentStrategy = "Recreate"`, a brief queue outage; see
@@ -176,27 +193,6 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   live homelab deployment Terraform adopted (the `n8n-redis` release),
   which confirms the PVC survives the rename in practice, not only in
   `helm template`. See `docs/upgrading-n8n.md` for the full writeup.
-- **`n8n_chart_version` default bumped `1.20.0` -> `1.21.0`, `n8n_image_tag`
-  default bumped `2.48.8` -> `2.49.6`.** An unpinned caller's next apply
-  rolls every n8n pod: a Helm upgrade for the chart plus a new application
-  image. Diffed both versions directly: `values.yaml` with
-  `tests/scripts/chart-values-diff.sh 1.21.0`, run against the `1.20.0`
-  pin before this bump (the script diffs the current `variables.tf` pin
-  against its argument, so it reports nothing once the default already
-  reads `1.21.0`); `templates/` and `values.schema.json` with a manual
-  `helm pull --untar` of both versions and `diff -rq`. No differences at
-  all: the chart release only bumps its own `Chart.yaml` (`appVersion`
-  and the two image tags under `annotations.artifacthub.io/images`).
-  `tests/scripts/check-n8n-chart.sh` (its expected `appVersion` literal
-  bumped to `2.49.6` to match) and `tests/scripts/check-helm-chart-coverage.sh`
-  both pass with no change to what they assert, only to that one literal,
-  against chart 1.21.0. n8n itself moves `2.48.8` -> `2.49.6`
-  (n8n@2.49.0 through n8n@2.49.6): read every intervening release's notes,
-  no webhook routing, task-runner, or worker-concurrency change in any of
-  them, confirmed by `tests/scripts/check-webhook-routes.sh` and a diff of
-  `packages/cli/src/commands/worker.ts` at both ends of the range. See
-  `docs/helm-chart-coverage.md` and `docs/upgrading-n8n.md` for the full
-  writeup.
 
 ## [0.4.1], The namespace rename
 

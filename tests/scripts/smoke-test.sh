@@ -276,9 +276,12 @@ fi
 # have, even though every check below this point only touches
 # namespace-scoped resources. That made this preflight fail with a
 # Forbidden error on a healthy, reachable deployment. `auth can-i` targets
-# the SelfSubjectAccessReview API instead, which every authenticated
-# identity may call regardless of RBAC. A "no" and a transport failure
-# (bad kubeconfig, unreachable API server) both still exit non-zero here:
+# the SelfSubjectAccessReview API instead: every cluster grants that by
+# default (the `system:basic-user` ClusterRoleBinding), though custom
+# RBAC can remove it, so this can still be Forbidden on a cluster that
+# has done so despite the identity otherwise having pod access. A "no"
+# and a transport failure (bad kubeconfig, unreachable API server) both
+# still exit non-zero here:
 # stdout and stderr are discarded below, so the two are not told apart,
 # and the printed message hedges between them rather than claiming one.
 if ! kubectl auth can-i get pods -n "$NAMESPACE" &>/dev/null; then
