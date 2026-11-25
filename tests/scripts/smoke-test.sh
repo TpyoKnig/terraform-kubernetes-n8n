@@ -715,13 +715,20 @@ header "Cluster Storage"
 # A plain `var=$(cmd)` with the script's `set -e` would exit the whole
 # script the moment `kubectl get storageclass` is Forbidden; the `if`
 # form below keeps the failure local so it can be reported instead.
+# stderr goes to its own file rather than `2>&1`: a successful call that
+# also prints a benign stderr warning (e.g. a deprecation notice) would
+# otherwise land inside $default_sc_output and be reported as part of
+# the default class's name.
+default_sc_stderr_file="$(mktemp)"
 if default_sc_output=$(kubectl get storageclass \
   -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' \
-  2>&1); then
+  2>"$default_sc_stderr_file"); then
   default_sc_status=0
 else
   default_sc_status=$?
+  default_sc_output="$(cat "$default_sc_stderr_file")"
 fi
+rm -f "$default_sc_stderr_file"
 
 # The module installs no CSI driver and no StorageClass, both are caller
 # prerequisites. Assert only that a class exists for the PVCs to bind

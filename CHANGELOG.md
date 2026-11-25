@@ -84,30 +84,34 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   near the limit that used to plan now fails the plan. Convert it to LF line
   endings, trim it, or remove it.
 - `tests/scripts/smoke-test.sh`'s preflight no longer requires cluster-admin
-  to confirm connectivity. `kubectl cluster-info` lists kube-system
-  Services to build its printed summary, a cluster-scoped read a
-  namespace-scoped identity does not have, so the preflight failed with a
-  Forbidden error on a healthy, reachable deployment even though every
-  later check in the script only touches namespace-scoped resources. It
-  now checks `kubectl auth can-i get pods -n "$NAMESPACE"` instead, which
-  targets the SelfSubjectAccessReview API every authenticated identity may
-  call regardless of RBAC; a "no" and a transport failure both still exit
-  non-zero and print the same combined hint (stdout/stderr are discarded,
-  so the two are not told apart), which is no worse than before. The
-  following "Namespace exists" check still runs `kubectl get namespace
-  "$NAMESPACE"` unchanged: Namespace is itself a cluster-scoped resource
-  type, so this needs the identity to carry a `get` grant naming that one
-  namespace specifically (a ClusterRoleBinding, since a RoleBinding cannot
-  grant access to a cluster-scoped type at all), narrower than but still
-  distinct from the namespace-only access the rest of the script needs.
-  The "No default StorageClass" check hits the same cluster-scoped-type
-  constraint as the removed `cluster-info` call (`StorageClass` has no
-  per-name grant to narrow to) and now reports skipped rather than a false
-  warning when listing it is Forbidden, instead of silently treating
-  "could not list" the same as "none is default". Verified against a live
-  deployment whose identity carries exactly that narrower RBAC shape: 0
-  failures, 0 warnings, 2 skipped (the StorageClass permission gap and the
-  optional load test).
+  to confirm connectivity. `kubectl cluster-info` lists Services in the
+  `kube-system` namespace to build its printed summary, which needs
+  access in a namespace the deployment's own identity is not scoped to,
+  so the preflight failed with a Forbidden error on a healthy, reachable
+  deployment even though every later check in the script only touches
+  the deployment's own namespace. It now checks `kubectl auth can-i get
+  pods -n "$NAMESPACE"` instead, which targets the SelfSubjectAccessReview
+  API every authenticated identity may call regardless of RBAC; a "no"
+  and a transport failure both still exit non-zero and print the same
+  combined hint (stdout/stderr are discarded, so the two are not told
+  apart), which is no worse than before. The following "Namespace
+  exists" check still runs `kubectl get namespace "$NAMESPACE"`
+  unchanged: Namespace is a genuinely cluster-scoped resource type (no
+  namespace of its own to be "in"), so this needs the identity to carry
+  a `get` grant naming that one namespace specifically (only a
+  ClusterRoleBinding can grant access to a cluster-scoped type at all),
+  a narrower ask than cluster-info's but still a cluster-scoped one. The
+  "No default StorageClass" check hits a stricter version of the same
+  cluster-scoped-type gap: it lists every StorageClass with no name
+  filter, and `list` has no resource name to check a `resourceNames`
+  restriction against, so it needs a plain cluster-wide `list` grant on
+  the type with no way to narrow it. It now reports skipped rather than
+  a false warning when that list is Forbidden, instead of silently
+  treating "could not list" the same as "none is default". Verified
+  against a live deployment whose identity carries exactly that
+  narrower RBAC shape (`get` on its own Namespace, nothing on
+  StorageClasses or kube-system): 0 failures, 0 warnings, 2 skipped (the
+  StorageClass permission gap and the optional load test).
 
 ### Changed
 
@@ -183,8 +187,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `helm pull --untar` of both versions and `diff -rq`. No differences at
   all: the chart release only bumps its own `Chart.yaml` (`appVersion`
   and the two image tags under `annotations.artifacthub.io/images`).
-  `tests/scripts/check-n8n-chart.sh` and
-  `tests/scripts/check-helm-chart-coverage.sh` both pass unchanged
+  `tests/scripts/check-n8n-chart.sh` (its expected `appVersion` literal
+  bumped to `2.49.6` to match) and `tests/scripts/check-helm-chart-coverage.sh`
+  both pass with no change to what they assert, only to that one literal,
   against chart 1.21.0. n8n itself moves `2.48.8` -> `2.49.6`
   (n8n@2.49.0 through n8n@2.49.6): read every intervening release's notes,
   no webhook routing, task-runner, or worker-concurrency change in any of
