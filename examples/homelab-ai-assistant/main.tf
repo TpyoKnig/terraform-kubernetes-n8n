@@ -109,14 +109,10 @@ module "n8n" {
   # both rather than making the second one a knob nobody would think to flip.
   #
   # N8N_SANDBOX_SERVICE_URL points at a Helm release this example does not
-  # create. See README.md "Standing up the sandbox" for why: the upstream
-  # chart is not published to a Helm repository yet (still main-branch only as
-  # of chart 0.4.0 / PR n8n-io/n8n-sandbox-service#126), so there is nothing a
-  # `helm_release` resource here could pin a version against without vendoring
-  # a copy of someone else's chart into this repository to keep in sync by
-  # hand. The module's own stance is the same one this example inherits: the
-  # sandbox is a caller prerequisite, like the ingress controller or the CNPG
-  # operator, not something the module or its examples provision.
+  # create. See README.md "Standing up the sandbox": the sandbox is a caller
+  # prerequisite, like the ingress controller or the CNPG operator, with its
+  # own lifecycle and a namespace that must admit privileged pods, not
+  # something the module or its examples provision.
   n8n_extra_env = concat(
     [
       { name = "N8N_ENABLED_MODULES", value = "instance-ai,agents" },

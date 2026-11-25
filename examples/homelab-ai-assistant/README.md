@@ -4,7 +4,7 @@ The [`homelab`](../homelab/) example unchanged, plus n8n's AI Assistant and Agen
 
 Two things this example does **not** do, on purpose:
 
-- **It does not deploy the sandbox.** `n8n-sandbox-service` is a separate service with its own Helm chart, its own lifecycle, and (as of chart 0.4.0) no published Helm repository to pin a `helm_release` resource against - the chart still lives only in the upstream repository's `main` branch. Vendoring a copy into this repository to work around that would mean keeping a fork of someone else's chart in sync by hand. The module's own stance already treats the sandbox as a caller prerequisite, the same category as the ingress controller or the CNPG operator (see [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md)); this example inherits that rather than special-casing itself out of it.
+- **It does not deploy the sandbox.** `n8n-sandbox-service` is a separate service with its own Helm chart, its own lifecycle, and a namespace that has to admit privileged pods. The module's own stance already treats the sandbox as a caller prerequisite, the same category as the ingress controller or the CNPG operator (see [`../../docs/ai-assistant.md`](../../docs/ai-assistant.md)); this example inherits that rather than special-casing itself out of it.
 - **It does not create the credentials Secret.** `ai-assistant-secrets` holds your model API key and the sandbox's own API key. Declaring it as a `kubernetes_secret` resource would put both straight into Terraform state. `kubectl create secret` below keeps them out.
 
 ## What it creates
@@ -25,14 +25,7 @@ Everything [`homelab`](../homelab/) needs, plus:
 
 ## Standing up the sandbox
 
-Chart `n8n-io/n8n-sandbox-service` 0.4.0 (merged as [PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)) added `runner.isolation: privileged`, which runs the same Docker-in-Docker runner without the `sysbox-runc` RuntimeClass that immutable-rootfs nodes cannot install. Verified end to end on Talos: the AI Assistant generated a workflow, ran a Code node through the runner, and the runner reported back the cluster's own kernel version.
-
-Not on a published Helm repository yet, so this pulls the chart directory directly:
-
-```bash
-git clone --depth 1 https://github.com/n8n-io/n8n-sandbox-service.git
-cd n8n-sandbox-service
-```
+Chart `n8n-io/n8n-sandbox-service` 0.4.0 (merged as [PR #126](https://github.com/n8n-io/n8n-sandbox-service/pull/126)) added `runner.isolation: privileged`, which runs the same Docker-in-Docker runner without the `sysbox-runc` RuntimeClass that immutable-rootfs nodes cannot install. The chart is now published as an OCI artifact at `oci://ghcr.io/n8n-io/n8n-sandbox-service/n8n-sandbox-service`. Verified end to end on Talos with chart 0.19.0 against module 0.5.0: the AI Assistant built a Python Code node workflow, ran it through the privileged runner, and returned the result.
 
 **1. Namespace, with the Pod Security Admission level the privileged runner needs.** A PSA denial lands on the runner's `StatefulSet` events, not on a pod - `kubectl get pods` shows nothing at all rather than a failure, so check there first if the runner never appears:
 
@@ -91,7 +84,8 @@ API_KEY=$(openssl rand -base64 32 | tr -d '\n=' | tr '/+' '_-')
 RUNNER_TOKEN=$(openssl rand -base64 32 | tr -d '\n=' | tr '/+' '_-')
 RUNNER_API_KEY=$(openssl rand -base64 32 | tr -d '\n=' | tr '/+' '_-')
 
-helm upgrade --install sandbox ./charts/n8n-sandbox-service \
+helm upgrade --install sandbox oci://ghcr.io/n8n-io/n8n-sandbox-service/n8n-sandbox-service \
+  --version 0.19.0 \
   --namespace n8n-sandbox \
   --set fullnameOverride=sandbox \
   --set auth.generated.apiKeys="$API_KEY" \
