@@ -18,7 +18,9 @@ causes (see "Valkey restarts during the upgrade" in
 `docs/upgrading-n8n.md` for the measured order of magnitude); and
 `n8n_chart_version` / `n8n_image_tag` move `1.17.0` / `2.44.5` -> `1.21.0` /
 `2.49.6`, rolling every n8n pod for a Helm upgrade plus a new application
-image. Two new `PodDisruptionBudget`s, `n8n_webhook_pdb_enabled` and
+image, applied in place against a live Talos deployment with all pods
+Ready and a production webhook executed by a worker afterward.
+Two new `PodDisruptionBudget`s, `n8n_webhook_pdb_enabled` and
 `n8n_worker_pdb_enabled` (both on by default), cap concurrent voluntary
 evictions at 1 for the webhook processor and worker Deployments, which
 the chart's own budget never covered since it only guards `main`;
@@ -29,19 +31,21 @@ raised to 2 or more before the worker budget protects anything. A new
 Telegram human-in-the-loop callback paths the chart's own webhook
 `Ingress` was missing, fixing waiting executions that never resumed,
 on an ingress controller that merges separate `Ingress` objects by
-host, as ingress-nginx (the module's default) does. Before upgrading,
-read `docs/upgrading-n8n.md`'s "New
-PodDisruptionBudgets" and "Valkey chart `0.12.0` -> `1.0.0`" sections if
-you run your own PDBs or set the Valkey values this module renders
-yourself; an unpinned caller otherwise takes all of this on the next
-`apply` with no action required.
+host, as ingress-nginx (the module's default) does. The n8n image bump
+is still governed by [docs/upgrading-n8n.md](./docs/upgrading-n8n.md#before-bumping):
+an existing deployment several versions behind this pin should read the
+breaking-changes docs for every major version crossed and back up first
+before applying, the same as any n8n version bump. Before upgrading,
+also read `docs/upgrading-n8n.md`'s "New PodDisruptionBudgets" and
+"Valkey chart `0.12.0` -> `1.0.0`" sections if you run your own PDBs or
+set the Valkey values this module renders yourself.
 
 ### Added
 
 - `n8n_webhook_pdb_enabled` and `n8n_worker_pdb_enabled` (both default
   `true`) create `kubernetes_pod_disruption_budget_v1` resources with
   `maxUnavailable = 1` for the webhook processor and default worker
-  Deployments. The n8n chart (1.20.0, the pinned version) renders a
+  Deployments. The n8n chart (1.21.0, the pinned version) renders a
   PodDisruptionBudget for the main pods only, and only when main runs more
   than one replica (n8n-io/n8n-hosting#228), which this module never does, so
   without these a voluntary node drain (a Talos node upgrade,
