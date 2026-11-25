@@ -7,6 +7,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+
+- `examples/homelab-ai-assistant` README now installs the sandbox from its
+  published OCI chart (`oci://ghcr.io/n8n-io/n8n-sandbox-service/n8n-sandbox-service`,
+  pinned `0.19.0`) instead of cloning the upstream repository. It used to
+  say the chart had no published repository, which stopped being true.
+  Verified live against module 0.5.0 on Talos.
+- The 0.5.0 notes below said merging the supplementary webhook `Ingress`
+  with the chart's own by host was untested on a live cluster. It has since
+  been verified on Talos with ingress-nginx: all seven webhook prefixes,
+  including `/webhook-waiting-slack` and `/webhook-waiting-telegram`, reach
+  the webhook processor, and `/rest/*` still reaches main.
+
 ## [0.5.0], The drain-safety round
 
 Two breaking changes to the n8n chart stack, both verified live:
