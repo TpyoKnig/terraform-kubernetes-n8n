@@ -160,16 +160,19 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   were a manual `helm pull --untar` of both versions and `diff -rq`).
   The chart's appVersion moves `2.44.5` ->
   `2.48.5` -> `2.49.6` across the two bumps; this module's own
-  `n8n_image_tag` pin goes one step further at each stop, landing on
-  `2.49.6`. The five webhook path prefixes this module routes, the
-  main-PDB chart gate, every worker probe and the task-runner sidecar
-  placement are all unchanged across the full span, verified by
-  `tests/scripts/check-n8n-chart.sh` (its expected `appVersion` literal
-  bumped to `2.49.6` to match, with no change to what it asserts) and
-  `tests/scripts/check-helm-chart-coverage.sh` against chart `1.21.0`;
-  n8n's own `packages/cli/src/abstract-server.ts` registers the identical
-  set of webhook routes at `2.44.5` and `2.49.6`, confirmed by
-  `tests/scripts/check-webhook-routes.sh`, and
+  `n8n_image_tag` pin goes one step further at the first stop (`2.48.8`
+  against the chart's own `2.48.5`) and lands matching the chart's own
+  appVersion exactly at the second (`2.49.6` both). The module's seven
+  webhook path prefixes, the main-PDB chart gate, every worker probe and
+  the task-runner sidecar placement are all unchanged across the full
+  span, verified by `tests/scripts/check-n8n-chart.sh` (its expected
+  `appVersion` literal bumped to `2.49.6` to match, with no change to
+  what it asserts) and `tests/scripts/check-helm-chart-coverage.sh`
+  against chart `1.21.0`; a manual comparison of n8n's own
+  `packages/cli/src/abstract-server.ts` at `2.44.5` and `2.49.6` found
+  the identical route set, and `tests/scripts/check-webhook-routes.sh`
+  (which only checks the currently pinned tag) confirms the module's
+  seven prefixes cover exactly what `2.49.6` registers, and
   `packages/cli/src/commands/worker.ts`'s concurrency logic is unchanged
   between `2.48.8` and `2.49.6`. n8n 2.45.0 turned the durable scheduler
   on by default, which changes when interval-based schedules fire (see
